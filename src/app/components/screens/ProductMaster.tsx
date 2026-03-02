@@ -40,6 +40,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../ui/dialog";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../ui/tabs";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
@@ -78,6 +84,38 @@ type CategoryOption = {
   id: string;
   label: string;
 };
+
+type ProductPricingRecord = {
+  pricing_id: number;
+  product_id: number;
+  cost_price: number;
+  selling_price: number;
+  currency_code: string | null;
+  effective_from: string | null;
+  effective_to: string | null;
+  created_at: string | null;
+  created_by: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+  is_active: boolean | null;
+};
+
+const roundMoney = (value: number): number =>
+  Math.round(value * 100) / 100;
+
+const formatMoney = (
+  value: number,
+  currencyCode: string,
+): string =>
+  `${currencyCode} ${value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const normalizeLocationValue = (value: string): string =>
+  value.trim().toLowerCase();
+
+const pricingRowsPerPage = 20;
 
 const buildCategoryOptions = (
   rows: ProductCategory[],
@@ -198,6 +236,7 @@ export function ProductMaster() {
     unit: "",
     supplier: "",
     location: "",
+    costPrice: "",
     unitPrice: "",
     currencyCode: "PHP", // âœ… default
     currentStock: "0",
@@ -210,10 +249,19 @@ export function ProductMaster() {
     barcode: "",
     supplier: "",
     location: "",
+    costPrice: "0",
     unitPrice: "0",
     currencyCode: "PHP",
     currentStock: "0",
   });
+  const [pricingHistory, setPricingHistory] = useState<
+    ProductPricingRecord[]
+  >([]);
+  const [pricingSearchTerm, setPricingSearchTerm] =
+    useState("");
+  const [pricingDateFilter, setPricingDateFilter] =
+    useState<string>("30d");
+  const [pricingPage, setPricingPage] = useState(1);
 
   const addDebugLog = (
     type: string,
@@ -321,8 +369,142 @@ export function ProductMaster() {
     }
   };
 
+  const loadProductPricing = async () => {
+    const pricingUrl = `https://${projectId}.supabase.co/rest/v1/product_pricing?select=pricing_id,product_id,cost_price,selling_price,currency_code,effective_from,effective_to,created_at,created_by,updated_at,updated_by,is_active&order=effective_from.desc,created_at.desc`;
+    try {
+      const headers = {
+        apikey: publicAnonKey,
+        Authorization: `Bearer ${publicAnonKey}`,
+        "Content-Type": "application/json",
+      };
+      const response = await fetch(pricingUrl, {
+        method: "GET",
+        headers,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        addDebugLog(
+          "error",
+          `Pricing load failed (${response.status})`,
+          text,
+        );
+        return;
+      }
+      const rows = await response.json();
+      setPricingHistory(rows || []);
+    } catch (error) {
+      addDebugLog(
+        "error",
+        "Failed product pricing load",
+        error,
+      );
+    }
+  };
+
+  const refreshProductAndPricing = async () => {
+    await Promise.all([loadProducts(), loadProductPricing()]);
+  };
+
+  const upsertProductPricingHistory = async (
+    productId: number,
+    sellingPrice: number,
+    currencyCode: string,
+    options?: {
+      costPrice?: number;
+      actor?: string;
+    },
+  ): Promise<boolean> => {
+    const headers = {
+      apikey: publicAnonKey,
+      Authorization: `Bearer ${publicAnonKey}`,
+      "Content-Type": "application/json",
+    };
+    const actor = options?.actor || "product_master_ui";
+    const normalizedCurrency = (currencyCode || "PHP").trim();
+    const today = new Date().toISOString().slice(0, 10);
+    const nowIso = new Date().toISOString();
+
+    const activeRes = await fetch(
+      `https://${projectId}.supabase.co/rest/v1/product_pricing?select=pricing_id,cost_price,selling_price,currency_code,is_active&product_id=eq.${productId}&is_active=eq.true&order=effective_from.desc,created_at.desc&limit=1`,
+      {
+        method: "GET",
+        headers,
+      },
+    );
+    if (!activeRes.ok) {
+      const text = await activeRes.text();
+      throw new Error(
+        `Failed to read active pricing record: ${text}`,
+      );
+    }
+
+    const activeRows = await activeRes.json();
+    const currentRecord = (activeRows?.[0] ||
+      null) as ProductPricingRecord | null;
+    const resolvedCostPrice = Number(
+      options?.costPrice ?? currentRecord?.cost_price ?? 0,
+    );
+
+    if (
+      currentRecord &&
+      Number(currentRecord.selling_price) === sellingPrice &&
+      Number(currentRecord.cost_price) === resolvedCostPrice &&
+      (currentRecord.currency_code || "PHP") ===
+        normalizedCurrency
+    ) {
+      return false;
+    }
+
+    if (currentRecord?.pricing_id && currentRecord.is_active) {
+      const deactivateRes = await fetch(
+        `https://${projectId}.supabase.co/rest/v1/product_pricing?pricing_id=eq.${currentRecord.pricing_id}`,
+        {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=minimal" },
+          body: JSON.stringify({
+            is_active: false,
+            effective_to: today,
+            updated_at: nowIso,
+            updated_by: actor,
+          }),
+        },
+      );
+      if (!deactivateRes.ok) {
+        const text = await deactivateRes.text();
+        throw new Error(
+          `Failed to close current price record: ${text}`,
+        );
+      }
+    }
+
+    const insertRes = await fetch(
+      `https://${projectId}.supabase.co/rest/v1/product_pricing`,
+      {
+        method: "POST",
+        headers: { ...headers, Prefer: "return=minimal" },
+        body: JSON.stringify({
+          product_id: productId,
+          cost_price: resolvedCostPrice,
+          selling_price: sellingPrice,
+          currency_code: normalizedCurrency,
+          effective_from: today,
+          is_active: true,
+          created_by: actor,
+        }),
+      },
+    );
+    if (!insertRes.ok) {
+      const text = await insertRes.text();
+      throw new Error(
+        `Failed to create pricing record: ${text}`,
+      );
+    }
+
+    return true;
+  };
+
   useEffect(() => {
-    loadProducts();
+    refreshProductAndPricing();
   }, []);
 
   // Fetch categories from database
@@ -408,7 +590,8 @@ export function ProductMaster() {
         product.category_id === childCategoryFilter;
       const matchesLocation =
         locationFilter === "all" ||
-        product.location === locationFilter;
+        normalizeLocationValue(product.location || "") ===
+          locationFilter;
       return (
         matchesSearch &&
         matchesParent &&
@@ -487,9 +670,18 @@ export function ProductMaster() {
   };
 
   const locationOptions = useMemo(() => {
-    return Array.from(
-      new Set(products.map((p) => p.location).filter(Boolean)),
-    ).sort((a, b) => a.localeCompare(b));
+    const byNormalized = new Map<string, string>();
+    for (const product of products) {
+      const raw = (product.location || "").trim();
+      if (!raw) continue;
+      const normalized = normalizeLocationValue(raw);
+      if (!byNormalized.has(normalized)) {
+        byNormalized.set(normalized, raw);
+      }
+    }
+    return Array.from(byNormalized.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
   }, [products]);
 
   const unitOptions = ["bottle", "box", "pcs"] as const;
@@ -725,7 +917,7 @@ export function ProductMaster() {
         inserted += 1;
       }
 
-      await loadProducts();
+      await refreshProductAndPricing();
       toast.success("CSV imported", {
         description: `${inserted} product(s) inserted`,
       });
@@ -746,6 +938,9 @@ export function ProductMaster() {
   };
 
   const openEditProduct = (product: Product) => {
+    const currentPricing = currentPricingByProductId.get(
+      product.id,
+    );
     setSelectedProduct(product);
     setEditFormData({
       productName: product.name,
@@ -754,6 +949,7 @@ export function ProductMaster() {
       barcode: product.barcode || "",
       supplier: product.supplier || "",
       location: product.location || "",
+      costPrice: String(currentPricing?.cost_price ?? 0),
       unitPrice: String(product.unitPrice ?? 0),
       currencyCode: (product as any).currencyCode || "PHP",
       currentStock: String(product.currentStock ?? 0),
@@ -851,6 +1047,8 @@ export function ProductMaster() {
       missingUpdateFields.push("Supplier");
     if (!editFormData.location?.trim())
       missingUpdateFields.push("Warehouse Location");
+    if (!editFormData.costPrice?.trim())
+      missingUpdateFields.push("Cost Price");
     if (!editFormData.unitPrice?.trim())
       missingUpdateFields.push("Unit Price");
 
@@ -872,6 +1070,21 @@ export function ProductMaster() {
       return;
     }
 
+    const nextUnitPrice = parseFloat(editFormData.unitPrice);
+    const nextCostPrice = parseFloat(editFormData.costPrice);
+    if (
+      Number.isNaN(nextUnitPrice) ||
+      Number.isNaN(nextCostPrice) ||
+      nextUnitPrice < 0 ||
+      nextCostPrice < 0
+    ) {
+      toast.error("Invalid pricing values", {
+        description:
+          "Cost Price and Unit Price must be valid non-negative numbers.",
+      });
+      return;
+    }
+
     setIsUpdating(true);
     try {
       const headers = {
@@ -889,7 +1102,7 @@ export function ProductMaster() {
         supplier: editFormData.supplier.trim(),
         warehouse_location: editFormData.location.trim(),
         currency_code: editFormData.currencyCode.trim(),
-        unit_price: parseFloat(editFormData.unitPrice),
+        unit_price: nextUnitPrice,
         inventory_on_hand:
           parseInt(editFormData.currentStock || "0", 10) || 0,
       };
@@ -929,7 +1142,34 @@ export function ProductMaster() {
         );
       }
 
-      await loadProducts();
+      const nextCurrency = editFormData.currencyCode.trim();
+      const previousUnitPrice = Number(
+        selectedProduct.unitPrice ?? 0,
+      );
+      const previousCostPrice = Number(
+        currentPricingByProductId.get(selectedProduct.id)
+          ?.cost_price ?? 0,
+      );
+      const previousCurrency =
+        selectedProduct.currencyCode || "PHP";
+      const priceChanged =
+        previousUnitPrice !== nextUnitPrice ||
+        previousCostPrice !== nextCostPrice ||
+        previousCurrency !== nextCurrency;
+      const numericProductId = Number(selectedProduct.id);
+      if (priceChanged && !Number.isNaN(numericProductId)) {
+        await upsertProductPricingHistory(
+          numericProductId,
+          nextUnitPrice,
+          nextCurrency,
+          {
+            actor: "product_master_ui",
+            costPrice: nextCostPrice,
+          },
+        );
+      }
+
+      await refreshProductAndPricing();
       setShowEditDialog(false);
       setSelectedProduct(null);
       toast.success("Product updated", {
@@ -1005,7 +1245,7 @@ export function ProductMaster() {
         }
       }
 
-      await loadProducts();
+      await refreshProductAndPricing();
       setShowDeleteDialog(false);
       setShowEditDialog(false);
       setSelectedProduct(null);
@@ -1043,6 +1283,8 @@ export function ProductMaster() {
       missingFields.push("Supplier");
     if (!formData.location?.trim())
       missingFields.push("Warehouse Location");
+    if (!formData.costPrice?.trim())
+      missingFields.push("Cost Price");
     if (!formData.unitPrice?.trim())
       missingFields.push("Unit Price");
 
@@ -1064,6 +1306,21 @@ export function ProductMaster() {
       );
       toast.error("Invalid Barcode", {
         description: "Barcode must be exactly 13 digits",
+      });
+      return;
+    }
+
+    const nextCostPrice = parseFloat(formData.costPrice);
+    const nextUnitPrice = parseFloat(formData.unitPrice);
+    if (
+      Number.isNaN(nextCostPrice) ||
+      Number.isNaN(nextUnitPrice) ||
+      nextCostPrice < 0 ||
+      nextUnitPrice < 0
+    ) {
+      toast.error("Invalid pricing values", {
+        description:
+          "Cost Price and Unit Price must be valid non-negative numbers.",
       });
       return;
     }
@@ -1090,7 +1347,7 @@ export function ProductMaster() {
         barcode: sanitizeBarcodeInput(formData.barcode),
         supplier: formData.supplier.trim(),
         warehouse_location: formData.location.trim(),
-        unit_price: parseFloat(formData.unitPrice),
+        unit_price: nextUnitPrice,
         currency_code: formData.currencyCode || "PHP",
         inventory_on_hand:
           parseInt(formData.currentStock || "0", 10) || 0,
@@ -1170,6 +1427,18 @@ export function ProductMaster() {
           String(insertedProductId),
           getCategoryText(resolvedCategoryId),
         );
+        const numericProductId = Number(insertedProductId);
+        if (!Number.isNaN(numericProductId)) {
+          await upsertProductPricingHistory(
+            numericProductId,
+            nextUnitPrice,
+            formData.currencyCode || "PHP",
+            {
+              costPrice: nextCostPrice,
+              actor: "product_master_ui",
+            },
+          );
+        }
       }
 
       addDebugLog(
@@ -1180,7 +1449,7 @@ export function ProductMaster() {
         "info",
         "Refreshing product list from database...",
       );
-      await loadProducts();
+      await refreshProductAndPricing();
       setLastResponse({
         success: true,
         message: "Product created and table refreshed",
@@ -1197,6 +1466,7 @@ export function ProductMaster() {
         barcode: "",
         supplier: "",
         location: "",
+        costPrice: "",
         unitPrice: "",
         currencyCode: "PHP",
         currentStock: "0",
@@ -1220,6 +1490,152 @@ export function ProductMaster() {
       setIsSubmitting(false);
     }
   };
+
+  const productById = useMemo(
+    () =>
+      new Map(products.map((product) => [product.id, product])),
+    [products],
+  );
+
+  const visibleProductIdSet = useMemo(
+    () =>
+      new Set(filteredProducts.map((product) => product.id)),
+    [filteredProducts],
+  );
+
+  const pricingHistoryRows = useMemo(() => {
+    return pricingHistory
+      .filter((row) =>
+        visibleProductIdSet.has(String(row.product_id)),
+      )
+      .sort((a, b) => {
+        const aTime = new Date(
+          a.effective_from || a.created_at || 0,
+        ).getTime();
+        const bTime = new Date(
+          b.effective_from || b.created_at || 0,
+        ).getTime();
+        return bTime - aTime;
+      });
+  }, [pricingHistory, visibleProductIdSet]);
+
+  const previousPricingByRecordId = useMemo(() => {
+    const grouped = new Map<string, ProductPricingRecord[]>();
+    for (const row of pricingHistoryRows) {
+      const key = String(row.product_id);
+      const list = grouped.get(key) || [];
+      list.push(row);
+      grouped.set(key, list);
+    }
+    const previousById = new Map<
+      number,
+      ProductPricingRecord
+    >();
+    for (const list of grouped.values()) {
+      for (let i = 0; i < list.length - 1; i += 1) {
+        previousById.set(list[i].pricing_id, list[i + 1]);
+      }
+    }
+    return previousById;
+  }, [pricingHistoryRows]);
+
+  const filteredPricingHistoryRows = useMemo(() => {
+    const searchLower = pricingSearchTerm.trim().toLowerCase();
+    const now = Date.now();
+    const dateThreshold =
+      pricingDateFilter === "7d"
+        ? now - 7 * 24 * 60 * 60 * 1000
+        : pricingDateFilter === "30d"
+          ? now - 30 * 24 * 60 * 60 * 1000
+          : pricingDateFilter === "90d"
+            ? now - 90 * 24 * 60 * 60 * 1000
+            : 0;
+
+    return pricingHistoryRows.filter((row) => {
+      const product = productById.get(String(row.product_id));
+      const productName = (product?.name || "").toLowerCase();
+      const sku = (product?.sku || "").toLowerCase();
+      const matchesSearch =
+        !searchLower ||
+        productName.includes(searchLower) ||
+        sku.includes(searchLower);
+
+      const rowTime = new Date(
+        row.effective_from || row.created_at || 0,
+      ).getTime();
+      const matchesDate =
+        !dateThreshold || rowTime >= dateThreshold;
+
+      return matchesSearch && matchesDate;
+    });
+  }, [
+    pricingHistoryRows,
+    pricingSearchTerm,
+    pricingDateFilter,
+    productById,
+  ]);
+
+  const pagedPricingHistoryRows = useMemo(() => {
+    const start = (pricingPage - 1) * pricingRowsPerPage;
+    return filteredPricingHistoryRows.slice(
+      start,
+      start + pricingRowsPerPage,
+    );
+  }, [filteredPricingHistoryRows, pricingPage]);
+
+  const pricingTotalPages = useMemo(() => {
+    return Math.max(
+      1,
+      Math.ceil(
+        filteredPricingHistoryRows.length / pricingRowsPerPage,
+      ),
+    );
+  }, [filteredPricingHistoryRows.length]);
+
+  useEffect(() => {
+    setPricingPage(1);
+  }, [pricingSearchTerm, pricingDateFilter, searchTerm]);
+
+  useEffect(() => {
+    if (pricingPage > pricingTotalPages) {
+      setPricingPage(pricingTotalPages);
+    }
+  }, [pricingPage, pricingTotalPages]);
+
+  const currentPricingByProductId = useMemo(() => {
+    const map = new Map<string, ProductPricingRecord>();
+
+    for (const row of pricingHistoryRows) {
+      const productId = String(row.product_id);
+      const existing = map.get(productId);
+      if (!existing) {
+        map.set(productId, row);
+        continue;
+      }
+
+      const rowIsActive = Boolean(row.is_active);
+      const existingIsActive = Boolean(existing.is_active);
+      if (rowIsActive && !existingIsActive) {
+        map.set(productId, row);
+        continue;
+      }
+      if (!rowIsActive && existingIsActive) {
+        continue;
+      }
+
+      const rowTime = new Date(
+        row.effective_from || row.created_at || 0,
+      ).getTime();
+      const existingTime = new Date(
+        existing.effective_from || existing.created_at || 0,
+      ).getTime();
+      if (rowTime > existingTime) {
+        map.set(productId, row);
+      }
+    }
+
+    return map;
+  }, [pricingHistoryRows]);
 
   return (
     <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
@@ -1439,6 +1855,21 @@ export function ProductMaster() {
                   />
                 </div>
                 <div>
+                  <Label>Cost Price</Label>
+                  <Input
+                    type="number"
+                    placeholder="0.00"
+                    className="mt-2 border-[#111827]/10"
+                    value={formData.costPrice}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        costPrice: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div>
                   <Label>Unit Price</Label>
                   <Input
                     type="number"
@@ -1630,8 +2061,11 @@ export function ProductMaster() {
                     All Locations
                   </SelectItem>
                   {locationOptions.map((location) => (
-                    <SelectItem key={location} value={location}>
-                      {location}
+                    <SelectItem
+                      key={location.value}
+                      value={location.value}
+                    >
+                      {location.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1641,146 +2075,429 @@ export function ProductMaster() {
         </CardContent>
       </Card>
 
-      <Card className="bg-white border-[#111827]/10 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-[#111827] font-semibold">
-            Product Inventory ({filteredProducts.length} items)
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b-2 border-[#1A2B47]">
-                  <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
-                    SKU
-                  </th>
-                  <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
-                    Product Name
-                  </th>
-                  <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
-                    Unit
-                  </th>
-                  <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
-                    Category
-                  </th>
-                  <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
-                    Barcode (EAN-13)
-                  </th>
-                  <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
-                    Supplier
-                  </th>
-                  <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
-                    Price
-                  </th>
-                  <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
-                    Stock
-                  </th>
-                  <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
-                    Location
-                  </th>
-                  <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredProducts.map((product) => (
-                  <tr
-                    key={product.id}
-                    className="border-b border-[#E5E7EB] hover:bg-[#F8FAFC] transition-colors"
+      <Tabs defaultValue="inventory" className="space-y-4">
+        <TabsList className="bg-[#F1F5F9] border border-[#111827]/15 h-auto p-1 rounded-lg">
+          <TabsTrigger
+            value="inventory"
+            className="px-4 py-2 rounded-md text-[#475569] data-[state=active]:bg-[#00A3AD] data-[state=active]:text-white data-[state=active]:shadow-sm"
+          >
+            Inventory
+          </TabsTrigger>
+          <TabsTrigger
+            value="pricing"
+            className="px-4 py-2 rounded-md text-[#475569] data-[state=active]:bg-[#1A2B47] data-[state=active]:text-white data-[state=active]:shadow-sm"
+          >
+            Value / Pricing
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="inventory">
+          <Card className="bg-white border-[#111827]/10 shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-[#111827] font-semibold">
+                Product Inventory ({filteredProducts.length}{" "}
+                items)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b-2 border-[#1A2B47]">
+                      <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        SKU
+                      </th>
+                      <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Product Name
+                      </th>
+                      <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Unit
+                      </th>
+                      <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Category
+                      </th>
+                      <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Barcode (EAN-13)
+                      </th>
+                      <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Supplier
+                      </th>
+                      <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Cost Price
+                      </th>
+                      <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Selling Price
+                      </th>
+                      <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Stock
+                      </th>
+                      <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Location
+                      </th>
+                      <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredProducts.map((product) => {
+                      const currentPricing =
+                        currentPricingByProductId.get(
+                          product.id,
+                        );
+                      const currencyCode =
+                        product.currencyCode || "PHP";
+                      const costPrice = Number(
+                        currentPricing?.cost_price ?? 0,
+                      );
+
+                      return (
+                        <tr
+                          key={product.id}
+                          className="border-b border-[#E5E7EB] hover:bg-[#F8FAFC] transition-colors"
+                        >
+                          <td className="py-4 px-4">
+                            <span className="font-mono text-[#00A3AD] font-semibold">
+                              {product.sku}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4 text-[#111827] font-medium">
+                            {product.name}
+                          </td>
+                          <td className="py-4 px-4 text-sm text-[#6B7280]">
+                            {product.unit || "-"}
+                          </td>
+                          <td className="py-4 px-4">
+                            <span
+                              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${getCategoryColor(product.category_id)}`}
+                            >
+                              {categoryLabelById.get(
+                                product.category_id,
+                              ) ||
+                                product.category_text ||
+                                product.category_id ||
+                                "-"}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="flex items-center gap-2">
+                              <Barcode className="w-4 h-4 text-[#6B7280]" />
+                              <span className="font-mono text-sm text-[#111827]">
+                                {product.barcode}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-4 px-4 text-sm text-[#6B7280]">
+                            {product.supplier}
+                          </td>
+                          <td className="py-4 px-4 text-right text-sm text-[#111827] font-medium">
+                            {formatMoney(
+                              costPrice,
+                              currencyCode,
+                            )}
+                          </td>
+                          <td className="py-4 px-4 text-right text-sm text-[#111827] font-medium">
+                            {formatMoney(
+                              Number(product.unitPrice || 0),
+                              currencyCode,
+                            )}
+                          </td>
+                          <td className="py-4 px-4 text-right">
+                            <div className="flex flex-col items-end">
+                              <span
+                                className={`${product.currentStock <= 0 ? "text-[#F97316]" : "text-[#111827]"} font-bold`}
+                              >
+                                {product.currentStock.toLocaleString()}
+                              </span>
+                              {product.currentStock <= 0 && (
+                                <span className="text-xs text-[#F97316] font-medium">
+                                  Out of Stock
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-4 px-4 text-sm text-[#6B7280]">
+                            {product.location}
+                          </td>
+                          <td className="py-4 px-4 text-right">
+                            <div className="flex gap-2 justify-end">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
+                                onClick={() =>
+                                  openViewProduct(product)
+                                }
+                              >
+                                <FileText className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-[#111827]/20 text-[#111827]"
+                                onClick={() =>
+                                  openEditProduct(product)
+                                }
+                              >
+                                Edit
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="pricing" className="space-y-4">
+          <Card className="bg-white border-[#111827]/10 shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-[#111827] font-semibold">
+                Price Change History
+              </CardTitle>
+              <p className="text-sm text-[#6B7280]">
+                Track recent edits with searchable history and
+                clear price movement details.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col md:flex-row gap-3 md:items-end mb-4">
+                <div className="md:w-80">
+                  <Label className="text-[#6B7280] mb-2 block">
+                    Find Product
+                  </Label>
+                  <Input
+                    placeholder="Search by SKU or product name"
+                    value={pricingSearchTerm}
+                    onChange={(e) =>
+                      setPricingSearchTerm(e.target.value)
+                    }
+                    className="border-[#111827]/10"
+                  />
+                </div>
+                <div className="w-full md:w-48">
+                  <Label className="text-[#6B7280] mb-2 block">
+                    Date Range
+                  </Label>
+                  <Select
+                    value={pricingDateFilter}
+                    onValueChange={setPricingDateFilter}
                   >
-                    <td className="py-4 px-4">
-                      <span className="font-mono text-[#00A3AD] font-semibold">
-                        {product.sku}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4 text-[#111827] font-medium">
-                      {product.name}
-                    </td>
-                    <td className="py-4 px-4 text-sm text-[#6B7280]">
-                      {product.unit || "-"}
-                    </td>
-                    <td className="py-4 px-4">
-                      <span
-                        className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${getCategoryColor(product.category_id)}`}
-                      >
-                        {categoryLabelById.get(
-                          product.category_id,
-                        ) ||
-                          product.category_text ||
-                          product.category_id ||
-                          "-"}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="flex items-center gap-2">
-                        <Barcode className="w-4 h-4 text-[#6B7280]" />
-                        <span className="font-mono text-sm text-[#111827]">
-                          {product.barcode}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="py-4 px-4 text-sm text-[#6B7280]">
-                      {product.supplier}
-                    </td>
-                    <td className="py-4 px-4 text-right text-sm text-[#111827] font-medium">
-                      {product.currencyCode || "PHP"}{" "}
-                      {Number(
-                        product.unitPrice || 0,
-                      ).toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </td>
-                    <td className="py-4 px-4 text-right">
-                      <div className="flex flex-col items-end">
-                        <span
-                          className={`${product.currentStock <= 0 ? "text-[#F97316]" : "text-[#111827]"} font-bold`}
+                    <SelectTrigger className="border-[#111827]/10">
+                      <SelectValue placeholder="Select range" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="7d">
+                        Last 7 days
+                      </SelectItem>
+                      <SelectItem value="30d">
+                        Last 30 days
+                      </SelectItem>
+                      <SelectItem value="90d">
+                        Last 90 days
+                      </SelectItem>
+                      <SelectItem value="all">
+                        All history
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="text-sm text-[#6B7280] md:ml-auto">
+                  Showing{" "}
+                  <span className="font-semibold text-[#111827]">
+                    {filteredPricingHistoryRows.length}
+                  </span>{" "}
+                  change
+                  {filteredPricingHistoryRows.length === 1
+                    ? ""
+                    : "s"}
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b-2 border-[#1A2B47]">
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Effective Date
+                      </th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        SKU
+                      </th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Product
+                      </th>
+                      <th className="text-right py-3 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Cost Price
+                      </th>
+                      <th className="text-right py-3 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Selling Price
+                      </th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Change
+                      </th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Active Window
+                      </th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Changed By
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedPricingHistoryRows.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={8}
+                          className="py-6 px-4 text-center text-[#6B7280]"
                         >
-                          {product.currentStock.toLocaleString()}
-                        </span>
-                        {product.currentStock <= 0 && (
-                          <span className="text-xs text-[#F97316] font-medium">
-                            Out of Stock
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-4 px-4 text-sm text-[#6B7280]">
-                      {product.location}
-                    </td>
-                    <td className="py-4 px-4 text-right">
-                      <div className="flex gap-2 justify-end">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
-                          onClick={() =>
-                            openViewProduct(product)
-                          }
-                        >
-                          <FileText className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="border-[#111827]/20 text-[#111827]"
-                          onClick={() =>
-                            openEditProduct(product)
-                          }
-                        >
-                          Edit
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+                          No pricing history records found for
+                          the current product filter.
+                        </td>
+                      </tr>
+                    ) : (
+                      pagedPricingHistoryRows.map(
+                        (snapshot) => {
+                          const product = productById.get(
+                            String(snapshot.product_id),
+                          );
+                          const sku = product?.sku || "-";
+                          const productName =
+                            product?.name || "-";
+                          const sellingPrice = Number(
+                            snapshot.selling_price || 0,
+                          );
+                          const costPrice = Number(
+                            snapshot.cost_price || 0,
+                          );
+                          const marginPercent =
+                            sellingPrice > 0
+                              ? roundMoney(
+                                  ((sellingPrice - costPrice) /
+                                    sellingPrice) *
+                                    100,
+                                )
+                              : 0;
+                          const previousRecord =
+                            previousPricingByRecordId.get(
+                              snapshot.pricing_id,
+                            );
+                          const previousPrice = Number(
+                            previousRecord?.selling_price || 0,
+                          );
+                          const delta = roundMoney(
+                            sellingPrice - previousPrice,
+                          );
+                          const deltaLabel = previousRecord
+                            ? `${delta > 0 ? "+" : ""}${delta.toFixed(2)}`
+                            : "Initial";
+
+                          return (
+                            <tr
+                              key={snapshot.pricing_id}
+                              className="border-b border-[#E5E7EB]"
+                            >
+                              <td className="py-3 px-4 text-[#111827]">
+                                {snapshot.effective_from
+                                  ? new Date(
+                                      snapshot.effective_from,
+                                    ).toLocaleDateString()
+                                  : "-"}
+                              </td>
+                              <td className="py-3 px-4 font-mono text-[#00A3AD] font-semibold">
+                                {sku}
+                              </td>
+                              <td className="py-3 px-4 text-[#111827]">
+                                {productName}
+                              </td>
+                              <td className="py-3 px-4 text-right text-[#111827]">
+                                {formatMoney(
+                                  costPrice,
+                                  snapshot.currency_code ||
+                                    "PHP",
+                                )}
+                              </td>
+                              <td className="py-3 px-4 text-right text-[#111827]">
+                                {formatMoney(
+                                  sellingPrice,
+                                  snapshot.currency_code ||
+                                    "PHP",
+                                )}
+                              </td>
+                              <td className="py-3 px-4 text-sm">
+                                <div className="text-[#111827] font-medium">
+                                  {previousRecord
+                                    ? `${formatMoney(previousPrice, snapshot.currency_code || "PHP")} -> ${formatMoney(sellingPrice, snapshot.currency_code || "PHP")}`
+                                    : "Initial price setup"}
+                                </div>
+                                <div
+                                  className={`text-xs ${delta > 0 ? "text-[#00A3AD]" : delta < 0 ? "text-[#F97316]" : "text-[#6B7280]"}`}
+                                >
+                                  {deltaLabel}
+                                  {previousRecord
+                                    ? ` (${marginPercent.toFixed(2)}% margin)`
+                                    : ""}
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 text-[#6B7280] text-sm">
+                                {(snapshot.is_active
+                                  ? "Active"
+                                  : "Closed") +
+                                  ` (${snapshot.effective_from || "-"} to ${snapshot.effective_to || "present"})`}
+                              </td>
+                              <td className="py-3 px-4 text-[#6B7280] text-sm">
+                                {snapshot.updated_by ||
+                                  snapshot.created_by ||
+                                  "-"}
+                              </td>
+                            </tr>
+                          );
+                        },
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center justify-between mt-4">
+                <div className="text-xs text-[#6B7280]">
+                  Page {pricingPage} of {pricingTotalPages}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-[#111827]/20 text-[#111827]"
+                    onClick={() =>
+                      setPricingPage((prev) =>
+                        Math.max(1, prev - 1),
+                      )
+                    }
+                    disabled={pricingPage <= 1}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-[#111827]/20 text-[#111827]"
+                    onClick={() =>
+                      setPricingPage((prev) =>
+                        Math.min(pricingTotalPages, prev + 1),
+                      )
+                    }
+                    disabled={pricingPage >= pricingTotalPages}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       <Dialog
         open={showViewDialog}
@@ -1859,6 +2576,24 @@ export function ProductMaster() {
                   {Number(
                     selectedProduct.unitPrice || 0,
                   ).toFixed(2)}
+                </div>
+              </div>
+              <div>
+                <span className="text-[#6B7280]">
+                  Cost Price
+                </span>
+                <div className="font-medium text-[#111827]">
+                  {(currentPricingByProductId.get(
+                    selectedProduct.id,
+                  )?.currency_code ||
+                    selectedProduct.currencyCode ||
+                    "PHP") +
+                    " " +
+                    Number(
+                      currentPricingByProductId.get(
+                        selectedProduct.id,
+                      )?.cost_price || 0,
+                    ).toFixed(2)}
                 </div>
               </div>
               <div>
@@ -1992,6 +2727,21 @@ export function ProductMaster() {
                   setEditFormData({
                     ...editFormData,
                     location: e.target.value,
+                  })
+                }
+              />
+            </div>
+            <div>
+              <Label>Cost Price</Label>
+              <Input
+                type="number"
+                min="0"
+                className="mt-2 border-[#111827]/10"
+                value={editFormData.costPrice}
+                onChange={(e) =>
+                  setEditFormData({
+                    ...editFormData,
+                    costPrice: e.target.value,
                   })
                 }
               />

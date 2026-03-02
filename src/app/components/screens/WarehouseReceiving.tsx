@@ -3,9 +3,11 @@ import {
   useEffect,
   useCallback,
   useMemo,
+  useRef,
 } from "react";
 import {
   ScanBarcode,
+  Camera,
   CheckCircle,
   Package,
   Plus,
@@ -29,15 +31,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { postGRN } from "/utils/postGRN";
 
 interface InventoryItem {
   id: string;
+  productUuid: string | null;
   sku: string;
+  barcode: string;
   name: string;
   unit: string;
+  reservedStock: number;
   lastUpdated: string | null;
   systemCount: number;
   status: "normal" | "low" | "zero";
@@ -80,11 +92,6 @@ export function WarehouseReceiving() {
   const [lines, setLines] = useState<GrnLine[]>([
     createEmptyLine(),
   ]);
-  const [lastScannedItem, setLastScannedItem] = useState<{
-    id: string;
-    name: string;
-    systemCount: number;
-  } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
   const [savedGrnId, setSavedGrnId] = useState<string | null>(
@@ -101,6 +108,19 @@ export function WarehouseReceiving() {
   const [loadingInventory, setLoadingInventory] =
     useState(false);
   const [stockSearch, setStockSearch] = useState("");
+  const [isScanListening, setIsScanListening] = useState(false);
+  const [scanInput, setScanInput] = useState("");
+  const [showCameraScanner, setShowCameraScanner] =
+    useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(
+    null,
+  );
+  const [isCameraScanning, setIsCameraScanning] =
+    useState(false);
+  const scanInputRef = useRef<HTMLInputElement | null>(null);
+  const scanVideoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const cameraScanTimerRef = useRef<number | null>(null);
 
   const filteredInventory = useMemo(() => {
     const keyword = stockSearch.trim().toLowerCase();
@@ -135,7 +155,7 @@ export function WarehouseReceiving() {
       };
 
       const productsRes = await fetch(
-        `${baseUrl}/products?select=product_id,product_uuid,sku,product_name,unit&order=product_name.asc`,
+        `${baseUrl}/products?select=product_id,product_uuid,sku,barcode,product_name,unit,reserved_stock&order=product_name.asc`,
         { headers },
       );
       if (!productsRes.ok)
@@ -176,9 +196,14 @@ export function WarehouseReceiving() {
 
         return {
           id: String(p.product_id),
+          productUuid: p.product_uuid
+            ? String(p.product_uuid)
+            : null,
           sku: p.sku ?? "N/A",
+          barcode: String(p.barcode ?? ""),
           name: p.product_name ?? "Unknown Product",
           unit: p.unit ?? "-",
+          reservedStock: Number(p.reserved_stock ?? 0),
           lastUpdated: ioh?.updated_at ?? null,
           systemCount: qty,
           status,
@@ -202,28 +227,47 @@ export function WarehouseReceiving() {
     fetchInventory();
   }, [fetchInventory]);
 
-  const insertScannedItemToLines = (item: {
-    id: string;
-    name: string;
-    systemCount: number;
-  }) => {
+  const incrementReceivedForItem = (
+    item: InventoryItem,
+  ): void => {
     setLines((prev) => {
       if (prev.length === 1 && !prev[0].productId) {
         return [
           {
             ...prev[0],
             productId: item.id,
-            qtyExpected: item.systemCount.toString(),
+            qtyExpected: "",
+            qtyReceived: "1",
           },
         ];
       }
+
+      const existingIndex = prev.findIndex(
+        (line) => line.productId === item.id,
+      );
+      if (existingIndex >= 0) {
+        return prev.map((line, index) => {
+          if (index !== existingIndex) return line;
+          const currentReceived = Number(line.qtyReceived);
+          const nextReceived =
+            Number.isFinite(currentReceived) &&
+            currentReceived > 0
+              ? currentReceived + 1
+              : 1;
+          return {
+            ...line,
+            qtyReceived: String(nextReceived),
+          };
+        });
+      }
+
       return [
         ...prev,
         {
           lineId: crypto.randomUUID(),
           productId: item.id,
-          qtyExpected: item.systemCount.toString(),
-          qtyReceived: "",
+          qtyExpected: "",
+          qtyReceived: "1",
           discrepancyReason: "",
           otherReason: "",
         },
@@ -231,39 +275,410 @@ export function WarehouseReceiving() {
     });
   };
 
+  const processScannedCode = useCallback(
+    async (rawValue: string) => {
+      const trimmed = rawValue.trim();
+      if (!trimmed) return;
+      if (inventory.length === 0) {
+        toast.error("No products found", {
+          description: "Please refresh inventory first.",
+        });
+        return;
+      }
+
+      const digitsOnly = trimmed.replace(/\D/g, "");
+      const lowerValue = trimmed.toLowerCase();
+      const matchedItem =
+        inventory.find(
+          (item) =>
+            item.barcode === trimmed ||
+            (digitsOnly.length > 0 &&
+              item.barcode === digitsOnly),
+        ) ||
+        inventory.find(
+          (item) => item.sku.toLowerCase() === lowerValue,
+        );
+
+      if (!matchedItem) {
+        toast.error("Barcode not found", {
+          description: `No SKU matched scan: ${trimmed}`,
+        });
+        return;
+      }
+
+      setSavedGrnId(null);
+      setSavedGrnNumber(null);
+      setShowGrnForm(true);
+      incrementReceivedForItem(matchedItem);
+      setInventory((prev) =>
+        prev.map((entry) => {
+          if (entry.id !== matchedItem.id) return entry;
+          const nextCount = entry.systemCount + 1;
+          return {
+            ...entry,
+            systemCount: nextCount,
+            lastUpdated: new Date().toISOString(),
+            status:
+              nextCount === 0
+                ? "zero"
+                : nextCount < MIN_STOCK_THRESHOLD
+                  ? "low"
+                  : "normal",
+          };
+        }),
+      );
+
+      try {
+        const headers = {
+          apikey: publicAnonKey,
+          Authorization: `Bearer ${publicAnonKey}`,
+          "Content-Type": "application/json",
+        };
+        const productKeys = [
+          matchedItem.productUuid,
+          matchedItem.id,
+        ].filter(Boolean) as string[];
+
+        let synced = false;
+        let nextOnHand = matchedItem.systemCount + 1;
+
+        for (const productKey of productKeys) {
+          const lookupRes = await fetch(
+            `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?select=product_id,bin_id,qty_on_hand&product_id=eq.${encodeURIComponent(productKey)}&limit=1`,
+            { method: "GET", headers },
+          );
+          if (!lookupRes.ok) continue;
+          const lookupRows = await lookupRes.json();
+          if (lookupRows.length > 0) {
+            const row = lookupRows[0];
+            nextOnHand = Number(row.qty_on_hand ?? 0) + 1;
+            const patchRes = await fetch(
+              `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?product_id=eq.${encodeURIComponent(row.product_id)}&bin_id=eq.${encodeURIComponent(row.bin_id)}`,
+              {
+                method: "PATCH",
+                headers: {
+                  ...headers,
+                  Prefer: "return=minimal",
+                },
+                body: JSON.stringify({
+                  qty_on_hand: nextOnHand,
+                }),
+              },
+            );
+            if (patchRes.ok) {
+              synced = true;
+              break;
+            }
+          }
+        }
+
+        if (!synced) {
+          const insertProductKey =
+            matchedItem.productUuid || matchedItem.id;
+          const binLookupRes = await fetch(
+            `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?select=bin_id&limit=1`,
+            { method: "GET", headers },
+          );
+          let binId: string | null = null;
+          if (binLookupRes.ok) {
+            const binRows = await binLookupRes.json();
+            if (binRows.length > 0) {
+              binId = String(binRows[0].bin_id);
+            }
+          }
+          if (!binId) {
+            const binsRes = await fetch(
+              `https://${projectId}.supabase.co/rest/v1/bins?select=id&limit=1`,
+              { method: "GET", headers },
+            );
+            if (binsRes.ok) {
+              const binsRows = await binsRes.json();
+              if (binsRows.length > 0) {
+                binId = String(binsRows[0].id);
+              }
+            }
+          }
+          if (!binId) {
+            throw new Error(
+              "No inventory bin available for realtime receipt.",
+            );
+          }
+
+          nextOnHand = 1;
+          const insertRes = await fetch(
+            `https://${projectId}.supabase.co/rest/v1/inventory_on_hand`,
+            {
+              method: "POST",
+              headers: {
+                ...headers,
+                Prefer: "return=minimal",
+              },
+              body: JSON.stringify({
+                product_id: insertProductKey,
+                bin_id: binId,
+                qty_on_hand: nextOnHand,
+              }),
+            },
+          );
+          if (!insertRes.ok) {
+            throw new Error(await insertRes.text());
+          }
+        }
+
+        await fetch(
+          `https://${projectId}.supabase.co/rest/v1/products?product_id=eq.${encodeURIComponent(matchedItem.id)}`,
+          {
+            method: "PATCH",
+            headers: { ...headers, Prefer: "return=minimal" },
+            body: JSON.stringify({
+              inventory_on_hand: nextOnHand,
+              available_stock: Math.max(
+                0,
+                nextOnHand - matchedItem.reservedStock,
+              ),
+              available_to_promise: Math.max(
+                0,
+                nextOnHand - matchedItem.reservedStock,
+              ),
+            }),
+          },
+        );
+
+        setInventory((prev) =>
+          prev.map((entry) => {
+            if (entry.id !== matchedItem.id) return entry;
+            return {
+              ...entry,
+              systemCount: nextOnHand,
+              lastUpdated: new Date().toISOString(),
+              status:
+                nextOnHand === 0
+                  ? "zero"
+                  : nextOnHand < MIN_STOCK_THRESHOLD
+                    ? "low"
+                    : "normal",
+            };
+          }),
+        );
+
+        toast.success("Barcode scanned", {
+          description: `${matchedItem.sku} - Received +1 (stock synced)`,
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Realtime stock sync failed";
+        toast.error(
+          "Scan saved to GRN, but stock sync failed",
+          {
+            description: message,
+          },
+        );
+      }
+    },
+    [inventory],
+  );
+
+  useEffect(() => {
+    if (!isScanListening) return;
+    let buffer = "";
+    let clearTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearBufferSoon = () => {
+      if (clearTimer) clearTimeout(clearTimer);
+      clearTimer = setTimeout(() => {
+        buffer = "";
+      }, 120);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (event.key === "Enter") {
+        if (buffer.trim()) {
+          processScannedCode(buffer);
+          buffer = "";
+        }
+        return;
+      }
+      if (event.key === "Escape") {
+        buffer = "";
+        return;
+      }
+      if (event.key.length === 1) {
+        buffer += event.key;
+        clearBufferSoon();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      if (clearTimer) clearTimeout(clearTimer);
+    };
+  }, [isScanListening, processScannedCode]);
+
+  useEffect(() => {
+    if (!isScanListening) return;
+    scanInputRef.current?.focus();
+  }, [isScanListening]);
+
   const handleScan = () => {
+    if (isScanListening) {
+      setIsScanListening(false);
+      setScanInput("");
+      toast.info("Scanner stopped");
+      return;
+    }
     if (inventory.length === 0) {
       toast.error("No products found", {
         description: "Please refresh inventory first.",
       });
       return;
     }
-    const randomProduct =
-      inventory[Math.floor(Math.random() * inventory.length)];
-    const scanned = {
-      id: randomProduct.id,
-      name: randomProduct.name,
-      systemCount: randomProduct.systemCount,
-    };
-    setLastScannedItem(scanned);
-    if (showGrnForm) {
-      insertScannedItemToLines(scanned);
-      toast.success("Barcode Scanned", {
-        description: `${randomProduct.name} added to GRN line items`,
-      });
-      return;
-    }
-    toast.success("Barcode Scanned", {
-      description: `${randomProduct.name} scanned. Click View GRN to continue.`,
+
+    setIsScanListening(true);
+    setScanInput("");
+    toast.success("Scanner ready", {
+      description:
+        "Scan barcode now, then press Enter (or use hardware scanner Enter).",
     });
   };
 
+  const stopCameraScanner = useCallback(() => {
+    if (cameraScanTimerRef.current !== null) {
+      window.clearTimeout(cameraScanTimerRef.current);
+      cameraScanTimerRef.current = null;
+    }
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current
+        .getTracks()
+        .forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+    if (scanVideoRef.current) {
+      scanVideoRef.current.srcObject = null;
+    }
+    setIsCameraScanning(false);
+  }, []);
+
+  const startCameraScanner = useCallback(async () => {
+    setCameraError(null);
+    stopCameraScanner();
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError(
+          "Camera API not available on this browser.",
+        );
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+        },
+        audio: false,
+      });
+      cameraStreamRef.current = stream;
+
+      const video = scanVideoRef.current;
+      if (!video) {
+        setCameraError("Camera preview failed to initialize.");
+        return;
+      }
+      video.srcObject = stream;
+      await video.play();
+      setIsCameraScanning(true);
+
+      const BarcodeDetectorCtor = (window as any)
+        .BarcodeDetector as
+        | (new (opts?: { formats?: string[] }) => {
+            detect: (
+              source: HTMLVideoElement,
+            ) => Promise<Array<{ rawValue?: string }>>;
+          })
+        | undefined;
+
+      if (!BarcodeDetectorCtor) {
+        setCameraError(
+          "Auto-detect is not supported on this browser. Use scanner input below.",
+        );
+        return;
+      }
+
+      const detector = new BarcodeDetectorCtor({
+        formats: [
+          "ean_13",
+          "upc_a",
+          "upc_e",
+          "code_128",
+          "code_39",
+        ],
+      });
+
+      const detectLoop = async () => {
+        if (!scanVideoRef.current || !cameraStreamRef.current) {
+          return;
+        }
+        try {
+          const results = await detector.detect(
+            scanVideoRef.current,
+          );
+          const nextValue = results?.[0]?.rawValue?.trim();
+          if (nextValue) {
+            processScannedCode(nextValue);
+            if (navigator.vibrate) navigator.vibrate(60);
+            setShowCameraScanner(false);
+            return;
+          }
+        } catch {
+          // Keep polling for next frame.
+        }
+
+        cameraScanTimerRef.current = window.setTimeout(
+          detectLoop,
+          180,
+        );
+      };
+
+      detectLoop();
+    } catch (error) {
+      setCameraError(
+        error instanceof Error
+          ? error.message
+          : "Unable to open camera.",
+      );
+    }
+  }, [processScannedCode, stopCameraScanner]);
+
+  useEffect(() => {
+    if (showCameraScanner) {
+      startCameraScanner();
+      return;
+    }
+    stopCameraScanner();
+  }, [
+    showCameraScanner,
+    startCameraScanner,
+    stopCameraScanner,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      stopCameraScanner();
+    };
+  }, [stopCameraScanner]);
+
   const handleViewGrn = () => {
     setShowGrnForm(true);
-    if (lastScannedItem) {
-      insertScannedItemToLines(lastScannedItem);
-      setLastScannedItem(null);
-    }
   };
 
   const addLine = () =>
@@ -526,13 +941,27 @@ export function WarehouseReceiving() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Button
           onClick={handleScan}
           className="h-20 bg-[#00A3AD] hover:bg-[#0891B2] text-white flex flex-col gap-2 shadow-md"
         >
           <ScanBarcode className="w-8 h-8" />
-          <span className="font-semibold">Scan Barcode</span>
+          <span className="font-semibold">
+            {isScanListening ? "Stop Scanner" : "Scan Barcode"}
+          </span>
+        </Button>
+        <Button
+          onClick={() => {
+            setIsScanListening(false);
+            setScanInput("");
+            setShowCameraScanner(true);
+          }}
+          variant="outline"
+          className="h-20 border-[#0891B2] text-[#0891B2] hover:bg-[#0891B2]/10 flex flex-col gap-2"
+        >
+          <Camera className="w-8 h-8" />
+          <span className="font-semibold">Camera Scan</span>
         </Button>
         <Button
           onClick={handleViewGrn}
@@ -543,6 +972,91 @@ export function WarehouseReceiving() {
           <span className="font-semibold">View GRN</span>
         </Button>
       </div>
+      <Dialog
+        open={showCameraScanner}
+        onOpenChange={setShowCameraScanner}
+      >
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="text-[#111827]">
+              Mobile Camera Scanner
+            </DialogTitle>
+            <DialogDescription className="text-[#6B7280]">
+              Point camera to barcode. Successful scan
+              automatically increments Actual Received by 1.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-lg border border-[#111827]/10 bg-black overflow-hidden">
+              <video
+                ref={scanVideoRef}
+                className="w-full h-72 object-cover"
+                muted
+                playsInline
+              />
+            </div>
+            {cameraError ? (
+              <div className="text-sm text-[#B45309] bg-[#FFFBEB] border border-[#FDE68A] rounded-md px-3 py-2">
+                {cameraError}
+              </div>
+            ) : (
+              <div className="text-sm text-[#0F766E] bg-[#ECFEFF] border border-[#A5F3FC] rounded-md px-3 py-2">
+                {isCameraScanning
+                  ? "Scanner is active. Hold camera steady over barcode."
+                  : "Starting camera..."}
+              </div>
+            )}
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                onClick={() => setShowCameraScanner(false)}
+                className="border-[#111827]/20 text-[#111827]"
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {isScanListening && (
+        <Card className="bg-white border-[#00A3AD]/30 shadow-sm">
+          <CardContent className="pt-4 space-y-2">
+            <Label className="text-[#0F766E]">
+              Scanner Input
+            </Label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Input
+                ref={scanInputRef}
+                value={scanInput}
+                onChange={(e) => setScanInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    processScannedCode(scanInput);
+                    setScanInput("");
+                  }
+                }}
+                placeholder="Scan or type barcode/SKU then press Enter"
+                className="border-[#00A3AD]/30"
+              />
+              <Button
+                type="button"
+                onClick={() => {
+                  processScannedCode(scanInput);
+                  setScanInput("");
+                }}
+                className="bg-[#00A3AD] hover:bg-[#0891B2] text-white sm:min-w-32"
+              >
+                Submit Scan
+              </Button>
+            </div>
+            <p className="text-xs text-[#6B7280]">
+              Every valid scan increments matching line's Qty
+              Received by 1.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {showGrnForm && (
         <>

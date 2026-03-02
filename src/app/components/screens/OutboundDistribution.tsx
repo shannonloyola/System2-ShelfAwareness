@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
+import { toast } from "sonner";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { useState, useEffect } from "react";
 import { 
   Plus, 
   MessageSquare,
@@ -19,8 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
-import { toast } from "sonner";
 
 interface RetailerOrder {
   id: string;
@@ -107,6 +108,64 @@ const retailerPerformance = [
 
 export function OutboundDistribution() {
   const [showOrderForm, setShowOrderForm] = useState(false);
+  const [totalInventoryValue, setTotalInventoryValue] = useState<number | null>(null);
+  const [inventoryValueByCategory, setInventoryValueByCategory] = useState<
+    Array<{ category_name: string; total_value_php: number }>
+  >([]);
+
+  // Fetch Total Inventory Value
+  useEffect(() => {
+    const fetchTotalInventoryValue = async () => {
+      try {
+        const url = `https://${projectId}.supabase.co/rest/v1/v_total_inventory_value_php?select=total_inventory_value_php`;
+        const response = await fetch(url, {
+          method: "GET",
+          headers: {
+            apikey: publicAnonKey,
+            Authorization: `Bearer ${publicAnonKey}`,
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.length > 0 && data[0].total_inventory_value_php !== null) {
+            setTotalInventoryValue(data[0].total_inventory_value_php);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch total inventory value:", error);
+      }
+    };
+
+    fetchTotalInventoryValue();
+  }, []);
+
+  // Fetch Inventory Value by Category
+  useEffect(() => {
+    const fetchInventoryValueByCategory = async () => {
+      try {
+        const url = `https://${projectId}.supabase.co/rest/v1/v_inventory_value_by_category_php?select=category_name,total_value_php&order=total_value_php.desc`;
+        const response = await fetch(url, {
+          method: "GET",
+          headers: {
+            apikey: publicAnonKey,
+            Authorization: `Bearer ${publicAnonKey}`,
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setInventoryValueByCategory(data || []);
+        }
+      } catch (error) {
+        console.error("Failed to fetch inventory value by category:", error);
+      }
+    };
+
+    fetchInventoryValueByCategory();
+  }, []);
 
   const getPaymentStatusColor = (status: string) => {
     switch (status) {
@@ -155,7 +214,22 @@ export function OutboundDistribution() {
       </div>
 
       {/* Payment Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {/* Total Inventory Value (PHP) - NEW KPI */}
+        <Card className="bg-white border-[#111827]/10 shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-[#6B7280]">Total Inventory Value (PHP)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold mb-1 text-[#1A2B47]">
+              {totalInventoryValue !== null
+                ? `₱${(totalInventoryValue / 1000000).toFixed(2)}M`
+                : "Loading..."}
+            </div>
+            <p className="text-xs text-[#6B7280]">Current stock value</p>
+          </CardContent>
+        </Card>
+
         <Card className="bg-white border-[#111827]/10 shadow-sm">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-[#6B7280]">Total Outstanding</CardTitle>
@@ -416,6 +490,72 @@ export function OutboundDistribution() {
               </div>
             ))}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Inventory Value by Category - NEW SECTION */}
+      <Card className="bg-white border-[#111827]/10 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-[#111827] font-semibold">
+            Inventory Value by Category
+          </CardTitle>
+          <p className="text-sm text-[#6B7280]">Stock value distribution across product categories</p>
+        </CardHeader>
+        <CardContent>
+          {inventoryValueByCategory.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-[#E5E7EB]">
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-[#6B7280]">Category</th>
+                    <th className="text-right py-3 px-4 text-sm font-semibold text-[#6B7280]">Total Value (PHP)</th>
+                    <th className="text-right py-3 px-4 text-sm font-semibold text-[#6B7280]">Percentage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inventoryValueByCategory.map((category, index) => {
+                    const total = inventoryValueByCategory.reduce((sum, cat) => sum + cat.total_value_php, 0);
+                    const percentage = total > 0 ? (category.total_value_php / total) * 100 : 0;
+                    
+                    return (
+                      <tr key={index} className="border-b border-[#E5E7EB] hover:bg-[#F8FAFC] transition-colors">
+                        <td className="py-3 px-4 text-[#111827] font-medium">{category.category_name || "Uncategorized"}</td>
+                        <td className="py-3 px-4 text-right text-[#111827] font-semibold">
+                          ₱{category.total_value_php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <div className="w-16 h-2 bg-[#E5E7EB] rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-[#00A3AD]"
+                                style={{ width: `${percentage}%` }}
+                              />
+                            </div>
+                            <span className="text-sm text-[#6B7280] font-medium w-12 text-right">
+                              {percentage.toFixed(1)}%
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-[#1A2B47]">
+                    <td className="py-3 px-4 text-[#1A2B47] font-bold">Total</td>
+                    <td className="py-3 px-4 text-right text-[#1A2B47] font-bold">
+                      ₱{inventoryValueByCategory.reduce((sum, cat) => sum + cat.total_value_php, 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="py-3 px-4 text-right text-[#1A2B47] font-bold">100%</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-[#6B7280]">
+              No category data available
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
