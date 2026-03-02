@@ -16,6 +16,7 @@ import { StockManagement } from "./components/screens/StockManagement";
 import { OutboundDistribution } from "./components/screens/OutboundDistribution";
 import { DiscrepancyApprovals } from "./components/screens/DiscrepancyApprovals";
 import { PODetailPage, POList } from "./components/screens/POlist";
+import InventoryCount from "./components/screens/InventoryCount";
 
 export default function App() {
   return (
@@ -44,9 +45,10 @@ export default function App() {
                   <Route path="po-list/:poId" element={<PODetailPage />} />
                   <Route path="warehouse" element={<WarehouseReceiving />} />
                   <Route path="stock" element={<StockManagement />} />
+                  <Route path="count" element={<InventoryCount />} />
                   <Route path="distribution" element={<OutboundDistribution />} />
                   <Route path="discrepancies" element={<DiscrepancyApprovals />} />
-                  <Route path="*" element={<Navigate to="dashboard" replace />} />
+                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
                 </Routes>
               </DashboardLayout>
               <Toaster />
