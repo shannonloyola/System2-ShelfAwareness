@@ -29,6 +29,7 @@ interface PurchaseOrder {
   supplier_name: string;
   status: string;
   created_at: string;
+  expected_delivery_date: string | null;
   items: POItem[];
 }
 
@@ -38,6 +39,17 @@ const formatDate = (iso: string) =>
     day: "numeric",
     year: "numeric",
   });
+
+const formatDateOnly = (value: string | null) => {
+  if (!value) return "N/A";
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+};
 
 const normalizeStatus = (status: string) => status.trim().toLowerCase();
 
@@ -52,6 +64,7 @@ const getTrackerSteps = (status: string) => {
   const normalized = normalizeStatus(status);
   if (normalized === "posted") {
     return [
+      { label: "Pending Supplier Confirmation", completed: true, active: false },
       { label: "Order Received", completed: true, active: false },
       { label: "Packaging (Supplier)", completed: false, active: true },
       { label: "Handed to Freight", completed: false, active: false },
@@ -61,6 +74,7 @@ const getTrackerSteps = (status: string) => {
   }
   if (normalized === "in-transit") {
     return [
+      { label: "Pending Supplier Confirmation", completed: true, active: false },
       { label: "Order Received", completed: true, active: false },
       { label: "Packaging (Supplier)", completed: true, active: false },
       { label: "Handed to Freight", completed: false, active: true },
@@ -70,6 +84,7 @@ const getTrackerSteps = (status: string) => {
   }
   if (normalized === "received") {
     return [
+      { label: "Pending Supplier Confirmation", completed: true, active: false },
       { label: "Order Received", completed: true, active: false },
       { label: "Packaging (Supplier)", completed: true, active: false },
       { label: "Handed to Freight", completed: true, active: false },
@@ -78,7 +93,8 @@ const getTrackerSteps = (status: string) => {
     ];
   }
   return [
-    { label: "Order Received", completed: true, active: true },
+    { label: "Pending Supplier Confirmation", completed: false, active: true },
+    { label: "Order Received", completed: false, active: false },
     { label: "Packaging (Supplier)", completed: false, active: false },
     { label: "Handed to Freight", completed: false, active: false },
     { label: "Arrived at Customs (PH)", completed: false, active: false },
@@ -98,7 +114,7 @@ export function PODetailPage() {
     const [{ data: poData, error: poError }, { data: itemData, error: itemError }] = await Promise.all([
       supabase
         .from("purchase_orders")
-        .select("po_id, po_no, supplier_name, status, created_at")
+        .select("po_id, po_no, supplier_name, status, created_at, expected_delivery_date")
         .eq("po_id", poId)
         .maybeSingle(),
       supabase
@@ -122,6 +138,7 @@ export function PODetailPage() {
       supplier_name: poData.supplier_name ?? "N/A",
       status: poData.status ?? "Unknown",
       created_at: poData.created_at ?? new Date().toISOString(),
+      expected_delivery_date: poData.expected_delivery_date ?? null,
       items: (itemData ?? []).map((it) => ({
         po_item_id: it.po_item_id,
         item_name: it.item_name ?? "Unnamed item",
@@ -161,7 +178,7 @@ export function PODetailPage() {
           <CardTitle className="text-xl text-[#111827] font-bold">{po.po_no}</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
             <div className="flex items-center gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB]">
               <Building2 className="w-5 h-5 text-[#00A3AD] shrink-0" />
               <div>
@@ -188,6 +205,13 @@ export function PODetailPage() {
               <div>
                 <p className="text-xs text-[#6B7280]">Created</p>
                 <p className="text-sm font-semibold text-[#111827]">{formatDate(po.created_at)}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB]">
+              <Clock className="w-5 h-5 text-[#00A3AD] shrink-0" />
+              <div>
+                <p className="text-xs text-[#6B7280]">Expected Delivery</p>
+                <p className="text-sm font-semibold text-[#111827]">{formatDateOnly(po.expected_delivery_date)}</p>
               </div>
             </div>
           </div>
@@ -268,7 +292,7 @@ export function POList() {
     const [{ data: poData, error: poError }, { data: itemData, error: itemError }] = await Promise.all([
       supabase
         .from("purchase_orders")
-        .select("po_id, po_no, supplier_name, status, created_at")
+        .select("po_id, po_no, supplier_name, status, created_at, expected_delivery_date")
         .order("created_at", { ascending: false }),
       supabase
         .from("purchase_order_items")
@@ -301,6 +325,7 @@ export function POList() {
         supplier_name: po.supplier_name ?? "N/A",
         status: po.status ?? "Unknown",
         created_at: po.created_at ?? new Date().toISOString(),
+        expected_delivery_date: po.expected_delivery_date ?? null,
         items: map.get(po.po_id) ?? [],
       })),
     );
@@ -365,7 +390,8 @@ export function POList() {
                   <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">PO No.</th>
                   <th className="text-left px-4 py-3 font-semibold text-[#6B7280]">Supplier</th>
                   <th className="text-left px-4 py-3 font-semibold text-[#6B7280]">Status</th>
-                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">Created Date</th>
+                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">Date Created</th>
+                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">Expected Delivery</th>
                   <th className="text-center px-4 py-3 font-semibold text-[#6B7280]">Items</th>
                   <th className="px-4 py-3" />
                 </tr>
@@ -373,11 +399,11 @@ export function POList() {
               <tbody>
                 {loading && pos.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-12 text-[#6B7280]">Loading purchase orders...</td>
+                    <td colSpan={7} className="text-center py-12 text-[#6B7280]">Loading purchase orders...</td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-12 text-[#6B7280]">
+                    <td colSpan={7} className="text-center py-12 text-[#6B7280]">
                       {search ? "No purchase orders match your search." : "No purchase orders found."}
                     </td>
                   </tr>
@@ -392,6 +418,7 @@ export function POList() {
                       <td className="px-4 py-3 text-[#111827]">{po.supplier_name}</td>
                       <td className="px-4 py-3 text-[#6B7280]">{po.status}</td>
                       <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">{formatDate(po.created_at)}</td>
+                      <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">{formatDateOnly(po.expected_delivery_date)}</td>
                       <td className="px-4 py-3 text-center text-[#6B7280]">{po.items.length}</td>
                       <td className="px-4 py-3 text-right">
                         <span className="text-xs text-[#00A3AD] font-semibold hover:underline">View all →</span>

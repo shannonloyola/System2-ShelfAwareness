@@ -24,6 +24,7 @@ import {
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Textarea } from "../ui/textarea";
 import {
   Select,
   SelectContent,
@@ -200,6 +201,7 @@ export function ProductMaster() {
     unitPrice: "",
     currencyCode: "PHP", // âœ… default
     currentStock: "0",
+    productDescription: "",
   });
   const [editFormData, setEditFormData] = useState({
     productName: "",
@@ -1491,6 +1493,23 @@ export function ProductMaster() {
                       setFormData({
                         ...formData,
                         currentStock: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+
+                {/* Product Description - Full Width */}
+                <div className="col-span-2">
+                  <Label>Product Description</Label>
+                  <Textarea
+                    placeholder="Enter product description (optional)"
+                    className="mt-2 border-[#111827]/10"
+                    rows={3}
+                    value={formData.productDescription}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        productDescription: e.target.value,
                       })
                     }
                   />

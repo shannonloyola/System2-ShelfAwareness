@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Calendar,
   Plus,
   Send,
   Download,
+  MessageCircle,
+  Mail,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
@@ -27,6 +30,8 @@ interface PurchaseOrderRow {
   supplier_name: string | null;
   status: string | null;
   created_at: string | null;
+  expected_delivery_date: string | null;
+  preferred_communication: string | null;
 }
 
 interface PurchaseOrderItemRow {
@@ -43,13 +48,27 @@ interface ProductRow {
   barcode: string | null;
 }
 
-const DEFAULT_PO_STATUS = "Draft";
+interface LineItemForm {
+  formId: string;
+  editingPoItemId: string | null;
+  product: string;
+  qty: number;
+}
+
+const DEFAULT_PO_STATUS = "Pending Supplier Confirmation";
 
 const normalizeStatus = (status: string | null) => (status ?? "").trim().toLowerCase();
 
 const formatDate = (value: string | null) => {
   if (!value) return "N/A";
   const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString();
+};
+
+const formatDateOnly = (value?: string | null) => {
+  if (!value) return "N/A";
+  const parsed = new Date(`${value}T00:00:00`);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleDateString();
 };
@@ -108,8 +127,7 @@ export function InboundProcurement() {
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
   const [preferredCommunication, setPreferredCommunication] = useState("");
 
-  const [newItemProduct, setNewItemProduct] = useState("");
-  const [newItemQty, setNewItemQty] = useState<number>(1);
+  const [lineItemForms, setLineItemForms] = useState<LineItemForm[]>([]);
 
   const [loadingPOs, setLoadingPOs] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -120,7 +138,7 @@ export function InboundProcurement() {
     setLoadingPOs(true);
     const { data, error } = await supabase
       .from("purchase_orders")
-      .select("po_id, po_no, supplier_name, status, created_at")
+      .select("po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication")
       .order("created_at", { ascending: false });
     setLoadingPOs(false);
 
@@ -203,9 +221,11 @@ export function InboundProcurement() {
               po_no: poNumber,
               supplier_name: supplierName.trim(),
               status: DEFAULT_PO_STATUS,
+              expected_delivery_date: expectedDeliveryDate || null,
+              preferred_communication: preferredCommunication || null,
             },
           ])
-          .select("po_id, po_no, supplier_name, status, created_at")
+          .select("po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication")
           .single();
 
         if (!error && data) return data as PurchaseOrderRow;
@@ -232,44 +252,94 @@ export function InboundProcurement() {
     } finally {
       setCreatingPO(false);
     }
-  }, [fetchPOItems, fetchPurchaseOrders, generateUniquePONumber, poNo, supplierName]);
+  }, [expectedDeliveryDate, fetchPOItems, fetchPurchaseOrders, generateUniquePONumber, poNo, preferredCommunication, supplierName]);
 
-  const addPOItem = useCallback(async () => {
+  const savePOItem = useCallback(async (formId: string) => {
+    const form = lineItemForms.find((f) => f.formId === formId);
+    if (!form) return;
+
     if (!selectedPO?.po_id) {
-      toast.error("Cannot add line item", { description: "Select a purchase order first" });
+      toast.error("Cannot save line item", { description: "Select a purchase order first" });
       return;
     }
-    if (!newItemProduct) {
-      toast.error("Cannot add line item", { description: "Product is required" });
+    if (!form.product) {
+      toast.error("Cannot save line item", { description: "Product is required" });
       return;
     }
-    if (!Number.isFinite(newItemQty) || newItemQty <= 0) {
-      toast.error("Cannot add line item", { description: "Quantity must be greater than 0" });
+    if (!Number.isFinite(form.qty) || form.qty <= 0) {
+      toast.error("Cannot save line item", { description: "Quantity must be greater than 0" });
       return;
     }
 
     setAddingItem(true);
-    const { error } = await supabase
-      .from("purchase_order_items")
-      .insert([
-        {
-          po_id: selectedPO.po_id,
-          item_name: newItemProduct,
-          quantity: newItemQty,
-        },
-      ]);
+
+    let error: unknown = null;
+    if (form.editingPoItemId) {
+      const result = await supabase
+        .from("purchase_order_items")
+        .update({ quantity: form.qty })
+        .eq("po_id", selectedPO.po_id)
+        .eq("po_item_id", form.editingPoItemId);
+      error = result.error;
+    } else {
+      const duplicateExists = selectedPOItems.some(
+        (item) => (item.item_name ?? "").trim().toLowerCase() === form.product.trim().toLowerCase(),
+      );
+      if (duplicateExists) {
+        setAddingItem(false);
+        toast.error("Cannot save line item", { description: "Duplicate line item is not allowed" });
+        return;
+      }
+      const result = await supabase
+        .from("purchase_order_items")
+        .insert([
+          {
+            po_id: selectedPO.po_id,
+            item_name: form.product,
+            quantity: form.qty,
+          },
+        ]);
+      error = result.error;
+    }
     setAddingItem(false);
 
     if (error) {
-      toast.error("Failed to add line item", { description: toErrorMessage(error) });
+      toast.error("Failed to save line item", { description: toErrorMessage(error) });
       return;
     }
 
-    toast.success("Line item added");
-    setNewItemProduct("");
-    setNewItemQty(1);
+    toast.success(form.editingPoItemId ? "Line item quantity updated" : "Line item added");
+    setLineItemForms((prev) => prev.filter((f) => f.formId !== formId));
     await fetchPOItems(selectedPO.po_id);
-  }, [fetchPOItems, newItemProduct, newItemQty, selectedPO?.po_id]);
+  }, [fetchPOItems, lineItemForms, selectedPO?.po_id, selectedPOItems]);
+
+  const deletePOItem = useCallback(async (formId: string) => {
+    const form = lineItemForms.find((f) => f.formId === formId);
+    if (!form) return;
+
+    if (!form.editingPoItemId) {
+      setLineItemForms((prev) => prev.filter((f) => f.formId !== formId));
+      return;
+    }
+    if (!selectedPO?.po_id) return;
+
+    setAddingItem(true);
+    const { error } = await supabase
+      .from("purchase_order_items")
+      .delete()
+      .eq("po_id", selectedPO.po_id)
+      .eq("po_item_id", form.editingPoItemId);
+    setAddingItem(false);
+
+    if (error) {
+      toast.error("Failed to delete line item", { description: toErrorMessage(error) });
+      return;
+    }
+
+    toast.success("Line item deleted");
+    setLineItemForms((prev) => prev.filter((f) => f.formId !== formId));
+    await fetchPOItems(selectedPO.po_id);
+  }, [fetchPOItems, lineItemForms, selectedPO?.po_id]);
 
   useEffect(() => {
     void fetchPurchaseOrders();
@@ -296,6 +366,7 @@ export function InboundProcurement() {
     setShowPOForm(nextValue);
     setSelectedPO(null);
     setSelectedPOItems([]);
+    setLineItemForms([]);
     setSupplierName("");
     setPoNo("");
     setExpectedDeliveryDate("");
@@ -312,8 +383,7 @@ export function InboundProcurement() {
   const selectPO = (po: PurchaseOrderRow) => {
     setSelectedPO(po);
     setShowPOForm(false);
-    setNewItemProduct("");
-    setNewItemQty(1);
+    setLineItemForms([]);
   };
 
   const showDetails = !!selectedPO && !showPOForm;
@@ -333,8 +403,8 @@ export function InboundProcurement() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <Card className="bg-white border-[#111827]/10 shadow-sm">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+        <Card className="bg-white border-[#111827]/10 shadow-sm h-fit self-start">
           <CardHeader>
             <CardTitle className="text-[#111827] font-semibold">Japan P.O. Management</CardTitle>
           </CardHeader>
@@ -383,7 +453,12 @@ export function InboundProcurement() {
                               {po.status ?? "Unknown"}
                             </span>
                           </div>
-                          <div className="text-xs text-[#6B7280]">{formatDate(po.created_at)}</div>
+                          <div className="text-xs text-[#6B7280]">
+                            <span className="font-semibold">Date Created:</span> {formatDate(po.created_at)}
+                          </div>
+                          <div className="text-xs text-[#6B7280]">
+                            <span className="font-semibold">Expected Delivery:</span> {formatDateOnly(po.expected_delivery_date)}
+                          </div>
                         </div>
                       ))
                     )}
@@ -440,12 +515,15 @@ export function InboundProcurement() {
 
                 <div>
                   <Label>Expected Delivery Date</Label>
-                  <Input
-                    type="date"
-                    value={expectedDeliveryDate}
-                    onChange={(e) => setExpectedDeliveryDate(e.target.value)}
-                    className="mt-2 border-[#111827]/10 rounded-lg"
-                  />
+                  <div className="relative mt-2">
+                    <Input
+                      type="date"
+                      value={expectedDeliveryDate}
+                      onChange={(e) => setExpectedDeliveryDate(e.target.value)}
+                      className="border-[#111827]/10 rounded-lg pr-10 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-10 [&::-webkit-calendar-picker-indicator]:cursor-pointer"
+                    />
+                    <Calendar className="w-4 h-4 text-[#6B7280] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
                 </div>
 
                 <div>
@@ -455,9 +533,24 @@ export function InboundProcurement() {
                       <SelectValue placeholder="Choose communication method..." />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                      <SelectItem value="viber">Viber</SelectItem>
-                      <SelectItem value="email">Email</SelectItem>
+                      <SelectItem value="whatsapp">
+                        <div className="flex items-center gap-2">
+                          <MessageCircle className="w-4 h-4 text-[#25D366]" />
+                          <span>WhatsApp</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="viber">
+                        <div className="flex items-center gap-2">
+                          <MessageCircle className="w-4 h-4 text-[#7360F2]" />
+                          <span>Viber</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="email">
+                        <div className="flex items-center gap-2">
+                          <Mail className="w-4 h-4 text-[#6B7280]" />
+                          <span>Email</span>
+                        </div>
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -495,6 +588,10 @@ export function InboundProcurement() {
                     <Label className="text-[#6B7280]">Supplier</Label>
                     <div className="text-[#111827] mt-1">{selectedPO.supplier_name ?? "N/A"}</div>
                   </div>
+                  <div>
+                    <Label className="text-[#6B7280]">Expected Delivery</Label>
+                    <div className="text-[#111827] mt-1">{formatDateOnly(selectedPO.expected_delivery_date)}</div>
+                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -507,7 +604,26 @@ export function InboundProcurement() {
                     selectedPOItems.map((item) => (
                       <div
                         key={item.po_item_id}
-                        className="flex items-center justify-between rounded-lg border border-[#E5E7EB] p-3"
+                        onClick={() => {
+                          setLineItemForms((prev) => {
+                            const exists = prev.some((f) => f.editingPoItemId === item.po_item_id);
+                            if (exists) return prev;
+                            return [
+                              ...prev,
+                              {
+                                formId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                                editingPoItemId: item.po_item_id,
+                                product: item.item_name ?? "",
+                                qty: item.quantity ?? 1,
+                              },
+                            ];
+                          });
+                        }}
+                        className={`flex items-center justify-between rounded-lg border p-3 cursor-pointer transition-colors ${
+                          lineItemForms.some((f) => f.editingPoItemId === item.po_item_id)
+                            ? "border-[#00A3AD] bg-[#00A3AD]/5"
+                            : "border-[#E5E7EB] hover:bg-[#F8FAFC]"
+                        }`}
                       >
                         <div className="text-sm text-[#111827]">{item.item_name ?? "Unnamed item"}</div>
                         <div className="text-sm font-semibold text-[#111827]">Qty: {item.quantity ?? 0}</div>
@@ -517,41 +633,87 @@ export function InboundProcurement() {
                 </div>
 
                 <div className="space-y-3 rounded-lg border border-[#E5E7EB] p-3">
-                  <Label>Add Line Item</Label>
-                  <Select value={newItemProduct || undefined} onValueChange={setNewItemProduct}>
-                    <SelectTrigger className="border-[#111827]/10 rounded-lg">
-                      <SelectValue placeholder="Select product from master..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {products.map((product, idx) => {
-                        const label = buildProductLabel(product);
-                        if (!label) return null;
-                        return (
-                          <SelectItem key={`${label}-${idx}`} value={label}>
-                            {label}
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
-
-                  <Input
-                    type="number"
-                    min={1}
-                    value={newItemQty}
-                    onChange={(e) => setNewItemQty(Number(e.target.value))}
-                    className="border-[#111827]/10 rounded-lg"
-                    placeholder="Quantity"
-                  />
-
+                  <Label>Line Item Actions</Label>
                   <Button
-                    onClick={() => void addPOItem()}
-                    disabled={addingItem}
+                    onClick={() =>
+                      setLineItemForms((prev) => [
+                        ...prev,
+                        {
+                          formId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                          editingPoItemId: null,
+                          product: "",
+                          qty: 1,
+                        },
+                      ])
+                    }
                     className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
                   >
                     <Plus className="w-4 h-4 mr-2" />
-                    {addingItem ? "Adding..." : "Add Line Item"}
+                    Add Line Item
                   </Button>
+
+                  {lineItemForms.map((form) => (
+                    <div key={form.formId} className="space-y-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB] p-3">
+                      <Label>{form.editingPoItemId ? "Edit Quantity" : "New Line Item"}</Label>
+                      <Select
+                        value={form.product || undefined}
+                        onValueChange={(value) =>
+                          setLineItemForms((prev) =>
+                            prev.map((f) => (f.formId === form.formId ? { ...f, product: value } : f)),
+                          )
+                        }
+                        disabled={!!form.editingPoItemId}
+                      >
+                        <SelectTrigger className="border-[#111827]/10 rounded-lg">
+                          <SelectValue placeholder="Select product from master..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {products.map((product, idx) => {
+                            const label = buildProductLabel(product);
+                            if (!label) return null;
+                            return (
+                              <SelectItem key={`${label}-${idx}`} value={label}>
+                                {label}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+
+                      <Input
+                        type="number"
+                        min={1}
+                        value={form.qty}
+                        onChange={(e) =>
+                          setLineItemForms((prev) =>
+                            prev.map((f) =>
+                              f.formId === form.formId ? { ...f, qty: Number(e.target.value) } : f,
+                            ),
+                          )
+                        }
+                        className="border-[#111827]/10 rounded-lg"
+                        placeholder="Quantity"
+                      />
+
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => void savePOItem(form.formId)}
+                          disabled={addingItem}
+                          className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+                        >
+                          Save Line Item
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => void deletePOItem(form.formId)}
+                          disabled={addingItem}
+                          className="border-[#DC2626] text-[#DC2626] hover:bg-[#DC2626]/10"
+                        >
+                          Delete Item
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="flex gap-3">
