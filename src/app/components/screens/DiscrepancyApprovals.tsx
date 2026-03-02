@@ -93,8 +93,7 @@ export function DiscrepancyApprovals() {
   const fetchDiscrepancies = async () => {
     setIsLoading(true);
     try {
-      const statusQuery =
-        statusFilter === "all" ? "" : `&status=eq.${encodeURIComponent(statusFilter)}`;
+      const statusQuery = "";
 
       const url =
         `https://${projectId}.supabase.co/rest/v1/grn_drafts` +
@@ -138,7 +137,7 @@ export function DiscrepancyApprovals() {
 };
 
   const discrepancyCards = grns
-  .filter(grn => normalizeStatus(grn.status) === "pending")
+  .filter(grn => normalizeStatus(grn.review_status) === "pending")
   .flatMap(grn =>
     (grn.grn_draft_lines || [])
       .filter(l => Number(l.qty_expected) !== Number(l.qty_received))
@@ -148,7 +147,7 @@ const updateGrnStatus = async (grnId: string, action: "approve" | "reject") => {
   try {
     console.log("Updating GRN ID:", grnId, "action:", action);
 
-    // update variances (keep your existing loop)
+    // update variances 
     const grnToUpdate = grns.find(g => g.id === grnId);
     if (grnToUpdate?.grn_draft_lines?.length) {
       for (const line of grnToUpdate.grn_draft_lines) {
@@ -179,7 +178,7 @@ const updateGrnStatus = async (grnId: string, action: "approve" | "reject") => {
     const payload =
   action === "approve"
     ? { status: "posted", review_status: "approved" }
-    : { status: "draft", review_status: "rejected", has_discrepancy: false };
+    : { status: "draft", review_status: "rejected" };
 
     const res = await fetch(
       `https://${projectId}.supabase.co/rest/v1/grn_drafts?id=eq.${grnId}`,
@@ -336,7 +335,7 @@ const updateGrnStatus = async (grnId: string, action: "approve" | "reject") => {
                 // Positive variance = Overage, Negative variance = Shortage
                 const variance = line.qty_received - line.qty_expected;
                 
-                const uiStatus = normalizeStatus(grn.status);
+                const uiStatus = normalizeStatus(grn.review_status);
                 const canTakeAction = uiStatus === "pending";
 
                 return (
@@ -413,14 +412,14 @@ const updateGrnStatus = async (grnId: string, action: "approve" | "reject") => {
                           {canTakeAction ? (
                             <>
                               <Button
-                                onClick={() => updateGrnStatus(grn.id, "posted")}
+                                onClick={() => updateGrnStatus(grn.id, "approve")}
                                 className="bg-[#00A3AD] hover:bg-[#0891B2] text-white w-full"
                               >
                                 <CheckCircle className="w-4 h-4 mr-2" />
                                 Approve Discrepancy
                               </Button>
                               <Button
-                                onClick={() => updateGrnStatus(grn.id, "draft")}
+                                onClick={() => updateGrnStatus(grn.id, "reject")}
                                 variant="outline"
                                 className="border-[#DC2626] text-[#DC2626] hover:bg-[#DC2626]/10 w-full"
                               >
