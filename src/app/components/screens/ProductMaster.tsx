@@ -60,6 +60,13 @@ interface Product {
   createdAt?: string;
 }
 
+type SupabaseErrorPayload = {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+};
+
 type ProductCategory = {
   id: string;
   name: string;
@@ -103,6 +110,50 @@ const sanitizeBarcodeInput = (value: string): string =>
 const isValidBarcode = (value: string): boolean =>
   /^\d{13}$/.test(value);
 
+const parseSupabaseError = (
+  raw: string,
+): SupabaseErrorPayload | null => {
+  try {
+    return JSON.parse(raw) as SupabaseErrorPayload;
+  } catch {
+    return null;
+  }
+};
+
+const toProductValidationMessage = (
+  err: SupabaseErrorPayload | null,
+  fallback: string,
+): string => {
+  const merged =
+    `${err?.message || ""} ${err?.details || ""} ${err?.hint || ""}`.toLowerCase();
+
+  if (
+    err?.code === "23505" &&
+    (merged.includes("sku") ||
+      merged.includes("products_sku_unique"))
+  ) {
+    return "Duplicate SKU detected. Please use a different SKU.";
+  }
+
+  if (
+    err?.code === "23505" &&
+    (merged.includes("barcode") ||
+      merged.includes("products_barcode_unique"))
+  ) {
+    return "Duplicate barcode detected. Please use a different barcode.";
+  }
+
+  if (
+    err?.code === "23502" ||
+    err?.code === "23514" ||
+    err?.code === "22P02"
+  ) {
+    return "Required fields are missing or invalid. Please complete all required fields.";
+  }
+
+  return fallback;
+};
+
 export function ProductMaster() {
   const [searchTerm, setSearchTerm] = useState("");
   const [parentCategoryFilter, setParentCategoryFilter] =
@@ -139,28 +190,28 @@ export function ProductMaster() {
   ] = useState<string>("");
   const [selectedChildCategoryId, setSelectedChildCategoryId] =
     useState<string>("");
- const [formData, setFormData] = useState({
-  productName: "",
-  category_id: "",
-  barcode: "",
-  unit: "",
-  supplier: "",
-  location: "",
-  unitPrice: "",
-  currencyCode: "PHP", // ✅ default
-  currentStock: "0",
-});
+  const [formData, setFormData] = useState({
+    productName: "",
+    category_id: "",
+    barcode: "",
+    unit: "",
+    supplier: "",
+    location: "",
+    unitPrice: "",
+    currencyCode: "PHP", // âœ… default
+    currentStock: "0",
+  });
   const [editFormData, setEditFormData] = useState({
-  productName: "",
-  category_id: "",
-  unit: "",
-  barcode: "",
-  supplier: "",
-  location: "",
-  unitPrice: "0",
-  currencyCode: "PHP",
-  currentStock: "0",
-});
+    productName: "",
+    category_id: "",
+    unit: "",
+    barcode: "",
+    supplier: "",
+    location: "",
+    unitPrice: "0",
+    currencyCode: "PHP",
+    currentStock: "0",
+  });
 
   const addDebugLog = (
     type: string,
@@ -176,7 +227,6 @@ export function ProductMaster() {
     setDebugLogs((prev) => [log, ...prev]);
     console.log(`[${type}]`, message, data || "");
   };
-
   const loadProducts = async () => {
     const productsUrl = `https://${projectId}.supabase.co/rest/v1/products?select=product_id,product_uuid,sku,product_name,unit,category,category_id,barcode,supplier,warehouse_location,unit_price,currency_code,inventory_on_hand,created_at`;
     const inventoryUrl = `https://${projectId}.supabase.co/rest/v1/v_products_with_inventory?select=product_id,qty_on_hand,updated_at`;
@@ -441,7 +491,7 @@ export function ProductMaster() {
   }, [products]);
 
   const unitOptions = ["bottle", "box", "pcs"] as const;
-  const currencyOptions = ["PHP", "USD", "EUR"] as const;
+  const currencyOptions = ["PHP", "JPY", "USD"] as const;
 
   const getCategoryColor = (category: string) => {
     switch (category) {
@@ -470,7 +520,6 @@ export function ProductMaster() {
     const random = Math.floor(Math.random() * 1000);
     return `${prefix}-${categoryCode}-${random}`;
   };
-
   const parseCsvLine = (line: string) => {
     const values: string[] = [];
     let current = "";
@@ -652,7 +701,16 @@ export function ProductMaster() {
           },
         );
         if (!response.ok) {
-          throw new Error(await response.text());
+          const rawError = await response.text();
+          const parsedError = parseSupabaseError(rawError);
+          const fallback =
+            parsedError?.message ||
+            parsedError?.hint ||
+            parsedError?.details ||
+            rawError;
+          throw new Error(
+            toProductValidationMessage(parsedError, fallback),
+          );
         }
         const insertedRows = await response.json();
         const insertedProductId = insertedRows?.[0]?.product_id;
@@ -686,20 +744,20 @@ export function ProductMaster() {
   };
 
   const openEditProduct = (product: Product) => {
-  setSelectedProduct(product);
-  setEditFormData({
-    productName: product.name,
-    category_id: product.category_id || "",
-    unit: product.unit || "",
-    barcode: product.barcode || "",
-    supplier: product.supplier || "",
-    location: product.location || "",
-    unitPrice: String(product.unitPrice ?? 0),
-    currencyCode: (product as any).currencyCode || "PHP",
-    currentStock: String(product.currentStock ?? 0),
-  });
-  setShowEditDialog(true);
-};
+    setSelectedProduct(product);
+    setEditFormData({
+      productName: product.name,
+      category_id: product.category_id || "",
+      unit: product.unit || "",
+      barcode: product.barcode || "",
+      supplier: product.supplier || "",
+      location: product.location || "",
+      unitPrice: String(product.unitPrice ?? 0),
+      currencyCode: (product as any).currencyCode || "PHP",
+      currentStock: String(product.currentStock ?? 0),
+    });
+    setShowEditDialog(true);
+  };
 
   const syncInventoryOnHand = async (
     productUuid: string,
@@ -773,7 +831,6 @@ export function ProductMaster() {
       },
     );
   };
-
   const handleUpdateProduct = async () => {
     if (!selectedProduct) return;
     const resolvedUpdateCategoryId =
@@ -805,7 +862,7 @@ export function ProductMaster() {
       });
       return;
     }
-    
+
     if (!isValidBarcode(editFormData.barcode)) {
       toast.error("Invalid Barcode", {
         description: "Barcode must be exactly 13 digits",
@@ -844,7 +901,19 @@ export function ProductMaster() {
         },
       );
       if (!updateRes.ok) {
-        throw new Error(await updateRes.text());
+        const errorData = await updateRes.text();
+        const parsedError = parseSupabaseError(errorData);
+        const fallbackErrorMessage =
+          parsedError?.message ||
+          parsedError?.hint ||
+          parsedError?.details ||
+          errorData;
+        throw new Error(
+          toProductValidationMessage(
+            parsedError,
+            fallbackErrorMessage,
+          ),
+        );
       }
       await patchCategoryDisplay(
         selectedProduct.id,
@@ -1021,7 +1090,8 @@ export function ProductMaster() {
         warehouse_location: formData.location.trim(),
         unit_price: parseFloat(formData.unitPrice),
         currency_code: formData.currencyCode || "PHP",
-        inventory_on_hand: parseInt(formData.currentStock || "0", 10) || 0,
+        inventory_on_hand:
+          parseInt(formData.currentStock || "0", 10) || 0,
         created_at: new Date().toISOString(),
       };
 
@@ -1064,19 +1134,16 @@ export function ProductMaster() {
       if (response.status !== 201) {
         const errorData = await response.text();
 
-        let errorMessage = errorData;
-        let parsedError = null;
-
-        try {
-          parsedError = JSON.parse(errorData);
-          errorMessage =
-            parsedError.message ||
-            parsedError.hint ||
-            parsedError.details ||
-            errorData;
-        } catch {
-          errorMessage = errorData;
-        }
+        const parsedError = parseSupabaseError(errorData);
+        const fallbackErrorMessage =
+          parsedError?.message ||
+          parsedError?.hint ||
+          parsedError?.details ||
+          errorData;
+        const errorMessage = toProductValidationMessage(
+          parsedError,
+          fallbackErrorMessage,
+        );
 
         setLastResponse({
           error: true,
@@ -1091,9 +1158,7 @@ export function ProductMaster() {
           `API Error Response (${response.status})`,
           { rawError: errorData, parsedError },
         );
-        throw new Error(
-          `HTTP ${response.status}: ${errorMessage}`,
-        );
+        throw new Error(errorMessage);
       }
 
       const insertedRows = await response.json();
@@ -1131,7 +1196,7 @@ export function ProductMaster() {
         supplier: "",
         location: "",
         unitPrice: "",
-        currencyCode: "",
+        currencyCode: "PHP",
         currentStock: "0",
       });
       setShowNewProductDialog(false);
@@ -1147,9 +1212,7 @@ export function ProductMaster() {
         errorMessage,
       );
       toast.error("Failed to Add Product", {
-        description:
-          errorMessage +
-          " - Check Debug Panel below for details",
+        description: errorMessage,
       });
     } finally {
       setIsSubmitting(false);
@@ -1392,22 +1455,30 @@ export function ProductMaster() {
                 <div>
                   <Label>Currency Code</Label>
                   <Select
-                    value={editFormData.currencyCode}
+                    value={formData.currencyCode}
                     onValueChange={(value) =>
-                      setEditFormData({ ...editFormData, currencyCode: value })
+                      setFormData({
+                        ...formData,
+                        currencyCode: value,
+                      })
                     }
                   >
                     <SelectTrigger className="mt-2 border-[#111827]/10">
                       <SelectValue placeholder="Select currency" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="PHP">PHP</SelectItem>
-                      <SelectItem value="USD">USD</SelectItem>
-                      <SelectItem value="EUR">EUR</SelectItem>
+                      {currencyOptions.map((currency) => (
+                        <SelectItem
+                          key={currency}
+                          value={currency}
+                        >
+                          {currency}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
-                
+
                 <div>
                   <Label>Current Stock</Label>
                   <Input
@@ -1446,7 +1517,6 @@ export function ProductMaster() {
           </Dialog>
         </div>
       </div>
-
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardContent className="pt-6">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -1637,7 +1707,9 @@ export function ProductMaster() {
                     </td>
                     <td className="py-4 px-4 text-right text-sm text-[#111827] font-medium">
                       {product.currencyCode || "PHP"}{" "}
-                      {Number(product.unitPrice || 0).toLocaleString(undefined, {
+                      {Number(
+                        product.unitPrice || 0,
+                      ).toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}
@@ -1719,11 +1791,11 @@ export function ProductMaster() {
                 </div>
               </div>
               <div>
-              <span className="text-[#6B7280]">Currency</span>
-              <div className="font-medium text-[#111827]">
-                {selectedProduct.currencyCode || "-"}
+                <span className="text-[#6B7280]">Currency</span>
+                <div className="font-medium text-[#111827]">
+                  {selectedProduct.currencyCode || "-"}
+                </div>
               </div>
-            </div>
               <div>
                 <span className="text-[#6B7280]">
                   Product Name
@@ -1764,9 +1836,11 @@ export function ProductMaster() {
               <div>
                 <span className="text-[#6B7280]">Price</span>
                 <div className="font-medium text-[#111827]">
-                {selectedProduct.currencyCode || "PHP"}{" "}
-                {Number(selectedProduct.unitPrice || 0).toFixed(2)}
-              </div>
+                  {selectedProduct.currencyCode || "PHP"}{" "}
+                  {Number(
+                    selectedProduct.unitPrice || 0,
+                  ).toFixed(2)}
+                </div>
               </div>
               <div>
                 <span className="text-[#6B7280]">
@@ -1917,6 +1991,29 @@ export function ProductMaster() {
                   })
                 }
               />
+            </div>
+            <div>
+              <Label>Currency Code</Label>
+              <Select
+                value={editFormData.currencyCode}
+                onValueChange={(value) =>
+                  setEditFormData({
+                    ...editFormData,
+                    currencyCode: value,
+                  })
+                }
+              >
+                <SelectTrigger className="mt-2 border-[#111827]/10">
+                  <SelectValue placeholder="Select currency" />
+                </SelectTrigger>
+                <SelectContent>
+                  {currencyOptions.map((currency) => (
+                    <SelectItem key={currency} value={currency}>
+                      {currency}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label>Current Stock</Label>

@@ -52,6 +52,7 @@ type GrnDraft = {
   received_date: string;
   notes: string | null;
   status: string;
+  review_status: string | null;
   created_by: string | null;
   has_discrepancy: boolean;
   grn_draft_lines: GrnDraftLine[];
@@ -97,7 +98,7 @@ export function DiscrepancyApprovals() {
 
       const url =
         `https://${projectId}.supabase.co/rest/v1/grn_drafts` +
-        `?select=id,grn_number,received_date,notes,status,created_by,has_discrepancy,` +
+        `?select=id,grn_number,received_date,notes,status, review_status, created_by,has_discrepancy,` +
         `grn_draft_lines(id,grn_draft_id,line_no,product_id,product_name,sku,qty_expected,qty_received,discrepancy_reason,variance)` +
         `&has_discrepancy=eq.true` +
         statusQuery +
@@ -115,6 +116,7 @@ export function DiscrepancyApprovals() {
 
       const data = (await res.json()) as GrnDraft[];
       setGrns(data);
+      console.log("Fetched GRN statuses sample:", data.slice(0, 5).map(g => ({ id: g.id, status: g.status })));
     } catch (err) {
       toast.error("Failed to load discrepancies", {
         description: err instanceof Error ? err.message : "Unknown error",
@@ -128,95 +130,94 @@ export function DiscrepancyApprovals() {
     fetchDiscrepancies();
   }, [statusFilter]);
 
-  const discrepancyCards = grns.flatMap((grn) =>
-    (grn.grn_draft_lines || [])
-      .filter((l) => Number(l.qty_expected) !== Number(l.qty_received))
-      .map((line) => ({ grn, line })),
-  );
+  const normalizeStatus = (rawStatus: string | null | undefined) => {
+  const s = (rawStatus ?? "").toLowerCase();
+  if (s === "approved") return "approved";
+  if (s === "rejected") return "rejected";
+  return "pending";
+};
 
-  const updateGrnStatus = async (grnId: string, status: "approved" | "rejected") => {
-    try {
-      // First, calculate and update variance for all lines in this GRN
-      const grnToUpdate = grns.find(g => g.id === grnId);
-      
-      if (grnToUpdate && grnToUpdate.grn_draft_lines) {
-        // Update variance for each line
-        for (const line of grnToUpdate.grn_draft_lines) {
-          const calculatedVariance = Number(line.qty_received) - Number(line.qty_expected);
-          
-          // Update the line's variance in the database
-          const lineRes = await fetch(
-            `https://${projectId}.supabase.co/rest/v1/grn_draft_lines?id=eq.${line.id}`,
-            {
-              method: "PATCH",
-              headers: {
-                apikey: publicAnonKey,
-                Authorization: `Bearer ${publicAnonKey}`,
-                "Content-Type": "application/json",
-                Prefer: "return=minimal",
-              },
-              body: JSON.stringify({ variance: calculatedVariance }),
+  const discrepancyCards = grns
+  .filter(grn => normalizeStatus(grn.status) === "pending")
+  .flatMap(grn =>
+    (grn.grn_draft_lines || [])
+      .filter(l => Number(l.qty_expected) !== Number(l.qty_received))
+      .map(line => ({ grn, line }))
+  );
+const updateGrnStatus = async (grnId: string, action: "approve" | "reject") => {
+  try {
+    console.log("Updating GRN ID:", grnId, "action:", action);
+
+    // update variances (keep your existing loop)
+    const grnToUpdate = grns.find(g => g.id === grnId);
+    if (grnToUpdate?.grn_draft_lines?.length) {
+      for (const line of grnToUpdate.grn_draft_lines) {
+        const calculatedVariance = Number(line.qty_received) - Number(line.qty_expected);
+
+        const lineRes = await fetch(
+          `https://${projectId}.supabase.co/rest/v1/grn_draft_lines?id=eq.${line.id}`,
+          {
+            method: "PATCH",
+            headers: {
+              apikey: publicAnonKey,
+              Authorization: `Bearer ${publicAnonKey}`,
+              "Content-Type": "application/json",
+              Prefer: "return=minimal",
             },
-          );
-          
-          if (!lineRes.ok) {
-            const errorText = await lineRes.text();
-            console.error("Failed to update line variance:", errorText);
-            // Continue with other lines even if one fails
-          }
+            body: JSON.stringify({ variance: calculatedVariance }),
+          },
+        );
+
+        if (!lineRes.ok) {
+          console.error("Failed to update line variance:", await lineRes.text());
         }
       }
-      
-      // Then update the GRN status
-      const res = await fetch(
-        `https://${projectId}.supabase.co/rest/v1/grn_drafts?id=eq.${grnId}`,
-        {
-          method: "PATCH",
-          headers: {
-            apikey: publicAnonKey,
-            Authorization: `Bearer ${publicAnonKey}`,
-            "Content-Type": "application/json",
-            Prefer: "return=minimal",
-          },
-          body: JSON.stringify({ status }),
-        },
-      );
-
-      if (!res.ok) {
-        const errorText = await res.text();
-        console.error("PATCH FAILED:", errorText);
-        throw new Error(errorText);
-      }
-
-      toast.success(`Marked as ${status}`, {
-        description: "Variance has been saved to the database",
-      });
-      fetchDiscrepancies();
-    } catch (err) {
-      toast.error("Update failed", {
-        description: err instanceof Error ? err.message : "Unknown error",
-      });
     }
-  };
 
-  // Calculate summary stats from GRNs
-  const normalizeStatus = (rawStatus: string | null | undefined) => {
-    const s = (rawStatus ?? "").toLowerCase();
+    // APPROVE => posted
+    // REJECT => keep draft, but remove from discrepancy queue
+    const payload =
+  action === "approve"
+    ? { status: "posted", review_status: "approved" }
+    : { status: "draft", review_status: "rejected", has_discrepancy: false };
 
-    // map DB statuses to UI statuses
-    if (s === "approved") return "approved";
-    if (s === "rejected") return "rejected";
+    const res = await fetch(
+      `https://${projectId}.supabase.co/rest/v1/grn_drafts?id=eq.${grnId}`,
+      {
+        method: "PATCH",
+        headers: {
+          apikey: publicAnonKey,
+          Authorization: `Bearer ${publicAnonKey}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify(payload),
+      },
+    );
 
-    // treat these as "pending review"
-    if (s === "draft" || s === "posted" || s === "pending") return "pending";
+    console.log("PATCH response status:", res.status);
 
-    // fallback
-    return "pending";
-  };
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error("PATCH FAILED:", errorText);
+      throw new Error(errorText);
+    }
 
-  const pendingCount = grns.filter(g => normalizeStatus(g.status) === "pending").length;
-  const approvedCount = grns.filter(g => normalizeStatus(g.status) === "approved").length;
-  const rejectedCount = grns.filter(g => normalizeStatus(g.status) === "rejected").length;
+    toast.success(action === "approve" ? "Marked as approved" : "Marked as rejected", {
+      description: "Variance has been saved to the database",
+    });
+
+    fetchDiscrepancies();
+  } catch (err) {
+    toast.error("Update failed", {
+      description: err instanceof Error ? err.message : "Unknown error",
+    });
+  }
+};
+  
+  const pendingCount = grns.filter(g => normalizeStatus(g.review_status) === "pending").length;
+  const approvedCount = grns.filter(g => normalizeStatus(g.review_status) === "approved").length;
+  const rejectedCount = grns.filter(g => normalizeStatus(g.review_status) === "rejected").length;
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -412,14 +413,14 @@ export function DiscrepancyApprovals() {
                           {canTakeAction ? (
                             <>
                               <Button
-                                onClick={() => updateGrnStatus(grn.id, "approved")}
+                                onClick={() => updateGrnStatus(grn.id, "posted")}
                                 className="bg-[#00A3AD] hover:bg-[#0891B2] text-white w-full"
                               >
                                 <CheckCircle className="w-4 h-4 mr-2" />
                                 Approve Discrepancy
                               </Button>
                               <Button
-                                onClick={() => updateGrnStatus(grn.id, "rejected")}
+                                onClick={() => updateGrnStatus(grn.id, "draft")}
                                 variant="outline"
                                 className="border-[#DC2626] text-[#DC2626] hover:bg-[#DC2626]/10 w-full"
                               >

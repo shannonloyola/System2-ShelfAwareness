@@ -41,10 +41,10 @@ export function PerItemTracker({ poNumber, steps }: PerItemTrackerProps) {
               {/* Node Circle */}
               <div
                 className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg ${
-                  step.completed
-                    ? "bg-[#00A3AD] text-white scale-110 shadow-[#00A3AD]/50"
-                    : step.active
+                  step.active
                     ? "bg-[#00A3AD] text-white scale-110 shadow-[#00A3AD]/50 animate-pulse"
+                    : step.completed
+                    ? "bg-[#00A3AD] text-white scale-110 shadow-[#00A3AD]/50"
                     : "bg-white border-2 border-[#E5E7EB] text-[#6B7280]"
                 }`}
               >

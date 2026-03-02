@@ -13,6 +13,7 @@ import {
   FileText,
   LogOut,
   User,
+  ClipboardCheck,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
@@ -37,6 +38,7 @@ const navigation = [
     icon: ClipboardList,
   },
   { name: "Stock Management", href: "/stock", icon: BarChart3 },
+  { name: "Inventory Count", href: "/count", icon: ClipboardCheck },
   {
     name: "Distribution",
     href: "/distribution",
