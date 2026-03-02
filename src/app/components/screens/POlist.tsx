@@ -375,7 +375,15 @@ export function POList() {
         </p>
       </div>
 
-      <Tabs defaultValue="po-list" className="space-y-4">
+      <Tabs
+        defaultValue="po-list"
+        className="space-y-4"
+        onValueChange={(value) => {
+          if (value === "expiration") {
+            loadExpirationData();
+          }
+        }}
+      >
         <TabsList className="bg-[#1A2B47] text-white">
           <TabsTrigger
             value="po-list"
@@ -387,7 +395,6 @@ export function POList() {
           <TabsTrigger
             value="expiration"
             className="data-[state=active]:bg-[#00A3AD] data-[state=active]:text-white text-white/80 font-medium relative"
-            onClick={() => loadExpirationData()}
           >
             <Clock className="w-4 h-4 mr-2" />
             Expiration Tracking

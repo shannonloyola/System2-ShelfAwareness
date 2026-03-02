@@ -40,7 +40,12 @@ export async function submitAdjustment(payload: {
 }) {
   const { data, error } = await supabase
     .from('stock_adjustments')
-    .insert([{ ...payload, qty_after: payload.qty_before + payload.qty_change, status: 'pending' }])
+    .insert([{ 
+      ...payload, 
+      qty_after: payload.qty_before + payload.qty_change, 
+      status: 'pending',
+      movement_type: 'ADJUSTMENT'
+    }])
     .select().single();
   if (error) throw new Error(error.message);
   return data as StockAdjustment;

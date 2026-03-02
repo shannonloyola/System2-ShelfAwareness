@@ -9,6 +9,7 @@ import {
   ClipboardList,
   CheckCircle2,
   XCircle,
+  FileBarChart,
 } from "lucide-react";
 import {
   Card,
@@ -35,7 +36,12 @@ import {
 } from "../ui/dialog";
 import { Label } from "../ui/label";
 import { toast } from "sonner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
 import {
   submitAdjustment,
@@ -47,6 +53,7 @@ import {
   type ReasonCategory,
 } from "../../../imports/adjustmentAPI";
 import { supabase } from "../../../lib/supabase";
+import MovementReport from "../../../imports/movement-report";
 
 interface StockItem {
   id: string;
@@ -171,27 +178,34 @@ const EMPTY_FORM = {
 export function StockManagement() {
   // Inventory states
   const [searchTerm, setSearchTerm] = useState("");
-  const [locationFilter, setLocationFilter] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [showTransferDialog, setShowTransferDialog] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<StockItem | null>(null);
+  const [locationFilter, setLocationFilter] =
+    useState<string>("all");
+  const [statusFilter, setStatusFilter] =
+    useState<string>("all");
+  const [showTransferDialog, setShowTransferDialog] =
+    useState(false);
+  const [selectedItem, setSelectedItem] =
+    useState<StockItem | null>(null);
 
   // Main tab state
   const [mainTab, setMainTab] = useState("inventory");
 
   // Stock Adjustment states
   const [adjustmentTab, setAdjustmentTab] = useState("request");
-  const [adjustments, setAdjustments] = useState<StockAdjustment[]>([]);
+  const [adjustments, setAdjustments] = useState<
+    StockAdjustment[]
+  >([]);
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
-  const [modalAdj, setModalAdj] = useState<StockAdjustment | null>(null);
+  const [modalAdj, setModalAdj] =
+    useState<StockAdjustment | null>(null);
   const [managerName, setManagerName] = useState("");
   const [rejectNote, setRejectNote] = useState("");
-  const [modalAction, setModalAction] = useState<"approve" | "reject" | null>(
-    null
-  );
+  const [modalAction, setModalAction] = useState<
+    "approve" | "reject" | null
+  >(null);
 
   // Load products and adjustments when switching to adjustments tab
   useEffect(() => {
@@ -200,7 +214,9 @@ export function StockManagement() {
       Promise.all([
         supabase
           .from("products")
-          .select("product_id, sku, product_name, inventory_on_hand")
+          .select(
+            "product_id, sku, product_name, inventory_on_hand",
+          )
           .order("product_name")
           .then(({ data }) => setProducts(data ?? [])),
         fetchAdjustments().then(setAdjustments),
@@ -216,16 +232,20 @@ export function StockManagement() {
       item.sku.toLowerCase().includes(keyword) ||
       item.name.toLowerCase().includes(keyword);
     const matchesLocation =
-      locationFilter === "all" || item.location === locationFilter;
+      locationFilter === "all" ||
+      item.location === locationFilter;
     const matchesStatus =
       statusFilter === "all" || item.status === statusFilter;
     return matchesSearch && matchesLocation && matchesStatus;
   });
 
   const lowStockItems = mockStock.filter(
-    (item) => item.status === "low" || item.status === "critical"
+    (item) =>
+      item.status === "low" || item.status === "critical",
   );
-  const criticalItems = mockStock.filter((item) => item.status === "critical");
+  const criticalItems = mockStock.filter(
+    (item) => item.status === "critical",
+  );
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -254,7 +274,8 @@ export function StockManagement() {
 
   const handleStockTransfer = () => {
     toast.success("Stock Transfer Initiated", {
-      description: "Transfer request has been logged and will be processed",
+      description:
+        "Transfer request has been logged and will be processed",
     });
     setShowTransferDialog(false);
     setSelectedItem(null);
@@ -265,7 +286,9 @@ export function StockManagement() {
     setForm((p) => ({ ...p, [k]: e.target.value }));
 
   const handleProductChange = (value: string) => {
-    const p = products.find((x) => x.product_id === parseInt(value));
+    const p = products.find(
+      (x) => x.product_id === parseInt(value),
+    );
     if (p)
       setForm((prev) => ({
         ...prev,
@@ -297,7 +320,9 @@ export function StockManagement() {
       });
       setAdjustmentTab("pending");
     } catch (e: any) {
-      toast.error("Submission Failed", { description: e.message });
+      toast.error("Submission Failed", {
+        description: e.message,
+      });
     }
     setSubmitting(false);
   };
@@ -316,24 +341,31 @@ export function StockManagement() {
                 approved_by: managerName,
                 approved_at: new Date().toISOString(),
               }
-            : a
-        )
+            : a,
+        ),
       );
       closeModal();
       toast.success("Adjustment Approved", {
         description: `Approved by ${managerName} — stock updated`,
       });
     } catch (e: any) {
-      toast.error("Approval Failed", { description: e.message });
+      toast.error("Approval Failed", {
+        description: e.message,
+      });
     }
     setSubmitting(false);
   };
 
   const handleReject = async () => {
-    if (!modalAdj || !managerName.trim() || !rejectNote.trim()) return;
+    if (!modalAdj || !managerName.trim() || !rejectNote.trim())
+      return;
     setSubmitting(true);
     try {
-      await rejectAdjustment(modalAdj.id, managerName, rejectNote);
+      await rejectAdjustment(
+        modalAdj.id,
+        managerName,
+        rejectNote,
+      );
       setAdjustments((p) =>
         p.map((a) =>
           a.id === modalAdj.id
@@ -343,13 +375,15 @@ export function StockManagement() {
                 approved_by: managerName,
                 rejection_note: rejectNote,
               }
-            : a
-        )
+            : a,
+        ),
       );
       closeModal();
       toast.success("Adjustment Rejected");
     } catch (e: any) {
-      toast.error("Rejection Failed", { description: e.message });
+      toast.error("Rejection Failed", {
+        description: e.message,
+      });
     }
     setSubmitting(false);
   };
@@ -363,7 +397,8 @@ export function StockManagement() {
 
   const newQty =
     form.product_id && form.qty_change !== ""
-      ? form.qty_before + parseInt((form.qty_change as any) || "0")
+      ? form.qty_before +
+        parseInt((form.qty_change as any) || "0")
       : null;
 
   const formValid =
@@ -373,8 +408,12 @@ export function StockManagement() {
     form.reason.length >= 10 &&
     form.requested_by.trim();
 
-  const pendingAdjustments = adjustments.filter((a) => a.status === "pending");
-  const historyAdjustments = adjustments.filter((a) => a.status !== "pending");
+  const pendingAdjustments = adjustments.filter(
+    (a) => a.status === "pending",
+  );
+  const historyAdjustments = adjustments.filter(
+    (a) => a.status !== "pending",
+  );
   const pendingCount = pendingAdjustments.length;
 
   const getStatusBadge = (status: string) => {
@@ -393,7 +432,10 @@ export function StockManagement() {
   return (
     <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
       {/* Approval Modal */}
-      <Dialog open={!!modalAdj} onOpenChange={() => closeModal()}>
+      <Dialog
+        open={!!modalAdj}
+        onOpenChange={() => closeModal()}
+      >
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-[#1A2B47] text-xl font-semibold">
@@ -457,7 +499,9 @@ export function StockManagement() {
                   </div>
 
                   <div>
-                    <div className="text-xs text-[#6B7280] mb-1">Category</div>
+                    <div className="text-xs text-[#6B7280] mb-1">
+                      Category
+                    </div>
                     <div className="text-sm font-medium text-[#1A2B47] bg-white px-3 py-1 rounded border border-[#E5E7EB] inline-block">
                       {modalAdj.reason_category}
                     </div>
@@ -465,7 +509,9 @@ export function StockManagement() {
                 </div>
 
                 <div>
-                  <div className="text-xs text-[#6B7280] mb-1">Reason</div>
+                  <div className="text-xs text-[#6B7280] mb-1">
+                    Reason
+                  </div>
                   <div className="text-sm text-[#1A2B47] italic">
                     "{modalAdj.reason}"
                   </div>
@@ -485,7 +531,9 @@ export function StockManagement() {
                       Requested At
                     </div>
                     <div className="text-sm text-[#6B7280]">
-                      {new Date(modalAdj.created_at).toLocaleString()}
+                      {new Date(
+                        modalAdj.created_at,
+                      ).toLocaleString()}
                     </div>
                   </div>
                 </div>
@@ -494,12 +542,15 @@ export function StockManagement() {
               {/* Manager Name Input */}
               <div className="space-y-2">
                 <Label className="text-[#1A2B47] font-medium">
-                  Manager Name <span className="text-[#F97316]">*</span>
+                  Manager Name{" "}
+                  <span className="text-[#F97316]">*</span>
                 </Label>
                 <Input
                   placeholder="Enter your full name to authenticate"
                   value={managerName}
-                  onChange={(e) => setManagerName(e.target.value)}
+                  onChange={(e) =>
+                    setManagerName(e.target.value)
+                  }
                   className="border-[#1A2B47]/20"
                 />
               </div>
@@ -508,12 +559,15 @@ export function StockManagement() {
               {modalAction === "reject" && (
                 <div className="space-y-2">
                   <Label className="text-[#1A2B47] font-medium">
-                    Rejection Reason <span className="text-[#F97316]">*</span>
+                    Rejection Reason{" "}
+                    <span className="text-[#F97316]">*</span>
                   </Label>
                   <Textarea
                     placeholder="Explain why this adjustment is being rejected…"
                     value={rejectNote}
-                    onChange={(e) => setRejectNote(e.target.value)}
+                    onChange={(e) =>
+                      setRejectNote(e.target.value)
+                    }
                     rows={3}
                     className="border-[#1A2B47]/20"
                   />
@@ -565,11 +619,15 @@ export function StockManagement() {
                   <Button
                     className="flex-1 bg-[#DC2626] hover:bg-[#B91C1C] text-white"
                     disabled={
-                      !managerName.trim() || !rejectNote.trim() || submitting
+                      !managerName.trim() ||
+                      !rejectNote.trim() ||
+                      submitting
                     }
                     onClick={handleReject}
                   >
-                    {submitting ? "Rejecting…" : "Confirm Rejection"}
+                    {submitting
+                      ? "Rejecting…"
+                      : "Confirm Rejection"}
                   </Button>
                   <Button
                     variant="outline"
@@ -591,12 +649,17 @@ export function StockManagement() {
           Stock Management & Alerts
         </h1>
         <p className="text-[#6B7280]">
-          Real-time inventory levels and manual stock adjustments
+          Real-time inventory levels and manual stock
+          adjustments
         </p>
       </div>
 
       {/* Main Tabs */}
-      <Tabs value={mainTab} onValueChange={setMainTab} className="space-y-6">
+      <Tabs
+        value={mainTab}
+        onValueChange={setMainTab}
+        className="space-y-6"
+      >
         <TabsList className="bg-[#1A2B47] p-1 h-auto">
           <TabsTrigger
             value="inventory"
@@ -616,6 +679,13 @@ export function StockManagement() {
                 {pendingCount}
               </span>
             )}
+          </TabsTrigger>
+          <TabsTrigger
+            value="movements"
+            className="data-[state=active]:bg-[#00A3AD] data-[state=active]:text-white text-white/80 font-medium"
+          >
+            <FileBarChart className="w-4 h-4 mr-2" />
+            Movement Report
           </TabsTrigger>
         </TabsList>
 
@@ -746,7 +816,10 @@ export function StockManagement() {
                           Shortage
                         </div>
                         <div className="text-lg font-bold text-[#F97316]">
-                          -{(item.minStock - item.currentStock).toLocaleString()}
+                          -
+                          {(
+                            item.minStock - item.currentStock
+                          ).toLocaleString()}
                         </div>
                       </div>
                     </div>
@@ -754,7 +827,8 @@ export function StockManagement() {
                     <div className="flex items-center justify-between">
                       <div className="text-sm text-[#6B7280]">
                         <MapPin className="w-4 h-4 inline mr-1" />
-                        {item.location} • {item.zone} • {item.aisle}
+                        {item.location} • {item.zone} •{" "}
+                        {item.aisle}
                       </div>
                       <Button
                         size="sm"
@@ -785,7 +859,9 @@ export function StockManagement() {
                     <Input
                       placeholder="Search by SKU or product name..."
                       value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
+                      onChange={(e) =>
+                        setSearchTerm(e.target.value)
+                      }
                       className="pl-10 border-[#111827]/10"
                     />
                   </div>
@@ -802,7 +878,9 @@ export function StockManagement() {
                       <SelectValue placeholder="All Locations" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Locations</SelectItem>
+                      <SelectItem value="all">
+                        All Locations
+                      </SelectItem>
                       {warehouseLocations.map((loc) => (
                         <SelectItem key={loc} value={loc}>
                           {loc}
@@ -816,16 +894,29 @@ export function StockManagement() {
                   <Label className="text-[#6B7280] mb-2 block">
                     Stock Status
                   </Label>
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <Select
+                    value={statusFilter}
+                    onValueChange={setStatusFilter}
+                  >
                     <SelectTrigger className="border-[#111827]/10">
                       <SelectValue placeholder="All Status" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Status</SelectItem>
-                      <SelectItem value="healthy">Healthy</SelectItem>
-                      <SelectItem value="low">Low Stock</SelectItem>
-                      <SelectItem value="critical">Critical</SelectItem>
-                      <SelectItem value="overstock">Overstock</SelectItem>
+                      <SelectItem value="all">
+                        All Status
+                      </SelectItem>
+                      <SelectItem value="healthy">
+                        Healthy
+                      </SelectItem>
+                      <SelectItem value="low">
+                        Low Stock
+                      </SelectItem>
+                      <SelectItem value="critical">
+                        Critical
+                      </SelectItem>
+                      <SelectItem value="overstock">
+                        Overstock
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -847,7 +938,8 @@ export function StockManagement() {
                           Stock Transfer Request
                         </DialogTitle>
                         <DialogDescription className="text-[#6B7280]">
-                          Transfer stock between warehouse locations
+                          Transfer stock between warehouse
+                          locations
                         </DialogDescription>
                       </DialogHeader>
                       <div className="space-y-4 py-4">
@@ -859,7 +951,10 @@ export function StockManagement() {
                             </SelectTrigger>
                             <SelectContent>
                               {mockStock.map((item) => (
-                                <SelectItem key={item.id} value={item.id}>
+                                <SelectItem
+                                  key={item.id}
+                                  value={item.id}
+                                >
                                   {item.name} ({item.sku})
                                 </SelectItem>
                               ))}
@@ -874,7 +969,10 @@ export function StockManagement() {
                             </SelectTrigger>
                             <SelectContent>
                               {warehouseLocations.map((loc) => (
-                                <SelectItem key={loc} value={loc}>
+                                <SelectItem
+                                  key={loc}
+                                  value={loc}
+                                >
                                   {loc}
                                 </SelectItem>
                               ))}
@@ -889,7 +987,10 @@ export function StockManagement() {
                             </SelectTrigger>
                             <SelectContent>
                               {warehouseLocations.map((loc) => (
-                                <SelectItem key={loc} value={loc}>
+                                <SelectItem
+                                  key={loc}
+                                  value={loc}
+                                >
                                   {loc}
                                 </SelectItem>
                               ))}
@@ -900,7 +1001,9 @@ export function StockManagement() {
                       <div className="flex gap-3 justify-end">
                         <Button
                           variant="outline"
-                          onClick={() => setShowTransferDialog(false)}
+                          onClick={() =>
+                            setShowTransferDialog(false)
+                          }
                           className="border-[#111827]/20 text-[#111827]"
                         >
                           Cancel
@@ -974,7 +1077,8 @@ export function StockManagement() {
                           {item.location}
                         </td>
                         <td className="py-4 px-4 text-sm text-[#6B7280]">
-                          {item.zone} • {item.aisle} • {item.bin}
+                          {item.zone} • {item.aisle} •{" "}
+                          {item.bin}
                         </td>
                         <td className="py-4 px-4 text-right">
                           <span
@@ -1020,7 +1124,8 @@ export function StockManagement() {
                 Manual Stock Adjustment
               </h2>
               <p className="text-sm text-[#6B7280] mt-1">
-                Adjustments are saved as Pending until a Manager approves
+                Adjustments are saved as Pending until a Manager
+                approves
               </p>
             </div>
             {pendingCount > 0 && (
@@ -1028,37 +1133,40 @@ export function StockManagement() {
                 onClick={() => setAdjustmentTab("pending")}
                 className="bg-[#F97316]/10 border border-[#F97316] text-[#F97316] rounded-full px-4 py-2 text-sm font-semibold hover:bg-[#F97316]/20 transition-colors"
               >
-                ⏳ {pendingCount} Pending Approval{pendingCount > 1 ? "s" : ""}
+                ⏳ {pendingCount} Pending Approval
+                {pendingCount > 1 ? "s" : ""}
               </button>
             )}
           </div>
 
           {/* Adjustment Sub-tabs */}
           <div className="bg-[#F8FAFC] border border-[#E5E7EB] rounded-lg p-1 flex gap-1">
-            {(["request", "pending", "history"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setAdjustmentTab(t)}
-                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  adjustmentTab === t
-                    ? "bg-white text-[#1A2B47] shadow-sm"
-                    : "text-[#6B7280] hover:text-[#1A2B47]"
-                }`}
-              >
-                {t === "request" && "+ New Adjustment"}
-                {t === "pending" && (
-                  <span className="flex items-center justify-center gap-2">
-                    Pending Approval
-                    {pendingCount > 0 && (
-                      <span className="bg-[#F97316] text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                        {pendingCount}
-                      </span>
-                    )}
-                  </span>
-                )}
-                {t === "history" && "History"}
-              </button>
-            ))}
+            {(["request", "pending", "history"] as const).map(
+              (t) => (
+                <button
+                  key={t}
+                  onClick={() => setAdjustmentTab(t)}
+                  className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                    adjustmentTab === t
+                      ? "bg-white text-[#1A2B47] shadow-sm"
+                      : "text-[#6B7280] hover:text-[#1A2B47]"
+                  }`}
+                >
+                  {t === "request" && "+ New Adjustment"}
+                  {t === "pending" && (
+                    <span className="flex items-center justify-center gap-2">
+                      Pending Approval
+                      {pendingCount > 0 && (
+                        <span className="bg-[#F97316] text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                          {pendingCount}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {t === "history" && "History"}
+                </button>
+              ),
+            )}
           </div>
 
           {/* REQUEST FORM */}
@@ -1073,10 +1181,15 @@ export function StockManagement() {
                 {/* Product Selection */}
                 <div className="space-y-2">
                   <Label className="text-[#1A2B47] font-medium">
-                    Product <span className="text-[#F97316]">*</span>
+                    Product{" "}
+                    <span className="text-[#F97316]">*</span>
                   </Label>
                   <Select
-                    value={form.product_id ? String(form.product_id) : ""}
+                    value={
+                      form.product_id
+                        ? String(form.product_id)
+                        : ""
+                    }
                     onValueChange={handleProductChange}
                   >
                     <SelectTrigger className="border-[#1A2B47]/20">
@@ -1084,7 +1197,10 @@ export function StockManagement() {
                     </SelectTrigger>
                     <SelectContent>
                       {products.map((p) => (
-                        <SelectItem key={p.product_id} value={String(p.product_id)}>
+                        <SelectItem
+                          key={p.product_id}
+                          value={String(p.product_id)}
+                        >
                           {p.sku} — {p.product_name} (stock:{" "}
                           {p.inventory_on_hand})
                         </SelectItem>
@@ -1104,7 +1220,9 @@ export function StockManagement() {
                         {form.qty_before}
                       </div>
                     </div>
-                    <div className="text-2xl text-[#D1D5DB]">→</div>
+                    <div className="text-2xl text-[#D1D5DB]">
+                      →
+                    </div>
                     <div>
                       <div className="text-xs text-[#6B7280] mb-1">
                         After Adjustment
@@ -1114,10 +1232,10 @@ export function StockManagement() {
                           newQty === null
                             ? "text-[#9CA3AF]"
                             : newQty < 0
-                            ? "text-[#DC2626]"
-                            : newQty > form.qty_before
-                            ? "text-[#00A3AD]"
-                            : "text-[#F97316]"
+                              ? "text-[#DC2626]"
+                              : newQty > form.qty_before
+                                ? "text-[#00A3AD]"
+                                : "text-[#F97316]"
                         }`}
                       >
                         {newQty ?? "—"}
@@ -1130,7 +1248,8 @@ export function StockManagement() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label className="text-[#1A2B47] font-medium">
-                      Qty Change <span className="text-[#F97316]">*</span>
+                      Qty Change{" "}
+                      <span className="text-[#F97316]">*</span>
                     </Label>
                     <Input
                       type="number"
@@ -1145,7 +1264,8 @@ export function StockManagement() {
                   </div>
                   <div className="space-y-2">
                     <Label className="text-[#1A2B47] font-medium">
-                      Reason Category <span className="text-[#F97316]">*</span>
+                      Reason Category{" "}
+                      <span className="text-[#F97316]">*</span>
                     </Label>
                     <Select
                       value={form.reason_category}
@@ -1173,7 +1293,8 @@ export function StockManagement() {
                 {/* Reason */}
                 <div className="space-y-2">
                   <Label className="text-[#1A2B47] font-medium">
-                    Reason / Notes <span className="text-[#F97316]">*</span>
+                    Reason / Notes{" "}
+                    <span className="text-[#F97316]">*</span>
                     <span className="text-xs text-[#6B7280] ml-2 font-normal">
                       (min 10 characters)
                     </span>
@@ -1193,14 +1314,17 @@ export function StockManagement() {
                     }`}
                   >
                     {form.reason.length} chars{" "}
-                    {form.reason.length >= 10 ? "✓" : "(need 10+)"}
+                    {form.reason.length >= 10
+                      ? "✓"
+                      : "(need 10+)"}
                   </p>
                 </div>
 
                 {/* Requested By */}
                 <div className="space-y-2">
                   <Label className="text-[#1A2B47] font-medium">
-                    Requested By <span className="text-[#F97316]">*</span>
+                    Requested By{" "}
+                    <span className="text-[#F97316]">*</span>
                   </Label>
                   <Input
                     placeholder="Your full name"
@@ -1218,15 +1342,19 @@ export function StockManagement() {
                       Manual Adjustment
                     </strong>{" "}
                     and saved as{" "}
-                    <strong className="text-[#F97316]">Pending</strong> until a
-                    Manager approves.
+                    <strong className="text-[#F97316]">
+                      Pending
+                    </strong>{" "}
+                    until a Manager approves.
                   </div>
                   <Button
                     className="bg-[#00A3AD] hover:bg-[#0891B2] text-white disabled:opacity-50"
                     disabled={!formValid || submitting}
                     onClick={handleSubmitAdjustment}
                   >
-                    {submitting ? "Submitting…" : "Submit for Approval"}
+                    {submitting
+                      ? "Submitting…"
+                      : "Submit for Approval"}
                   </Button>
                 </div>
               </CardContent>
@@ -1243,11 +1371,15 @@ export function StockManagement() {
               </CardHeader>
               <CardContent className="pt-6">
                 {loading ? (
-                  <p className="text-center text-[#6B7280] py-12">Loading…</p>
+                  <p className="text-center text-[#6B7280] py-12">
+                    Loading…
+                  </p>
                 ) : pendingAdjustments.length === 0 ? (
                   <div className="text-center py-12">
                     <div className="text-5xl mb-3">✓</div>
-                    <p className="text-[#6B7280]">No pending adjustments</p>
+                    <p className="text-[#6B7280]">
+                      No pending adjustments
+                    </p>
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -1271,7 +1403,8 @@ export function StockManagement() {
                         </div>
                         <div className="flex items-center gap-4 text-sm flex-wrap">
                           <span className="text-[#6B7280]">
-                            {a.qty_before} → <strong>{a.qty_after}</strong>
+                            {a.qty_before} →{" "}
+                            <strong>{a.qty_after}</strong>
                           </span>
                           <span
                             className={`px-2 py-1 rounded text-xs font-bold ${
@@ -1290,7 +1423,9 @@ export function StockManagement() {
                             by {a.requested_by}
                           </span>
                           <span className="text-[#6B7280] text-xs">
-                            {new Date(a.created_at).toLocaleString()}
+                            {new Date(
+                              a.created_at,
+                            ).toLocaleString()}
                           </span>
                         </div>
                         <p className="text-sm text-[#6B7280] italic">
@@ -1343,16 +1478,21 @@ export function StockManagement() {
             <Card className="bg-white border-[#1A2B47]/10">
               <CardHeader className="bg-[#1A2B47]/5">
                 <CardTitle className="text-[#1A2B47] text-sm font-semibold uppercase tracking-wide">
-                  Adjustment History — logged as "Manual Adjustment"
+                  Adjustment History — logged as "Manual
+                  Adjustment"
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6">
                 {loading ? (
-                  <p className="text-center text-[#6B7280] py-12">Loading…</p>
+                  <p className="text-center text-[#6B7280] py-12">
+                    Loading…
+                  </p>
                 ) : historyAdjustments.length === 0 ? (
                   <div className="text-center py-12">
                     <div className="text-5xl mb-3">📋</div>
-                    <p className="text-[#6B7280]">No history yet</p>
+                    <p className="text-[#6B7280]">
+                      No history yet
+                    </p>
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -1386,7 +1526,9 @@ export function StockManagement() {
                             className="border-b border-[#E5E7EB] hover:bg-[#F8FAFC] transition-colors"
                           >
                             <td className="py-3 px-3 text-sm text-[#6B7280]">
-                              {new Date(a.created_at).toLocaleDateString()}
+                              {new Date(
+                                a.created_at,
+                              ).toLocaleDateString()}
                             </td>
                             <td className="py-3 px-3 font-mono text-sm text-[#00A3AD]">
                               {a.sku}
@@ -1418,7 +1560,11 @@ export function StockManagement() {
                               {a.requested_by}
                             </td>
                             <td className="py-3 px-3 text-sm text-[#6B7280]">
-                              {a.approved_by ?? <span className="text-[#D1D5DB]">—</span>}
+                              {a.approved_by ?? (
+                                <span className="text-[#D1D5DB]">
+                                  —
+                                </span>
+                              )}
                             </td>
                             <td className="py-3 px-3">
                               <span
@@ -1436,6 +1582,11 @@ export function StockManagement() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        {/* MOVEMENT REPORT TAB */}
+        <TabsContent value="movements" className="space-y-6">
+          <MovementReport />
         </TabsContent>
       </Tabs>
     </div>
