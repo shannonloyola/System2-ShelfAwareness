@@ -54,6 +54,7 @@ import {
 } from "../../../imports/adjustmentAPI";
 import { supabase } from "../../../lib/supabase";
 import MovementReport from "../../../imports/movement-report";
+import ValuationReport from "../../../imports/valuation-report";
 
 interface StockItem {
   id: string;
@@ -686,6 +687,13 @@ export function StockManagement() {
           >
             <FileBarChart className="w-4 h-4 mr-2" />
             Movement Report
+          </TabsTrigger>
+          <TabsTrigger
+            value="valuation"
+            className="data-[state=active]:bg-[#00A3AD] data-[state=active]:text-white text-white/80 font-medium"
+          >
+            <FileBarChart className="w-4 h-4 mr-2" />
+            Valuation Report
           </TabsTrigger>
         </TabsList>
 
@@ -1584,9 +1592,14 @@ export function StockManagement() {
           )}
         </TabsContent>
 
-        {/* MOVEMENT REPORT TAB */}
+        {/* MOVEMENT & VALUATION TAB */}
         <TabsContent value="movements" className="space-y-6">
           <MovementReport />
+        </TabsContent>
+
+        {/* VALUATION REPORT TAB */}
+        <TabsContent value="valuation" className="space-y-6">
+          <ValuationReport />
         </TabsContent>
       </Tabs>
     </div>

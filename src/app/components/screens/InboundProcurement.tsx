@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Calendar,
   Plus,
   Send,
-  Download,
   MessageCircle,
   Mail,
 } from "lucide-react";
@@ -55,7 +54,7 @@ interface LineItemForm {
   qty: number;
 }
 
-const DEFAULT_PO_STATUS = "Pending Supplier Confirmation";
+const DEFAULT_PO_STATUS = "Draft";
 
 const normalizeStatus = (status: string | null) => (status ?? "").trim().toLowerCase();
 
@@ -78,13 +77,6 @@ const toErrorMessage = (error: unknown) => {
   const maybe = error as { status?: number; message?: string; code?: string };
   if (maybe.status === 401 || maybe.status === 403) return "No permission / check RLS";
   return maybe.message ?? maybe.code ?? "Unexpected error";
-};
-
-const isDuplicatePoNumberError = (error: unknown) => {
-  if (!error || typeof error !== "object") return false;
-  const maybe = error as { code?: string; message?: string };
-  if (maybe.code === "23505") return true;
-  return /duplicate|unique/i.test(maybe.message ?? "");
 };
 
 const includesDraftTab = (status: string | null) => {
@@ -115,7 +107,6 @@ const buildProductLabel = (product: ProductRow) => {
 
 export function InboundProcurement() {
   const [activeTab, setActiveTab] = useState<TabFilter>("all");
-  const [showPOForm, setShowPOForm] = useState(false);
 
   const [poList, setPoList] = useState<PurchaseOrderRow[]>([]);
   const [selectedPO, setSelectedPO] = useState<PurchaseOrderRow | null>(null);
@@ -131,8 +122,10 @@ export function InboundProcurement() {
 
   const [loadingPOs, setLoadingPOs] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
-  const [creatingPO, setCreatingPO] = useState(false);
   const [addingItem, setAddingItem] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [sendingPO, setSendingPO] = useState(false);
+  const [isEditingPO, setIsEditingPO] = useState(true);
 
   const fetchPurchaseOrders = useCallback(async () => {
     setLoadingPOs(true);
@@ -204,22 +197,44 @@ export function InboundProcurement() {
     return `${prefix}${String(maxSuffix + 1).padStart(4, "0")}`;
   }, []);
 
-  const createDraftPO = useCallback(async () => {
+  const updatePOHeader = useCallback(async (poId: string, status: string) => {
+    const { data, error } = await supabase
+      .from("purchase_orders")
+      .update({
+        po_no: poNo || null,
+        supplier_name: supplierName.trim() || null,
+        expected_delivery_date: expectedDeliveryDate || null,
+        preferred_communication: preferredCommunication || null,
+        status,
+      })
+      .eq("po_id", poId)
+      .select("po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication")
+      .single();
+
+    if (error || !data) throw error ?? new Error("Update failed");
+    return data as PurchaseOrderRow;
+  }, [expectedDeliveryDate, poNo, preferredCommunication, supplierName]);
+
+  const saveToDraft = useCallback(async () => {
     if (!supplierName.trim()) {
-      toast.error("Cannot create draft P.O.", { description: "Supplier is required" });
+      toast.error("Cannot save draft", { description: "Supplier is required" });
       return;
     }
 
-    setCreatingPO(true);
+    setSavingDraft(true);
     try {
-      const basePoNo = poNo || (await generateUniquePONumber());
-      const tryInsert = async (poNumber: string, allowRetry: boolean) => {
+      let target: PurchaseOrderRow;
+      if (selectedPO?.po_id) {
+        target = await updatePOHeader(selectedPO.po_id, DEFAULT_PO_STATUS);
+      } else {
+        const generatedPoNo = poNo || (await generateUniquePONumber());
+        if (!poNo) setPoNo(generatedPoNo);
         const nowIso = new Date().toISOString();
         const { data, error } = await supabase
           .from("purchase_orders")
           .insert([
             {
-              po_no: poNumber,
+              po_no: generatedPoNo,
               supplier_name: supplierName.trim(),
               status: DEFAULT_PO_STATUS,
               created_at: nowIso,
@@ -231,31 +246,79 @@ export function InboundProcurement() {
           .select("po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication")
           .single();
 
-        if (!error && data) return data as PurchaseOrderRow;
-        if (error && allowRetry && isDuplicatePoNumberError(error)) {
-          const nextPoNo = await generateUniquePONumber();
-          setPoNo(nextPoNo);
-          return tryInsert(nextPoNo, false);
-        }
-        throw error ?? new Error("Insert failed");
-      };
+        if (error || !data) throw error ?? new Error("Insert failed");
+        target = data as PurchaseOrderRow;
+      }
 
-      const created = await tryInsert(basePoNo, true);
-      toast.success("Draft P.O. created", { description: `${created.po_no ?? ""} saved.` });
+      setSelectedPO(target);
       await fetchPurchaseOrders();
-      setSelectedPO(created);
-      setShowPOForm(false);
-      setSupplierName("");
-      setPoNo("");
-      setExpectedDeliveryDate("");
-      setPreferredCommunication("");
-      await fetchPOItems(created.po_id);
+      await fetchPOItems(target.po_id);
+      toast.success("Saved to drafts", {
+        description: `${target.po_no ?? "Purchase order"} is now in Drafts.`,
+      });
     } catch (error) {
-      toast.error("Failed to create draft P.O.", { description: toErrorMessage(error) });
+      toast.error("Failed to save draft", { description: toErrorMessage(error) });
     } finally {
-      setCreatingPO(false);
+      setSavingDraft(false);
     }
-  }, [expectedDeliveryDate, fetchPOItems, fetchPurchaseOrders, generateUniquePONumber, poNo, preferredCommunication, supplierName]);
+  }, [expectedDeliveryDate, fetchPOItems, fetchPurchaseOrders, generateUniquePONumber, poNo, preferredCommunication, selectedPO?.po_id, supplierName, updatePOHeader]);
+
+  const sendToSupplier = useCallback(async () => {
+    if (!supplierName.trim()) {
+      toast.error("Cannot send purchase order", { description: "Supplier is required" });
+      return;
+    }
+
+    setSendingPO(true);
+    try {
+      let targetPoId = selectedPO?.po_id ?? "";
+      if (!targetPoId) {
+        const generatedPoNo = poNo || (await generateUniquePONumber());
+        if (!poNo) setPoNo(generatedPoNo);
+        const nowIso = new Date().toISOString();
+        const { data, error } = await supabase
+          .from("purchase_orders")
+          .insert([
+            {
+              po_no: generatedPoNo,
+              supplier_name: supplierName.trim(),
+              status: DEFAULT_PO_STATUS,
+              created_at: nowIso,
+              paid_at: nowIso,
+              expected_delivery_date: expectedDeliveryDate || null,
+              preferred_communication: preferredCommunication || null,
+            },
+          ])
+          .select("po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication")
+          .single();
+
+        if (error || !data) throw error ?? new Error("Insert failed");
+        targetPoId = data.po_id;
+        setSelectedPO(data as PurchaseOrderRow);
+      }
+
+      const { count, error: countError } = await supabase
+        .from("purchase_order_items")
+        .select("po_item_id", { count: "exact", head: true })
+        .eq("po_id", targetPoId);
+      if (countError) throw countError;
+      if (!count || count <= 0) {
+        toast.error("Cannot send purchase order", { description: "Add at least one line item first" });
+        return;
+      }
+
+      const updated = await updatePOHeader(targetPoId, "Posted");
+      setSelectedPO(updated);
+      await fetchPurchaseOrders();
+      toast.success("Sent to supplier", {
+        description: `${updated.po_no ?? "Purchase order"} is now Posted.`,
+      });
+    } catch (error) {
+      toast.error("Failed to send to supplier", { description: toErrorMessage(error) });
+    } finally {
+      setSendingPO(false);
+    }
+  }, [expectedDeliveryDate, fetchPurchaseOrders, generateUniquePONumber, poNo, preferredCommunication, selectedPO?.po_id, supplierName, updatePOHeader]);
 
   const savePOItem = useCallback(async (formId: string) => {
     const form = lineItemForms.find((f) => f.formId === formId);
@@ -357,38 +420,31 @@ export function InboundProcurement() {
     void fetchPOItems(selectedPO.po_id);
   }, [fetchPOItems, selectedPO?.po_id]);
 
-  const filteredPOs = useMemo(() => {
-    if (activeTab === "all") return poList;
-    if (activeTab === "draft") return poList.filter((po) => includesDraftTab(po.status));
-    return poList.filter((po) => normalizeStatus(po.status) === "posted");
-  }, [activeTab, poList]);
-
   const openBuilder = async () => {
-    const nextValue = !showPOForm;
-    setShowPOForm(nextValue);
     setSelectedPO(null);
+    setIsEditingPO(true);
     setSelectedPOItems([]);
     setLineItemForms([]);
     setSupplierName("");
     setPoNo("");
     setExpectedDeliveryDate("");
     setPreferredCommunication("");
-    if (nextValue) {
-      try {
-        setPoNo(await generateUniquePONumber());
-      } catch (error) {
-        toast.error("Failed to generate P.O. number", { description: toErrorMessage(error) });
-      }
+    try {
+      setPoNo(await generateUniquePONumber());
+    } catch (error) {
+      toast.error("Failed to generate P.O. number", { description: toErrorMessage(error) });
     }
   };
 
   const selectPO = (po: PurchaseOrderRow) => {
     setSelectedPO(po);
-    setShowPOForm(false);
+    setIsEditingPO(false);
     setLineItemForms([]);
+    setPoNo(po.po_no ?? "");
+    setSupplierName(po.supplier_name ?? "");
+    setExpectedDeliveryDate(po.expected_delivery_date ?? "");
+    setPreferredCommunication(po.preferred_communication ?? "");
   };
-
-  const showDetails = !!selectedPO && !showPOForm;
 
   return (
     <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
@@ -438,7 +494,7 @@ export function InboundProcurement() {
                           key={po.po_id}
                           onClick={() => selectPO(po)}
                           className={`p-4 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md ${
-                            selectedPO?.po_id === po.po_id && showDetails
+                            selectedPO?.po_id === po.po_id
                               ? "border-[#00A3AD] bg-[#00A3AD]/5"
                               : "border-[#E5E7EB] hover:border-[#00A3AD]/50"
                           }`}
@@ -470,13 +526,10 @@ export function InboundProcurement() {
 
         <Card className="bg-white border-[#111827]/10 shadow-sm">
           <CardHeader>
-            <CardTitle className="text-[#111827] font-semibold">
-              {showDetails ? "P.O. Details" : "P.O. Builder"}
-            </CardTitle>
+            <CardTitle className="text-[#111827] font-semibold">P.O. Builder</CardTitle>
           </CardHeader>
           <CardContent>
-            {!showDetails ? (
-              <div className="space-y-4">
+            <div className="space-y-6">
                 <div>
                   <Label>P.O. Number</Label>
                   <div className="flex gap-2 mt-2">
@@ -554,46 +607,52 @@ export function InboundProcurement() {
                   </Select>
                 </div>
 
-                <div className="pt-4">
-                  <Button
-                    onClick={() => void createDraftPO()}
-                    className="w-full bg-[#00A3AD] hover:bg-[#0891B2] text-white rounded-lg font-bold"
-                    disabled={creatingPO}
-                  >
-                    {creatingPO ? "Creating Draft..." : "Create Draft P.O."}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-[#6B7280]">P.O. Number</Label>
-                    <div className="text-[#111827] font-medium mt-1">{selectedPO.po_no ?? "N/A"}</div>
-                  </div>
-                  <div>
-                    <Label className="text-[#6B7280]">Status</Label>
-                    <div className="mt-1">
-                      <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(selectedPO.status)}`}>
-                        {selectedPO.status ?? "Unknown"}
-                      </span>
+                {selectedPO && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-[#6B7280]">Current Status</Label>
+                      <div className="mt-1">
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(selectedPO.status)}`}>
+                          {selectedPO.status ?? "Unknown"}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-[#6B7280]">Created</Label>
+                      <div className="text-[#111827] mt-1">{formatDate(selectedPO.created_at)}</div>
                     </div>
                   </div>
-                  <div>
-                    <Label className="text-[#6B7280]">Created</Label>
-                    <div className="text-[#111827] mt-1">{formatDate(selectedPO.created_at)}</div>
-                  </div>
-                  <div>
-                    <Label className="text-[#6B7280]">Supplier</Label>
-                    <div className="text-[#111827] mt-1">{selectedPO.supplier_name ?? "N/A"}</div>
-                  </div>
-                  <div>
-                    <Label className="text-[#6B7280]">Expected Delivery</Label>
-                    <div className="text-[#111827] mt-1">{formatDateOnly(selectedPO.expected_delivery_date)}</div>
-                  </div>
-                </div>
+                )}
 
-                <div className="space-y-3">
+                {selectedPO && !isEditingPO && includesDraftTab(selectedPO.status) && (
+                  <div className="rounded-lg border border-[#E5E7EB] p-3 space-y-3 bg-[#F8FAFC]">
+                    <p className="text-sm text-[#6B7280]">
+                      This purchase order is in Draft. Choose an action below.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => setIsEditingPO(true)}
+                        className="border-[#111827]/20 text-[#111827] hover:bg-[#F8FAFC] rounded-lg font-bold"
+                        disabled={savingDraft || sendingPO}
+                      >
+                        Edit Purchase Order
+                      </Button>
+                      <Button
+                        onClick={() => void sendToSupplier()}
+                        className="w-full bg-[#00A3AD] hover:bg-[#0891B2] text-white rounded-lg font-bold"
+                        disabled={savingDraft || sendingPO}
+                      >
+                        <Send className="w-4 h-4 mr-2" />
+                        {sendingPO ? "Sending..." : "Send to Supplier"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {(!selectedPO || isEditingPO) && (
+                  <>
+                <div className="space-y-3 rounded-lg border border-[#E5E7EB] p-3">
                   <Label className="text-[#6B7280]">Line Items</Label>
                   {loadingItems ? (
                     <div className="text-sm text-[#6B7280]">Loading items...</div>
@@ -715,33 +774,27 @@ export function InboundProcurement() {
                   ))}
                 </div>
 
-                <div className="flex gap-3">
-                  <Button
-                    onClick={() =>
-                      toast.success("Send to Supplier", {
-                        description: "Email/notification integration is still a stub.",
-                      })
-                    }
-                    className="flex-1 bg-[#00A3AD] hover:bg-[#0891B2] text-white"
-                  >
-                    <Send className="w-4 h-4 mr-2" />
-                    Send to Supplier
-                  </Button>
+                <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Button
                     variant="outline"
-                    onClick={() =>
-                      toast.info("Download P.O.", {
-                        description: "Download export is still a stub.",
-                      })
-                    }
-                    className="border-[#111827]/20 text-[#111827] hover:bg-[#F8FAFC]"
+                    onClick={() => void saveToDraft()}
+                    className="border-[#111827]/20 text-[#111827] hover:bg-[#F8FAFC] rounded-lg font-bold"
+                    disabled={savingDraft || sendingPO}
                   >
-                    <Download className="w-4 h-4" />
+                    {savingDraft ? "Saving..." : "Save to Drafts"}
+                  </Button>
+                  <Button
+                    onClick={() => void sendToSupplier()}
+                    className="w-full bg-[#00A3AD] hover:bg-[#0891B2] text-white rounded-lg font-bold"
+                    disabled={savingDraft || sendingPO}
+                  >
+                    <Send className="w-4 h-4 mr-2" />
+                    {sendingPO ? "Sending..." : "Send to Supplier"}
                   </Button>
                 </div>
-
-              </div>
-            )}
+                  </>
+                )}
+            </div>
           </CardContent>
         </Card>
       </div>
