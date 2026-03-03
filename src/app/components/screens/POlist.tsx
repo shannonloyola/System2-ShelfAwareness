@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  AlertCircle,
   Building2,
   ChevronLeft,
   Clock,
@@ -16,6 +17,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { toast } from "sonner";
 import { supabase } from "../../../lib/supabase";
 import { PerItemTracker } from "../PerItemTracker";
+import {
+  fetchExpiredPOs,
+  fetchExpiringSoon,
+  runExpirationCheck,
+} from "../../../imports/expirationService";
 
 interface POItem {
   po_item_id: string;
@@ -31,6 +37,15 @@ interface PurchaseOrder {
   created_at: string;
   expected_delivery_date: string | null;
   items: POItem[];
+}
+
+interface ReservationPO {
+  po_id: string;
+  po_no: string;
+  supplier_name: string;
+  status: string;
+  expires_at: string;
+  reserved_at: string;
 }
 
 const formatDate = (iso: string) =>
@@ -286,6 +301,19 @@ export function POList() {
   const [pos, setPos] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [expiringSoon, setExpiringSoon] = useState<ReservationPO[]>(
+    [],
+  );
+  const [expiredPOs, setExpiredPOs] = useState<ReservationPO[]>(
+    [],
+  );
+  const [reservationLoading, setReservationLoading] =
+    useState(false);
+  const [runningExpiration, setRunningExpiration] =
+    useState(false);
+  const [lastExpirationRun, setLastExpirationRun] = useState<
+    string | null
+  >(null);
 
   const fetchPOs = useCallback(async () => {
     setLoading(true);
@@ -335,6 +363,49 @@ export function POList() {
     void fetchPOs();
   }, [fetchPOs]);
 
+  const fetchReservations = useCallback(async () => {
+    setReservationLoading(true);
+    try {
+      const [soon, expired] = await Promise.all([
+        fetchExpiringSoon(),
+        fetchExpiredPOs(),
+      ]);
+      setExpiringSoon((soon as ReservationPO[]) ?? []);
+      setExpiredPOs((expired as ReservationPO[]) ?? []);
+    } catch (error: any) {
+      toast.error("Failed to load reservations", {
+        description: toErrorMessage(error),
+      });
+    } finally {
+      setReservationLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchReservations();
+  }, [fetchReservations]);
+
+  const handleRunExpirationCheck = async () => {
+    setRunningExpiration(true);
+    try {
+      const result = await runExpirationCheck();
+      setLastExpirationRun(new Date().toISOString());
+      await fetchReservations();
+      toast.success("Expiration check completed", {
+        description:
+          result.length > 0
+            ? `${result.length} reservation(s) released`
+            : "No expired reservations found",
+      });
+    } catch (error: any) {
+      toast.error("Expiration check failed", {
+        description: toErrorMessage(error),
+      });
+    } finally {
+      setRunningExpiration(false);
+    }
+  };
+
   const filtered = pos.filter(
     (po) =>
       !search ||
@@ -349,6 +420,143 @@ export function POList() {
         <h1 className="text-2xl lg:text-4xl font-semibold mb-2 text-[#111827]">Purchase Orders</h1>
         <p className="text-sm lg:text-base text-[#6B7280]">View and track all purchase orders</p>
       </div>
+
+      <Card className="bg-white border-[#111827]/10 shadow-sm">
+        <CardHeader>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <CardTitle className="text-[#111827] font-semibold">
+              Reservation Monitor (Order Stock Hold)
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void fetchReservations()}
+                disabled={reservationLoading}
+                className="border-[#111827]/20 text-[#111827]"
+              >
+                <RefreshCw
+                  className={`w-4 h-4 mr-1 ${reservationLoading ? "animate-spin" : ""}`}
+                />
+                Refresh
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleRunExpirationCheck}
+                disabled={runningExpiration}
+                className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+              >
+                <Clock className="w-4 h-4 mr-1" />
+                {runningExpiration
+                  ? "Running..."
+                  : "Run Expiration"}
+              </Button>
+            </div>
+          </div>
+          <p className="text-xs text-[#6B7280]">
+            Available = Total - Reserved. Reservations auto-expire after 24 hours.
+            {lastExpirationRun && (
+              <>
+                {" "}
+                Last run:{" "}
+                {new Date(lastExpirationRun).toLocaleString()}.
+              </>
+            )}
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="rounded-lg border border-[#FDE68A] bg-[#FFFBEB] p-3">
+              <p className="text-xs text-[#92400E]">
+                Expiring Soon (2 hrs)
+              </p>
+              <p className="text-2xl font-bold text-[#B45309]">
+                {expiringSoon.length}
+              </p>
+            </div>
+            <div className="rounded-lg border border-[#FECACA] bg-[#FEF2F2] p-3">
+              <p className="text-xs text-[#991B1B]">
+                Expired Reservations
+              </p>
+              <p className="text-2xl font-bold text-[#B91C1C]">
+                {expiredPOs.length}
+              </p>
+            </div>
+          </div>
+
+          {reservationLoading ? (
+            <p className="text-sm text-[#6B7280]">
+              Loading reservation data...
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div className="rounded-lg border border-[#E5E7EB] p-3 space-y-2">
+                <p className="text-xs font-semibold text-[#6B7280] uppercase">
+                  Expiring Soon
+                </p>
+                {expiringSoon.length === 0 ? (
+                  <p className="text-sm text-[#6B7280]">
+                    No reservations expiring soon.
+                  </p>
+                ) : (
+                  expiringSoon.slice(0, 5).map((po) => (
+                    <div
+                      key={po.po_id}
+                      className="rounded-md border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2"
+                    >
+                      <p className="text-sm font-semibold text-[#111827]">
+                        {po.po_no}
+                      </p>
+                      <p className="text-xs text-[#6B7280]">
+                        {po.supplier_name}
+                      </p>
+                      <p className="text-xs text-[#92400E]">
+                        Expires:{" "}
+                        {new Date(po.expires_at).toLocaleString()}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="rounded-lg border border-[#E5E7EB] p-3 space-y-2">
+                <p className="text-xs font-semibold text-[#6B7280] uppercase">
+                  Expired (Released)
+                </p>
+                {expiredPOs.length === 0 ? (
+                  <p className="text-sm text-[#6B7280]">
+                    No expired reservations.
+                  </p>
+                ) : (
+                  expiredPOs.slice(0, 5).map((po) => (
+                    <div
+                      key={po.po_id}
+                      className="rounded-md border border-[#FECACA] bg-[#FEF2F2] px-3 py-2"
+                    >
+                      <p className="text-sm font-semibold text-[#7F1D1D]">
+                        {po.po_no}
+                      </p>
+                      <p className="text-xs text-[#6B7280]">
+                        {po.supplier_name}
+                      </p>
+                      <p className="text-xs text-[#991B1B]">
+                        Expired:{" "}
+                        {new Date(po.expires_at).toLocaleString()}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+          <div className="rounded-md border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2 text-xs text-[#1E3A8A] flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>
+              This monitor depends on DB functions (`reserve_product_stock`, `expire_reservations`) and fields (`reserved_at`, `expires_at`) on `purchase_orders`.
+            </span>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardHeader>

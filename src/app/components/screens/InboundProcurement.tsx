@@ -22,7 +22,7 @@ import {
 import { toast } from "sonner";
 import { supabase } from "../../../lib/supabase";
 
-type TabFilter = "all" | "draft" | "posted" | "in-transit";
+type TabFilter = "all" | "draft" | "posted";
 
 interface PurchaseOrderRow {
   po_id: string;
@@ -214,6 +214,7 @@ export function InboundProcurement() {
     try {
       const basePoNo = poNo || (await generateUniquePONumber());
       const tryInsert = async (poNumber: string, allowRetry: boolean) => {
+        const nowIso = new Date().toISOString();
         const { data, error } = await supabase
           .from("purchase_orders")
           .insert([
@@ -221,6 +222,8 @@ export function InboundProcurement() {
               po_no: poNumber,
               supplier_name: supplierName.trim(),
               status: DEFAULT_PO_STATUS,
+              created_at: nowIso,
+              paid_at: nowIso,
               expected_delivery_date: expectedDeliveryDate || null,
               preferred_communication: preferredCommunication || null,
             },
@@ -357,8 +360,7 @@ export function InboundProcurement() {
   const filteredPOs = useMemo(() => {
     if (activeTab === "all") return poList;
     if (activeTab === "draft") return poList.filter((po) => includesDraftTab(po.status));
-    if (activeTab === "posted") return poList.filter((po) => normalizeStatus(po.status) === "posted");
-    return poList.filter((po) => normalizeStatus(po.status) === "in-transit");
+    return poList.filter((po) => normalizeStatus(po.status) === "posted");
   }, [activeTab, poList]);
 
   const openBuilder = async () => {
@@ -410,22 +412,19 @@ export function InboundProcurement() {
           </CardHeader>
           <CardContent>
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabFilter)} className="w-full">
-              <TabsList className="grid w-full grid-cols-4 mb-4">
+              <TabsList className="grid w-full grid-cols-3 mb-4">
                 <TabsTrigger value="all">All</TabsTrigger>
                 <TabsTrigger value="draft">Draft</TabsTrigger>
                 <TabsTrigger value="posted">Posted</TabsTrigger>
-                <TabsTrigger value="in-transit">In-Transit</TabsTrigger>
               </TabsList>
 
-              {(["all", "draft", "posted", "in-transit"] as TabFilter[]).map((tab) => {
+              {(["all", "draft", "posted"] as TabFilter[]).map((tab) => {
                 const tabPOs =
                   tab === "all"
                     ? poList
                     : tab === "draft"
                       ? poList.filter((po) => includesDraftTab(po.status))
-                      : tab === "posted"
-                        ? poList.filter((po) => normalizeStatus(po.status) === "posted")
-                        : poList.filter((po) => normalizeStatus(po.status) === "in-transit");
+                      : poList.filter((po) => normalizeStatus(po.status) === "posted");
 
                 return (
                   <TabsContent key={tab} value={tab} className="space-y-3">

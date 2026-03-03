@@ -112,6 +112,18 @@ export function OutboundDistribution() {
   const [inventoryValueByCategory, setInventoryValueByCategory] = useState<
     Array<{ category_name: string; total_value_php: number }>
   >([]);
+  const totalCategoryValue = inventoryValueByCategory.reduce(
+    (sum, cat) => sum + Number(cat.total_value_php ?? 0),
+    0,
+  );
+
+  const formatPHP = (amount: number) =>
+    new Intl.NumberFormat("en-PH", {
+      style: "currency",
+      currency: "PHP",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
 
   // Fetch Total Inventory Value
   useEffect(() => {
@@ -132,6 +144,8 @@ export function OutboundDistribution() {
           if (data && data.length > 0 && data[0].total_inventory_value_php !== null) {
             setTotalInventoryValue(data[0].total_inventory_value_php);
           }
+        } else {
+          console.error("Failed to fetch total inventory value:", await response.text());
         }
       } catch (error) {
         console.error("Failed to fetch total inventory value:", error);
@@ -158,6 +172,8 @@ export function OutboundDistribution() {
         if (response.ok) {
           const data = await response.json();
           setInventoryValueByCategory(data || []);
+        } else {
+          console.error("Failed to fetch inventory value by category:", await response.text());
         }
       } catch (error) {
         console.error("Failed to fetch inventory value by category:", error);
@@ -223,7 +239,7 @@ export function OutboundDistribution() {
           <CardContent>
             <div className="text-3xl font-bold mb-1 text-[#1A2B47]">
               {totalInventoryValue !== null
-                ? `₱${(totalInventoryValue / 1000000).toFixed(2)}M`
+                ? formatPHP(Number(totalInventoryValue))
                 : "Loading..."}
             </div>
             <p className="text-xs text-[#6B7280]">Current stock value</p>
@@ -397,7 +413,7 @@ export function OutboundDistribution() {
                     </div>
                     <div>
                       <div className="text-[#6B7280] mb-1">Total</div>
-                      <div className="text-[#111827] font-semibold">₱{order.total.toLocaleString()}</div>
+                      <div className="text-[#111827] font-semibold">{formatPHP(order.total)}</div>
                     </div>
                     <div>
                       <div className="text-[#6B7280] mb-1">Terms</div>
@@ -514,14 +530,14 @@ export function OutboundDistribution() {
                 </thead>
                 <tbody>
                   {inventoryValueByCategory.map((category, index) => {
-                    const total = inventoryValueByCategory.reduce((sum, cat) => sum + cat.total_value_php, 0);
-                    const percentage = total > 0 ? (category.total_value_php / total) * 100 : 0;
+                    const categoryValue = Number(category.total_value_php ?? 0);
+                    const percentage = totalCategoryValue > 0 ? (categoryValue / totalCategoryValue) * 100 : 0;
                     
                     return (
                       <tr key={index} className="border-b border-[#E5E7EB] hover:bg-[#F8FAFC] transition-colors">
                         <td className="py-3 px-4 text-[#111827] font-medium">{category.category_name || "Uncategorized"}</td>
                         <td className="py-3 px-4 text-right text-[#111827] font-semibold">
-                          ₱{category.total_value_php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {formatPHP(categoryValue)}
                         </td>
                         <td className="py-3 px-4 text-right">
                           <div className="flex items-center justify-end gap-2">
@@ -544,7 +560,7 @@ export function OutboundDistribution() {
                   <tr className="border-t-2 border-[#1A2B47]">
                     <td className="py-3 px-4 text-[#1A2B47] font-bold">Total</td>
                     <td className="py-3 px-4 text-right text-[#1A2B47] font-bold">
-                      ₱{inventoryValueByCategory.reduce((sum, cat) => sum + cat.total_value_php, 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {formatPHP(totalCategoryValue)}
                     </td>
                     <td className="py-3 px-4 text-right text-[#1A2B47] font-bold">100%</td>
                   </tr>
