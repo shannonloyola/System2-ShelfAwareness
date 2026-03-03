@@ -14,6 +14,7 @@ import {
   Package,
   FileText,
   Trash2,
+  Printer,
 } from "lucide-react";
 import {
   Card,
@@ -47,6 +48,7 @@ import {
   TabsTrigger,
 } from "../ui/tabs";
 import { toast } from "sonner";
+import JsBarcode from "jsbarcode";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 interface Product {
@@ -146,8 +148,48 @@ const buildCategoryOptions = (
 
 const sanitizeBarcodeInput = (value: string): string =>
   value.replace(/\D/g, "").slice(0, 13);
+
+const computeEan13CheckDigit = (base12: string): string => {
+  const checksumBase = base12
+    .split("")
+    .map(Number)
+    .reduce(
+      (sum, digit, index) =>
+        sum + digit * (index % 2 === 0 ? 1 : 3),
+      0,
+    );
+  return String((10 - (checksumBase % 10)) % 10);
+};
+
+const toValidEan13 = (value: string): string | null => {
+  const digitsOnly = (value || "").replace(/\D/g, "");
+  if (digitsOnly.length < 12) return null;
+  const base12 = digitsOnly.slice(0, 12);
+  return `${base12}${computeEan13CheckDigit(base12)}`;
+};
+
+const generateSystemEan13 = (seed: string): string => {
+  const digits = seed.replace(/\D/g, "");
+  const suffix = (digits || "0").slice(-9).padStart(9, "0");
+  const base12 = `299${suffix}`;
+  return `${base12}${computeEan13CheckDigit(base12)}`;
+};
+
 const isValidBarcode = (value: string): boolean =>
-  /^\d{13}$/.test(value);
+  /^\d{13}$/.test(value) &&
+  (() => {
+    const digits = value.split("").map(Number);
+    const checkDigit = digits[12];
+    const checksumBase = digits
+      .slice(0, 12)
+      .reduce(
+        (sum, digit, index) =>
+          sum + digit * (index % 2 === 0 ? 1 : 3),
+        0,
+      );
+    const expected = (10 - (checksumBase % 10)) % 10;
+    return checkDigit === expected;
+  })();
 
 const parseSupabaseError = (
   raw: string,
@@ -193,6 +235,43 @@ const toProductValidationMessage = (
   return fallback;
 };
 
+const BarcodePreview = ({ value }: { value: string }) => {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const isValid = isValidBarcode(value || "");
+
+  useEffect(() => {
+    if (!svgRef.current || !isValid) return;
+    try {
+      JsBarcode(svgRef.current, value, {
+        format: "EAN13",
+        displayValue: false,
+        height: 44,
+        margin: 0,
+        width: 1.4,
+      });
+    } catch {
+      // Invalid values are handled by fallback UI below.
+    }
+  }, [isValid, value]);
+
+  if (!isValid) {
+    return (
+      <div className="h-[68px] w-full border border-[#FCA5A5] bg-[#FEF2F2] rounded-md flex items-center justify-center px-2 text-center text-xs text-[#EA580C]">
+        Invalid EAN-13 barcode: {value || "-"}
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-[68px] w-full border border-[#111827]/10 bg-white rounded-md px-2 py-1 flex flex-col items-center justify-center overflow-hidden">
+      <svg ref={svgRef} />
+      <div className="mt-1 text-[11px] leading-none tracking-normal font-mono text-[#111827]">
+        {value}
+      </div>
+    </div>
+  );
+};
+
 export function ProductMaster() {
   const [searchTerm, setSearchTerm] = useState("");
   const [parentCategoryFilter, setParentCategoryFilter] =
@@ -206,6 +285,8 @@ export function ProductMaster() {
   const [showViewDialog, setShowViewDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] =
+    useState(false);
+  const [showBarcodeDialog, setShowBarcodeDialog] =
     useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -262,6 +343,8 @@ export function ProductMaster() {
   const [pricingDateFilter, setPricingDateFilter] =
     useState<string>("30d");
   const [pricingPage, setPricingPage] = useState(1);
+  const [barcodeSearchTerm, setBarcodeSearchTerm] =
+    useState("");
 
   const addDebugLog = (
     type: string,
@@ -568,15 +651,16 @@ export function ProductMaster() {
   };
 
   const filteredProducts = useMemo(() => {
+    const normalizedSearch = searchTerm.toLowerCase();
     const filtered = products.filter((product) => {
       const matchesSearch =
         product.name
-          .toLowerCase()
-          .includes(searchTerm.toLowerCase()) ||
-        product.sku
-          .toLowerCase()
-          .includes(searchTerm.toLowerCase()) ||
-        product.barcode.includes(searchTerm);
+          ?.toLowerCase()
+          .includes(normalizedSearch) ||
+        product.sku?.toLowerCase().includes(normalizedSearch) ||
+        product.barcode
+          ?.toLowerCase()
+          .includes(normalizedSearch);
       const { parentId, childId } = getProductCategoryLineage(
         product.category_id,
       );
@@ -844,6 +928,9 @@ export function ProductMaster() {
           const cells = parseCsvLine(line);
           const productName = cells[idx("product_name")] || "";
           const categoryId = cells[idx("category_id")] || "";
+          const normalizedRowBarcode = toValidEan13(
+            cells[idx("barcode")] || "",
+          );
           const sku =
             cells[idx("sku")] ||
             generateSKU(productName || "PRD", categoryId || "");
@@ -852,7 +939,7 @@ export function ProductMaster() {
             product_name: productName,
             category_id: categoryId,
             category: getCategoryText(categoryId),
-            barcode: cells[idx("barcode")] || "",
+            barcode: normalizedRowBarcode || "",
             supplier: cells[idx("supplier")] || "",
             warehouse_location:
               cells[idx("warehouse_location")] || "",
@@ -1063,9 +1150,12 @@ export function ProductMaster() {
       return;
     }
 
-    if (!isValidBarcode(editFormData.barcode)) {
+    const normalizedEditBarcode = toValidEan13(
+      editFormData.barcode,
+    );
+    if (!normalizedEditBarcode) {
       toast.error("Invalid Barcode", {
-        description: "Barcode must be exactly 13 digits",
+        description: "Barcode must contain at least 12 digits.",
       });
       return;
     }
@@ -1085,6 +1175,15 @@ export function ProductMaster() {
       return;
     }
 
+    const rawEditDigits = (editFormData.barcode || "")
+      .replace(/\D/g, "")
+      .slice(0, 13);
+    if (normalizedEditBarcode !== rawEditDigits) {
+      toast.info("Barcode normalized", {
+        description: `Saved as valid EAN-13: ${normalizedEditBarcode}`,
+      });
+    }
+
     setIsUpdating(true);
     try {
       const headers = {
@@ -1098,7 +1197,7 @@ export function ProductMaster() {
         category_id: resolvedUpdateCategoryId,
         category: getCategoryText(resolvedUpdateCategoryId),
         unit: resolvedUpdateUnit,
-        barcode: sanitizeBarcodeInput(editFormData.barcode),
+        barcode: normalizedEditBarcode,
         supplier: editFormData.supplier.trim(),
         warehouse_location: editFormData.location.trim(),
         currency_code: editFormData.currencyCode.trim(),
@@ -1299,13 +1398,14 @@ export function ProductMaster() {
       });
       return;
     }
-    if (!isValidBarcode(formData.barcode)) {
+    const normalizedNewBarcode = toValidEan13(formData.barcode);
+    if (!normalizedNewBarcode) {
       addDebugLog(
         "error",
         "Validation failed - invalid barcode format",
       );
       toast.error("Invalid Barcode", {
-        description: "Barcode must be exactly 13 digits",
+        description: "Barcode must contain at least 12 digits.",
       });
       return;
     }
@@ -1323,6 +1423,15 @@ export function ProductMaster() {
           "Cost Price and Unit Price must be valid non-negative numbers.",
       });
       return;
+    }
+
+    const rawNewDigits = (formData.barcode || "")
+      .replace(/\D/g, "")
+      .slice(0, 13);
+    if (normalizedNewBarcode !== rawNewDigits) {
+      toast.info("Barcode normalized", {
+        description: `Saved as valid EAN-13: ${normalizedNewBarcode}`,
+      });
     }
 
     setIsSubmitting(true);
@@ -1344,7 +1453,7 @@ export function ProductMaster() {
         category_id: resolvedCategoryId,
         category: getCategoryText(resolvedCategoryId),
         unit: resolvedUnit,
-        barcode: sanitizeBarcodeInput(formData.barcode),
+        barcode: normalizedNewBarcode,
         supplier: formData.supplier.trim(),
         warehouse_location: formData.location.trim(),
         unit_price: nextUnitPrice,
@@ -1637,6 +1746,131 @@ export function ProductMaster() {
     return map;
   }, [pricingHistoryRows]);
 
+  const barcodeLabelProducts = useMemo(() => {
+    const term = barcodeSearchTerm.trim().toLowerCase();
+    if (!term) return filteredProducts;
+    return filteredProducts.filter((product) => {
+      return (
+        product.name?.toLowerCase().includes(term) ||
+        product.sku?.toLowerCase().includes(term) ||
+        product.barcode?.includes(term)
+      );
+    });
+  }, [filteredProducts, barcodeSearchTerm]);
+
+  const getPrintableBarcodeForProduct = (product: Product) => {
+    const normalized = toValidEan13(product.barcode || "");
+    return (
+      normalized || generateSystemEan13(String(product.id))
+    );
+  };
+
+  const handlePrintBarcodeLabel = (product: Product) => {
+    const barcode = getPrintableBarcodeForProduct(product);
+
+    const price = Number(product.unitPrice || 0);
+    const currency = product.currencyCode || "PHP";
+    const svg = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "svg",
+    );
+    JsBarcode(svg, barcode, {
+      format: "EAN13",
+      displayValue: false,
+      height: 58,
+      margin: 0,
+      width: 1.6,
+    });
+
+    const popup = window.open(
+      "",
+      "_blank",
+      "width=900,height=700",
+    );
+    if (!popup) {
+      toast.error("Popup blocked", {
+        description:
+          "Please allow popups so the print window can open.",
+      });
+      return;
+    }
+
+    popup.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>Barcode Label - ${product.sku}</title>
+          <style>
+            @page { size: A4; margin: 14mm; }
+            body {
+              margin: 0;
+              font-family: Arial, sans-serif;
+              color: #111827;
+            }
+            .sheet {
+              min-height: 100vh;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+            }
+            .label {
+              width: 330px;
+              border: 1px solid #d1d5db;
+              border-radius: 8px;
+              padding: 14px;
+              text-align: center;
+            }
+            .sku {
+              font-family: 'Courier New', monospace;
+              font-size: 14px;
+              font-weight: 700;
+              margin-bottom: 6px;
+              color: #0f766e;
+            }
+            .name {
+              font-size: 16px;
+              font-weight: 700;
+              margin-bottom: 4px;
+            }
+            .price {
+              font-size: 13px;
+              color: #475569;
+              margin-bottom: 10px;
+            }
+            .barcode {
+              display: flex;
+              justify-content: center;
+            }
+            .barcode-value {
+              margin-top: 6px;
+              font-family: 'Courier New', monospace;
+              font-size: 14px;
+              letter-spacing: 0;
+              word-spacing: 0;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="sheet">
+            <div class="label">
+              <div class="sku">${product.sku}</div>
+              <div class="name">${product.name}</div>
+              <div class="price">${formatMoney(price, currency)}</div>
+              <div class="barcode">${svg.outerHTML}</div>
+              <div class="barcode-value">${barcode}</div>
+            </div>
+          </div>
+          <script>
+            window.onload = () => {
+              window.print();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    popup.document.close();
+  };
+
   return (
     <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -1672,6 +1906,88 @@ export function ProductMaster() {
             <Download className="w-4 h-4 mr-2" />
             Export
           </Button>
+          <Dialog
+            open={showBarcodeDialog}
+            onOpenChange={setShowBarcodeDialog}
+          >
+            <DialogTrigger asChild>
+              <Button
+                variant="outline"
+                className="border-[#111827]/20 text-[#111827] hover:bg-[#F8FAFC]"
+              >
+                <Printer className="w-4 h-4 mr-2" />
+                Barcode Labels
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-3xl">
+              <DialogHeader>
+                <DialogTitle className="text-[#111827]">
+                  Barcode Label Generator
+                </DialogTitle>
+                <DialogDescription className="text-[#6B7280]">
+                  Select products and print barcode labels.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <Input
+                  placeholder="Search by name, SKU, or barcode..."
+                  value={barcodeSearchTerm}
+                  onChange={(e) =>
+                    setBarcodeSearchTerm(e.target.value)
+                  }
+                  className="border-[#111827]/10"
+                />
+                <div className="max-h-[480px] overflow-y-auto pr-1">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {barcodeLabelProducts.length === 0 ? (
+                      <div className="col-span-full rounded-lg border border-[#111827]/10 bg-[#F8FAFC] p-6 text-center text-sm text-[#6B7280]">
+                        No products found for this search.
+                      </div>
+                    ) : (
+                      barcodeLabelProducts.map((product) => {
+                        const printableBarcode =
+                          getPrintableBarcodeForProduct(
+                            product,
+                          );
+                        return (
+                          <div
+                            key={`barcode-${product.id}`}
+                            className="rounded-lg border border-[#111827]/10 bg-white p-3 space-y-2"
+                          >
+                            <div className="text-[12px] font-mono text-[#6B7280]">
+                              {product.sku}
+                            </div>
+                            <div className="text-sm font-semibold text-[#111827] line-clamp-1">
+                              {product.name}
+                            </div>
+                            <div className="text-xs text-[#6B7280]">
+                              {formatMoney(
+                                Number(product.unitPrice || 0),
+                                product.currencyCode || "PHP",
+                              )}
+                            </div>
+                            <BarcodePreview
+                              value={printableBarcode}
+                            />
+                            <Button
+                              size="sm"
+                              className="w-full bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+                              onClick={() =>
+                                handlePrintBarcodeLabel(product)
+                              }
+                            >
+                              <Printer className="w-4 h-4 mr-2" />
+                              Print Label
+                            </Button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
           <Dialog
             open={showNewProductDialog}
             onOpenChange={setShowNewProductDialog}
