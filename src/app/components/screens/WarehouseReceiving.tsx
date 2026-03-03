@@ -288,6 +288,11 @@ export function WarehouseReceiving() {
 
       const digitsOnly = trimmed.replace(/\D/g, "");
       const lowerValue = trimmed.toLowerCase();
+      const headers = {
+        apikey: publicAnonKey,
+        Authorization: `Bearer ${publicAnonKey}`,
+        "Content-Type": "application/json",
+      };
       const matchedItem =
         inventory.find(
           (item) =>
@@ -329,11 +334,6 @@ export function WarehouseReceiving() {
       );
 
       try {
-        const headers = {
-          apikey: publicAnonKey,
-          Authorization: `Bearer ${publicAnonKey}`,
-          "Content-Type": "application/json",
-        };
         const productKeys = [
           matchedItem.productUuid,
           matchedItem.id,
@@ -779,14 +779,25 @@ export function WarehouseReceiving() {
       .slice(11, 19)
       .replace(/:/g, "");
     const grnNumber = `GRN-${dateStamp}-${timeStamp}`;
+    const hasDiscrepancy = lines.some((line) => {
+      const expected = Number(line.qtyExpected);
+      const received = Number(line.qtyReceived);
+      return (
+        Number.isFinite(expected) &&
+        Number.isFinite(received) &&
+        expected !== received
+      );
+    });
 
     const headerPayload = {
       id: grnId,
       grn_number: grnNumber,
       received_date: receivedDate,
       notes: notes.trim() || null,
-      status: "DRAFT",
+      status: "draft",
       created_by: "warehouse_operator",
+      has_discrepancy: hasDiscrepancy,
+      review_status: hasDiscrepancy ? "pending" : null,
     };
 
     const linePayload = lines.map((line, idx) => {

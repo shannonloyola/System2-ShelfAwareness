@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import { supabase } from "../../../lib/supabase";
 
 interface Product {
-  id: number;
+  id: number | string;
   sku: string;
   product_name: string;
   barcode: string | null;
@@ -25,7 +25,7 @@ interface Product {
 
 interface PhysicalCount {
   id: string;
-  product_id: number;
+  product_id: number | string;
   sku: string;
   product_name: string;
   physical_count: number;
@@ -38,6 +38,9 @@ export default function InventoryCount() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [physicalCount, setPhysicalCount] = useState("");
   const [recentCounts, setRecentCounts] = useState<PhysicalCount[]>([]);
+  const [shelfItems, setShelfItems] = useState<Product[]>([]);
+  const [loadingShelfItems, setLoadingShelfItems] = useState(false);
+  const [mobileCountDrafts, setMobileCountDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [countedBy] = useState("Warehouse Staff"); // Could be made dynamic
@@ -45,6 +48,7 @@ export default function InventoryCount() {
   // Load recent counts on mount
   useEffect(() => {
     loadRecentCounts();
+    loadShelfItems();
   }, []);
 
   const loadRecentCounts = async () => {
@@ -57,8 +61,92 @@ export default function InventoryCount() {
     }
   };
 
+  const loadShelfItems = async () => {
+    setLoadingShelfItems(true);
+    try {
+      const { data, error } = await supabase
+        .from("products")
+        .select("product_id,sku,product_name,barcode,inventory_on_hand")
+        .order("product_name", { ascending: true })
+        .limit(100);
+
+      if (error) {
+        throw error;
+      }
+
+      const normalized = (data ?? []).map((row: any) => ({
+        id: row.product_id ?? row.id ?? "",
+        sku: String(row.sku ?? "N/A"),
+        product_name: String(row.product_name ?? "Unknown Product"),
+        barcode: (row.barcode as string | null) ?? null,
+        inventory_on_hand: Number(row.inventory_on_hand ?? 0),
+      }));
+      setShelfItems(normalized);
+    } catch (error: any) {
+      toast.error("Could not load shelf items", {
+        description: error.message,
+      });
+      setShelfItems([]);
+    } finally {
+      setLoadingShelfItems(false);
+    }
+  };
+
+  const saveCountForProduct = async (
+    product: Product,
+    rawCount: string,
+    options?: { clearMainForm?: boolean },
+  ) => {
+    const count = parseInt(rawCount);
+    if (rawCount === "") {
+      toast.error("Please enter a count");
+      return false;
+    }
+    if (isNaN(count) || count < 0) {
+      toast.error("Count cannot be negative", {
+        description: "Please enter a valid count (0 or above)",
+      });
+      return false;
+    }
+
+    setLoading(true);
+    try {
+      const mockData: PhysicalCount = {
+        id: `count-${Date.now()}`,
+        product_id: product.id,
+        sku: product.sku,
+        product_name: product.product_name,
+        physical_count: count,
+        counted_by: countedBy,
+        created_at: new Date().toISOString(),
+      };
+
+      toast.success("Saved", {
+        description: `${product.product_name} - Count: ${count}`,
+        icon: <CheckCircle2 className="w-5 h-5 text-[#00A3AD]" />,
+      });
+
+      setRecentCounts((prev) => [mockData, ...prev.slice(0, 4)]);
+
+      if (options?.clearMainForm !== false) {
+        setSelectedProduct(null);
+        setPhysicalCount("");
+        setManualBarcode("");
+      }
+      return true;
+    } catch (error: any) {
+      toast.error("Failed to save count", {
+        description: error.message,
+      });
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const findProductByBarcode = async (barcode: string) => {
-    if (!barcode.trim()) {
+    const trimmedBarcode = barcode.trim();
+    if (!trimmedBarcode) {
       toast.error("Please enter a barcode");
       return;
     }
@@ -68,7 +156,7 @@ export default function InventoryCount() {
       const { data, error } = await supabase
         .from("products")
         .select("*")
-        .eq("barcode", barcode.trim())
+        .eq("barcode", trimmedBarcode)
         .single();
 
       if (error || !data) {
@@ -111,53 +199,26 @@ export default function InventoryCount() {
       return;
     }
 
-    const count = parseInt(physicalCount);
-    if (isNaN(count) || count < 0) {
-      toast.error("Count cannot be negative", {
-        description: "Please enter a valid count (0 or above)",
-      });
-      return;
-    }
+    await saveCountForProduct(selectedProduct, physicalCount);
+  };
 
-    if (physicalCount === "") {
-      toast.error("Please enter a count");
-      return;
-    }
+  const handleMobileScanTap = (item: Product) => {
+    setSelectedProduct(item);
+    setManualBarcode(item.barcode ?? "");
+    setPhysicalCount("");
+    toast.info("Ready to scan/count", {
+      description: `${item.product_name} selected`,
+    });
+  };
 
-    setLoading(true);
-    try {
-      // Since 'physical_counts' table doesn't exist yet, we'll simulate success
-      // In production, this would save to the database
-      
-      // Simulate successful save
-      const mockData = {
-        id: `count-${Date.now()}`,
-        product_id: selectedProduct.id,
-        sku: selectedProduct.sku,
-        product_name: selectedProduct.product_name,
-        physical_count: count,
-        counted_by: countedBy,
-        created_at: new Date().toISOString(),
-      };
-
-      toast.success("Saved", {
-        description: `${selectedProduct.product_name} — Count: ${count}`,
-        icon: <CheckCircle2 className="w-5 h-5 text-[#00A3AD]" />,
-      });
-
-      // Add to recent counts at the top
-      setRecentCounts((prev) => [mockData, ...prev.slice(0, 4)]);
-
-      // Clear for next item
-      setSelectedProduct(null);
-      setPhysicalCount("");
-      setManualBarcode("");
-    } catch (error: any) {
-      toast.error("Failed to save count", {
-        description: error.message,
-      });
-    } finally {
-      setLoading(false);
+  const handleMobileCountTap = async (item: Product) => {
+    const key = String(item.id);
+    const rawCount = mobileCountDrafts[key] ?? "";
+    const saved = await saveCountForProduct(item, rawCount, {
+      clearMainForm: false,
+    });
+    if (saved) {
+      setMobileCountDrafts((prev) => ({ ...prev, [key]: "" }));
     }
   };
 
@@ -174,6 +235,73 @@ export default function InventoryCount() {
           <p className="text-slate-600 mt-2">
             Scan and enter physical count
           </p>
+        </div>
+
+        {/* Simplified Mobile Shelf Counting */}
+        <div className="lg:hidden mb-6">
+          <Card className="border-2 border-[#1A2B47]/10 shadow-lg">
+            <CardHeader className="bg-gradient-to-r from-[#1A2B47] to-[#1A2B47]/90">
+              <CardTitle className="text-white">
+                Shelf Counting (Mobile)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-4 space-y-3">
+              {loadingShelfItems ? (
+                <p className="text-sm text-slate-500">Loading shelf items...</p>
+              ) : shelfItems.length === 0 ? (
+                <p className="text-sm text-slate-500">No shelf items found.</p>
+              ) : (
+                shelfItems.map((item) => {
+                  const key = String(item.id);
+                  return (
+                    <div
+                      key={key}
+                      className="rounded-lg border border-slate-200 p-3 bg-white space-y-3"
+                    >
+                      <div>
+                        <p className="font-semibold text-[#1A2B47] text-sm">
+                          {item.product_name}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {item.sku} | System: {item.inventory_on_hand}
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          type="button"
+                          onClick={() => handleMobileScanTap(item)}
+                          className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+                        >
+                          Scan
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => handleMobileCountTap(item)}
+                          disabled={loading || !(mobileCountDrafts[key] ?? "").trim()}
+                          className="bg-[#F97316] hover:bg-[#EA580C] text-white"
+                        >
+                          Count
+                        </Button>
+                      </div>
+                      <Input
+                        type="number"
+                        min="0"
+                        placeholder="Physical count"
+                        value={mobileCountDrafts[key] ?? ""}
+                        onChange={(e) =>
+                          setMobileCountDrafts((prev) => ({
+                            ...prev,
+                            [key]: e.target.value,
+                          }))
+                        }
+                        className="h-11 border-slate-300"
+                      />
+                    </div>
+                  );
+                })
+              )}
+            </CardContent>
+          </Card>
         </div>
 
         {/* Desktop: Two-column layout / Mobile: Single column */}
@@ -375,3 +503,4 @@ export default function InventoryCount() {
     </div>
   );
 }
+
