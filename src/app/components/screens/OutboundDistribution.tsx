@@ -4,100 +4,34 @@ import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { useState, useEffect } from "react";
 import { 
   Plus, 
-  MessageSquare,
-  CheckCircle,
-  Clock,
-  AlertCircle,
-  DollarSign,
   TrendingUp
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { Label } from "../ui/label";
-import { 
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../ui/select";
+import { supabase } from "@/lib/supabase";
 
-interface RetailerOrder {
-  id: string;
-  orderNumber: string;
-  retailer: string;
-  date: string;
-  items: number;
-  total: number;
-  paymentStatus: "paid" | "pending" | "delayed" | "partial";
-  paymentTerms: string;
-  dueDate: string;
-  channel: "viber" | "whatsapp" | "email";
-}
+type RetailOrderLine = {
+  line_uuid: string;
+  sku: string;
+  qty: number;
+  unit_price: number;
+  line_total: number;
+  qty_fulfilled: number;
+  qty_backordered: number;
+};
 
-const mockOrders: RetailerOrder[] = [
-  {
-    id: "1",
-    orderNumber: "ORD-2026-0145",
-    retailer: "Watsons - SM Mall of Asia",
-    date: "2026-02-10",
-    items: 24,
-    total: 485000,
-    paymentStatus: "paid",
-    paymentTerms: "30-day",
-    dueDate: "2026-03-12",
-    channel: "viber"
-  },
-  {
-    id: "2",
-    orderNumber: "ORD-2026-0146",
-    retailer: "Mercury Drug - Makati",
-    date: "2026-02-15",
-    items: 18,
-    total: 325000,
-    paymentStatus: "pending",
-    paymentTerms: "60-day",
-    dueDate: "2026-04-16",
-    channel: "whatsapp"
-  },
-  {
-    id: "3",
-    orderNumber: "ORD-2026-0147",
-    retailer: "Watsons - Bonifacio Global City",
-    date: "2026-01-20",
-    items: 32,
-    total: 628000,
-    paymentStatus: "delayed",
-    paymentTerms: "30-day",
-    dueDate: "2026-02-19",
-    channel: "viber"
-  },
-  {
-    id: "4",
-    orderNumber: "ORD-2026-0148",
-    retailer: "Mercury Drug - Quezon City",
-    date: "2026-02-05",
-    items: 15,
-    total: 298000,
-    paymentStatus: "partial",
-    paymentTerms: "Installments",
-    dueDate: "2026-03-05",
-    channel: "email"
-  },
-  {
-    id: "5",
-    orderNumber: "ORD-2026-0149",
-    retailer: "Southstar Drug - Manila",
-    date: "2026-02-18",
-    items: 12,
-    total: 185000,
-    paymentStatus: "pending",
-    paymentTerms: "30-day",
-    dueDate: "2026-03-20",
-    channel: "whatsapp"
-  },
-];
+type RetailOrder = {
+  order_uuid: string;
+  order_no: string;
+  retailer_name: string;
+  status: "placed" | "cancelled" | "fulfilled" | "partially_fulfilled";
+  total_amount: number;
+  payment_terms: string | null;
+  due_date: string | null;
+  notes: string | null;
+  created_at: string;
+  retail_order_lines: RetailOrderLine[];
+};
 
 const retailerPerformance = [
   { name: "Watsons", paid: 1250000, pending: 325000, status: "healthy" },
@@ -107,10 +41,32 @@ const retailerPerformance = [
 ];
 
 export function OutboundDistribution() {
-  const [showOrderForm, setShowOrderForm] = useState(false);
+  const [showLogForm, setShowLogForm] = useState(false);
   const [totalInventoryValue, setTotalInventoryValue] = useState<number | null>(null);
   const [inventoryValueByCategory, setInventoryValueByCategory] = useState<
     Array<{ category_name: string; total_value_php: number }>
+  >([]);
+  const [orders, setOrders] = useState<RetailOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"All" | "Paid" | "Pending" | "Delayed">("All");
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [editLines, setEditLines] = useState<any[]>([]);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [cancellingOrder, setCancellingOrder] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [newOrder, setNewOrder] = useState({
+    retailerName: "",
+    paymentTerms: "",
+    orderChannel: "",
+    dueDate: "",
+    notes: "",
+    lines: [{ sku: "", qty: 1, unitPrice: 0 }],
+  });
+  const [availableProducts, setAvailableProducts] = useState<
+    { sku: string; product_name: string; available_stock: number; unit_price: number }[]
   >([]);
   const totalCategoryValue = inventoryValueByCategory.reduce(
     (sum, cat) => sum + Number(cat.total_value_php ?? 0),
@@ -183,32 +139,228 @@ export function OutboundDistribution() {
     fetchInventoryValueByCategory();
   }, []);
 
-  const getPaymentStatusColor = (status: string) => {
-    switch (status) {
-      case "paid": return "bg-[#00A3AD] text-white";
-      case "pending": return "bg-[#D1D5DB] text-[#111827]";
-      case "delayed": return "bg-[#F97316] text-white";
-      case "partial": return "bg-[#F97316]/70 text-white";
-      default: return "bg-[#E5E7EB] text-[#111827]";
+  const isLocked = (status: string) =>
+    status === "dispatched" || status === "fulfilled";
+
+  const fetchOrders = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("retail_orders")
+      .select(`
+        order_uuid,
+        order_no,
+        retailer_name,
+        status,
+        total_amount,
+        payment_terms,
+        due_date,
+        notes,
+        created_at,
+        retail_order_lines (
+          line_uuid,
+          sku,
+          qty,
+          unit_price,
+          line_total,
+          qty_fulfilled,
+          qty_backordered
+        )
+      `)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      toast.error("Failed to load orders", { description: error.message });
+    } else {
+      setOrders((data as RetailOrder[]) || []);
+    }
+    setLoading(false);
+  };
+
+  const fetchAvailableProducts = async () => {
+    const { data, error } = await supabase
+      .from("products")
+      .select("sku, product_name, available_stock, unit_price")
+      .gt("available_stock", 0)
+      .order("product_name");
+
+    if (!error && data) {
+      setAvailableProducts(data as {
+        sku: string;
+        product_name: string;
+        available_stock: number;
+        unit_price: number;
+      }[]);
     }
   };
 
-  const getPaymentStatusIcon = (status: string) => {
-    switch (status) {
-      case "paid": return <CheckCircle className="w-4 h-4" />;
-      case "pending": return <Clock className="w-4 h-4" />;
-      case "delayed": return <AlertCircle className="w-4 h-4" />;
-      case "partial": return <DollarSign className="w-4 h-4" />;
-      default: return null;
+  const filteredOrders = orders.filter((order) => {
+    if (activeTab === "All") return true;
+    if (activeTab === "Paid") return order.status === "fulfilled";
+    if (activeTab === "Pending") return order.status === "placed" || order.status === "partially_fulfilled";
+    if (activeTab === "Delayed") {
+      return order.due_date
+        ? new Date(order.due_date) < new Date() && order.status !== "fulfilled" && order.status !== "cancelled"
+        : false;
     }
+    return true;
+  });
+
+  const statusColor: Record<string, string> = {
+    placed: "bg-blue-100 text-blue-700",
+    fulfilled: "bg-green-100 text-green-700",
+    cancelled: "bg-gray-100 text-gray-500",
+    partially_fulfilled: "bg-yellow-100 text-yellow-700",
   };
 
-  const handleLogOrder = () => {
-    toast.success("Order Logged", {
-      description: "Order has been added to the system"
+  const openEditModal = (order: any) => {
+    setSelectedOrder(order);
+    setEditLines(
+      (order.retail_order_lines || []).map((line: any) => ({ ...line })),
+    );
+    setIsEditModalOpen(true);
+  };
+
+  const saveEdit = async () => {
+    setSavingEdit(true);
+    for (const line of editLines) {
+      const { error } = await supabase
+        .from("retail_order_lines")
+        .update({ qty: line.qty })
+        .eq("order_uuid", selectedOrder.order_uuid)
+        .eq("sku", line.sku);
+
+      if (error) {
+        toast.error("Failed to save changes", { description: error.message });
+        setSavingEdit(false);
+        return;
+      }
+    }
+    setSavingEdit(false);
+    setIsEditModalOpen(false);
+    toast.success("Order updated successfully.");
+    fetchOrders();
+  };
+
+  const openCancelModal = (order: any) => {
+    setSelectedOrder(order);
+    setCancelReason("");
+    setIsCancelModalOpen(true);
+  };
+
+  const confirmCancel = async () => {
+    if (!cancelReason.trim()) {
+      toast.error("Cancellation reason is required.");
+      return;
+    }
+    if (selectedOrder?.status === "cancelled") {
+      toast.error("Order is already cancelled.");
+      return;
+    }
+    setCancellingOrder(true);
+
+    const { data, error } = await supabase
+      .rpc("cancel_retail_order", { p_order_uuid: selectedOrder.order_uuid });
+
+    setCancellingOrder(false);
+
+    if (error || !data?.success) {
+      toast.error("Order Cancellation Failed", {
+        description: data?.error || error?.message,
+      });
+      return;
+    }
+
+    setIsCancelModalOpen(false);
+    toast.success("Order Cancelled", {
+      description: "Stock has been returned to the warehouse pool.",
     });
-    setShowOrderForm(false);
+    fetchOrders();
   };
+
+  const addLine = () =>
+    setNewOrder((prev) => ({
+      ...prev,
+      lines: [...prev.lines, { sku: "", qty: 1, unitPrice: 0 }],
+    }));
+
+  const removeLine = (idx: number) =>
+    setNewOrder((prev) => ({
+      ...prev,
+      lines: prev.lines.filter((_, i) => i !== idx),
+    }));
+
+  const updateLine = (idx: number, field: string, value: string | number) =>
+    setNewOrder((prev) => {
+      const lines = [...prev.lines];
+      lines[idx] = { ...lines[idx], [field]: value };
+      return { ...prev, lines };
+    });
+
+  const logOrder = async () => {
+    if (!newOrder.retailerName.trim()) {
+      toast.error("Retailer name is required.");
+      return;
+    }
+    if (newOrder.lines.some((line) => !line.sku.trim())) {
+      toast.error("All line items must have a SKU.");
+      return;
+    }
+
+    setSubmitting(true);
+
+    const { data: order, error: orderError } = await supabase
+      .from("retail_orders")
+      .insert({
+        retailer_name: newOrder.retailerName,
+        payment_terms: newOrder.paymentTerms || null,
+        due_date: newOrder.dueDate || null,
+        notes: newOrder.notes || newOrder.orderChannel || null,
+        status: "placed",
+      })
+      .select("order_uuid")
+      .single();
+
+    if (orderError || !order) {
+      toast.error("Failed to create order", { description: orderError?.message });
+      setSubmitting(false);
+      return;
+    }
+
+    const lines = newOrder.lines.map((line) => ({
+      order_uuid: order.order_uuid,
+      sku: line.sku.trim(),
+      qty: Number(line.qty),
+      unit_price: Number(line.unitPrice),
+    }));
+
+    const { error: linesError } = await supabase
+      .from("retail_order_lines")
+      .insert(lines);
+
+    if (linesError) {
+      toast.error("Order created but line items failed", { description: linesError.message });
+      setSubmitting(false);
+      return;
+    }
+
+    toast.success("Order logged successfully!");
+    setNewOrder({
+      retailerName: "",
+      paymentTerms: "",
+      orderChannel: "",
+      dueDate: "",
+      notes: "",
+      lines: [{ sku: "", qty: 1, unitPrice: 0 }],
+    });
+    setShowLogForm(false);
+    setSubmitting(false);
+    fetchOrders();
+  };
+
+  useEffect(() => {
+    void fetchOrders();
+    void fetchAvailableProducts();
+  }, []);
 
   return (
     <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
@@ -221,7 +373,7 @@ export function OutboundDistribution() {
           <p className="text-[#6B7280]">Manage retail orders and track payments</p>
         </div>
         <Button
-          onClick={() => setShowOrderForm(!showOrderForm)}
+          onClick={() => setShowLogForm(true)}
           className="bg-[#00A3AD] hover:bg-[#0891B2] text-white shadow-sm"
         >
           <Plus className="w-4 h-4 mr-2" />
@@ -283,88 +435,150 @@ export function OutboundDistribution() {
         </Card>
       </div>
 
-      {/* Order Intake Form */}
-      {showOrderForm && (
-        <Card className="bg-white border-[#111827]/10 shadow-lg">
-          <CardHeader>
-            <CardTitle className="text-[#111827] font-semibold">
-              Log New Retailer Order
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>Retailer</Label>
-                <Select>
-                  <SelectTrigger className="mt-2 border-[#111827]/10">
-                    <SelectValue placeholder="Select retailer..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="watsons">Watsons</SelectItem>
-                    <SelectItem value="mercury">Mercury Drug</SelectItem>
-                    <SelectItem value="southstar">Southstar Drug</SelectItem>
-                    <SelectItem value="generics">The Generics Pharmacy</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+      {showLogForm && (
+        <div className="border rounded-xl p-5 bg-white shadow-sm space-y-4 mb-4">
+          <h2 className="font-semibold text-gray-800">Log New Retailer Order</h2>
 
-              <div>
-                <Label>Order Channel</Label>
-                <Select>
-                  <SelectTrigger className="mt-2 border-[#111827]/10">
-                    <SelectValue placeholder="Select channel..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="viber">Viber</SelectItem>
-                    <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                    <SelectItem value="email">Email</SelectItem>
-                    <SelectItem value="phone">Phone</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">
+                Retailer <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Generika Pharmacy"
+                value={newOrder.retailerName}
+                onChange={(event) =>
+                  setNewOrder((prev) => ({ ...prev, retailerName: event.target.value }))
+                }
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">Order Channel</label>
+              <select
+                value={newOrder.orderChannel}
+                onChange={(event) =>
+                  setNewOrder((prev) => ({ ...prev, orderChannel: event.target.value }))
+                }
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+              >
+                <option value="">Select channel...</option>
+                <option value="Walk-in">Walk-in</option>
+                <option value="Phone">Phone</option>
+                <option value="Email">Email</option>
+                <option value="Online">Online</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">Payment Terms</label>
+              <select
+                value={newOrder.paymentTerms}
+                onChange={(event) =>
+                  setNewOrder((prev) => ({ ...prev, paymentTerms: event.target.value }))
+                }
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+              >
+                <option value="">Select terms...</option>
+                <option value="COD">COD</option>
+                <option value="Net 15">Net 15</option>
+                <option value="Net 30">Net 30</option>
+                <option value="Net 60">Net 60</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">Due Date</label>
+              <input
+                type="date"
+                value={newOrder.dueDate}
+                onChange={(event) =>
+                  setNewOrder((prev) => ({ ...prev, dueDate: event.target.value }))
+                }
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+              />
+            </div>
+          </div>
 
-              <div>
-                <Label>Payment Terms</Label>
-                <Select>
-                  <SelectTrigger className="mt-2 border-[#111827]/10">
-                    <SelectValue placeholder="Select terms..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="30-day">30-day Net</SelectItem>
-                    <SelectItem value="60-day">60-day Net</SelectItem>
-                    <SelectItem value="installments">Installments</SelectItem>
-                    <SelectItem value="cod">Cash on Delivery</SelectItem>
-                  </SelectContent>
-                </Select>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-700">Order Lines</label>
+            {/* Header row for order line fields - improved alignment */}
+            <div className="flex gap-2 mb-1 pl-1">
+              <div className="flex-1 flex justify-start">
+                <span className="text-xs text-gray-500">SKU</span>
               </div>
-
-              <div>
-                <Label>Order Total</Label>
-                <Input
+              <div className="w-20 flex justify-center">
+                <span className="text-xs text-gray-500">Quantity</span>
+              </div>
+              <div className="w-28 flex justify-center">
+                <span className="text-xs text-gray-500">Unit Price</span>
+              </div>
+              <div className="w-8" />
+            </div>
+            {newOrder.lines.map((line, idx) => (
+              <div key={idx} className="flex items-center gap-2">
+                <select
+                  value={line.sku}
+                  onChange={(event) => {
+                    const selected = availableProducts.find((p) => p.sku === event.target.value);
+                    updateLine(idx, "sku", event.target.value);
+                    if (selected) updateLine(idx, "unitPrice", selected.unit_price);
+                  }}
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                >
+                  <option value="">Select SKU...</option>
+                  {availableProducts.map((product) => (
+                    <option key={product.sku} value={product.sku}>
+                      {product.sku} — {product.product_name} (stock: {product.available_stock})
+                    </option>
+                  ))}
+                </select>
+                <input
                   type="number"
-                  placeholder="0.00"
-                  className="mt-2 border-[#111827]/10"
+                  min={1}
+                  placeholder="Quantity"
+                  value={line.qty}
+                  onChange={(event) => updateLine(idx, "qty", Number(event.target.value))}
+                  className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-400"
                 />
+                <input
+                  type="number"
+                  min={0}
+                  placeholder="Unit Price"
+                  value={line.unitPrice}
+                  onChange={(event) => updateLine(idx, "unitPrice", Number(event.target.value))}
+                  className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-400"
+                />
+                {newOrder.lines.length > 1 && (
+                  <button
+                    onClick={() => removeLine(idx)}
+                    className="text-red-400 hover:text-red-600 text-sm"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
-            </div>
+            ))}
+            <button onClick={addLine} className="text-sm text-teal-600 hover:underline mt-1">
+              + Add Line
+            </button>
+          </div>
 
-            <div className="flex gap-3 pt-4">
-              <Button
-                onClick={handleLogOrder}
-                className="flex-1 bg-[#00A3AD] hover:bg-[#0891B2] text-white"
-              >
-                Log Order
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setShowOrderForm(false)}
-                className="border-[#111827]/20 text-[#111827]"
-              >
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              onClick={() => setShowLogForm(false)}
+              className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={logOrder}
+              disabled={submitting}
+              className="px-4 py-2 rounded-lg text-sm bg-teal-600 text-white font-medium hover:bg-teal-700 disabled:opacity-50"
+            >
+              {submitting ? "Logging..." : "Log Order"}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Orders List */}
@@ -375,83 +589,91 @@ export function OutboundDistribution() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="all" className="w-full">
+          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)} className="w-full">
             <TabsList className="grid w-full grid-cols-4 mb-4">
-              <TabsTrigger value="all">All</TabsTrigger>
-              <TabsTrigger value="paid">Paid</TabsTrigger>
-              <TabsTrigger value="pending">Pending</TabsTrigger>
-              <TabsTrigger value="delayed">Delayed</TabsTrigger>
+              <TabsTrigger value="All">All</TabsTrigger>
+              <TabsTrigger value="Paid">Paid</TabsTrigger>
+              <TabsTrigger value="Pending">Pending</TabsTrigger>
+              <TabsTrigger value="Delayed">Delayed</TabsTrigger>
             </TabsList>
-
-            <TabsContent value="all" className="space-y-3">
-              {mockOrders.map((order) => (
-                <div
-                  key={order.id}
-                  className="p-4 rounded-lg border border-[#E5E7EB] hover:border-[#00A3AD] hover:shadow-md transition-all"
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <div className="font-semibold text-[#111827] mb-1">
-                        {order.retailer}
+            {["All", "Paid", "Pending", "Delayed"].map((tab) => (
+              <TabsContent key={tab} value={tab} className="space-y-3">
+                {loading ? (
+                  <p className="text-sm text-gray-400 py-8 text-center">Loading orders...</p>
+                ) : filteredOrders.length === 0 ? (
+                  <p className="text-sm text-gray-400 py-8 text-center">No orders found.</p>
+                ) : (
+                  filteredOrders.map((order) => (
+                    <div key={order.order_uuid} className="border rounded-xl p-4 space-y-3 bg-white shadow-sm">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="font-semibold text-gray-800">{order.retailer_name}</p>
+                          <p className="text-xs text-gray-400">
+                            {order.order_no} · {new Date(order.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                        <span className={`text-xs font-medium px-2 py-1 rounded-full ${statusColor[order.status] || "bg-gray-100 text-gray-500"}`}>
+                          {order.status.replace("_", " ")}
+                        </span>
                       </div>
-                      <div className="text-sm text-[#6B7280]">
-                        {order.orderNumber} • {order.date}
+
+                      <div className="grid grid-cols-4 gap-2 text-sm">
+                        <div>
+                          <p className="text-gray-400 text-xs">Items</p>
+                          <p className="font-medium">{order.retail_order_lines.length}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400 text-xs">Total</p>
+                          <p className="font-medium">
+                            ₱{Number(order.total_amount).toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400 text-xs">Terms</p>
+                          <p className="font-medium">{order.payment_terms || "N/A"}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400 text-xs">Due Date</p>
+                          <p className="font-medium">{order.due_date ? new Date(order.due_date).toLocaleDateString() : "N/A"}</p>
+                        </div>
+                      </div>
+
+                      {order.notes && (
+                        <p className="text-xs text-gray-500 italic">📝 {order.notes}</p>
+                      )}
+
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          onClick={() => openEditModal(order)}
+                          disabled={isLocked(order.status)}
+                          className={`px-3 py-1.5 rounded border text-sm font-medium transition-colors ${
+                            isLocked(order.status)
+                              ? "border-gray-200 text-gray-300 cursor-not-allowed bg-gray-50"
+                              : "border-blue-400 text-blue-600 hover:bg-blue-50"
+                          }`}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => openCancelModal(order)}
+                          disabled={isLocked(order.status)}
+                          className={`px-3 py-1.5 rounded border text-sm font-medium transition-colors ${
+                            isLocked(order.status)
+                              ? "border-gray-200 text-gray-300 cursor-not-allowed bg-gray-50"
+                              : "border-orange-400 text-orange-500 hover:bg-orange-50"
+                          }`}
+                        >
+                          Cancel Order
+                        </button>
+                        {isLocked(order.status) && (
+                          <span className="text-xs text-gray-400 italic">Locked — {order.status}</span>
+                        )}
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${getPaymentStatusColor(order.paymentStatus)}`}>
-                        {getPaymentStatusIcon(order.paymentStatus)}
-                        {order.paymentStatus}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <div className="text-[#6B7280] mb-1">Items</div>
-                      <div className="text-[#111827] font-medium">{order.items}</div>
-                    </div>
-                    <div>
-                      <div className="text-[#6B7280] mb-1">Total</div>
-                      <div className="text-[#111827] font-semibold">{formatPHP(order.total)}</div>
-                    </div>
-                    <div>
-                      <div className="text-[#6B7280] mb-1">Terms</div>
-                      <div className="text-[#111827]">{order.paymentTerms}</div>
-                    </div>
-                    <div>
-                      <div className="text-[#6B7280] mb-1">Due Date</div>
-                      <div className={order.paymentStatus === "delayed" ? "text-[#F97316] font-medium" : "text-[#111827]"}>
-                        {order.dueDate}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[#E5E7EB]">
-                    <MessageSquare className="w-4 h-4 text-[#6B7280]" />
-                    <span className="text-xs text-[#6B7280] capitalize">{order.channel}</span>
-                  </div>
-                </div>
-              ))}
-            </TabsContent>
-
-            <TabsContent value="paid">
-              <div className="text-center py-8 text-[#6B7280]">
-                {mockOrders.filter(o => o.paymentStatus === "paid").length} paid orders
-              </div>
-            </TabsContent>
-
-            <TabsContent value="pending">
-              <div className="text-center py-8 text-[#6B7280]">
-                {mockOrders.filter(o => o.paymentStatus === "pending").length} pending orders
-              </div>
-            </TabsContent>
-
-            <TabsContent value="delayed">
-              <div className="text-center py-8 text-[#6B7280]">
-                {mockOrders.filter(o => o.paymentStatus === "delayed").length} delayed orders
-              </div>
-            </TabsContent>
+                  ))
+                )}
+              </TabsContent>
+            ))}
           </Tabs>
         </CardContent>
       </Card>
@@ -574,6 +796,93 @@ export function OutboundDistribution() {
           )}
         </CardContent>
       </Card>
+
+      {isEditModalOpen && selectedOrder && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg space-y-4">
+            <h2 className="text-lg font-semibold text-gray-800">Edit Order</h2>
+            <p className="text-sm text-gray-500">
+              Modify quantities below. Only available before dispatch.
+            </p>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {editLines.map((line, idx) => (
+                <div key={line.sku ?? idx} className="flex items-center justify-between gap-4 border rounded-lg px-3 py-2">
+                  <span className="text-sm font-medium text-gray-700">{line.sku}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={line.qty}
+                    onChange={(event) => {
+                      const updated = [...editLines];
+                      updated[idx] = { ...line, qty: Number(event.target.value) };
+                      setEditLines(updated);
+                    }}
+                    className="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                </div>
+              ))}
+              {editLines.length === 0 && (
+                <p className="text-sm text-gray-400 text-center py-4">No line items found.</p>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setIsEditModalOpen(false)}
+                className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50"
+              >
+                Close
+              </button>
+              <button
+                onClick={saveEdit}
+                disabled={savingEdit}
+                className="px-4 py-2 rounded-lg text-sm bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                {savingEdit ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isCancelModalOpen && selectedOrder && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md space-y-4">
+            <h2 className="text-lg font-semibold text-gray-800">Cancel Order</h2>
+            <p className="text-sm text-gray-500">
+              This will release all reserved stock back to the warehouse pool. This cannot be undone.
+            </p>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">
+                Cancellation Reason <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={cancelReason}
+                onChange={(event) => setCancelReason(event.target.value)}
+                placeholder="e.g. Customer requested cancellation..."
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none h-24 focus:outline-none focus:ring-2 focus:ring-red-400"
+              />
+              {!cancelReason.trim() && (
+                <p className="text-xs text-red-400">This field is required.</p>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setIsCancelModalOpen(false)}
+                className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50"
+              >
+                Back
+              </button>
+              <button
+                onClick={confirmCancel}
+                disabled={cancellingOrder || !cancelReason.trim()}
+                className="px-4 py-2 rounded-lg text-sm bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {cancellingOrder ? "Cancelling..." : "Confirm Cancel"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
