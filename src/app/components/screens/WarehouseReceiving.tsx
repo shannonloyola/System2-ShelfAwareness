@@ -42,6 +42,7 @@ import {
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { postGRN } from "/utils/postGRN";
+import { supabase } from "@/lib/supabase";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -67,7 +68,17 @@ interface GrnLine {
   otherReason: string;
 }
 
+interface BackorderAlertRow {
+  id: string;
+  sku: string;
+  message: string | null;
+  grn_reference: string | null;
+  pending_backorder_count: number | null;
+  created_at: string;
+}
+
 const MIN_STOCK_THRESHOLD = 500;
+const warehouseRowsPerPage = 10;
 
 const getTodayLocalDate = (): string => {
   const now = new Date();
@@ -114,6 +125,7 @@ export function WarehouseReceiving() {
   const [loadingInventory, setLoadingInventory] =
     useState(false);
   const [stockSearch, setStockSearch] = useState("");
+  const [inventoryPage, setInventoryPage] = useState(1);
   const [isScanListening, setIsScanListening] = useState(false);
   const [scanInput, setScanInput] = useState("");
   const [showCameraScanner, setShowCameraScanner] =
@@ -123,6 +135,9 @@ export function WarehouseReceiving() {
   );
   const [isCameraScanning, setIsCameraScanning] =
     useState(false);
+  const [backorderAlerts, setBackorderAlerts] = useState<
+    BackorderAlertRow[]
+  >([]);
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const scanVideoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -150,6 +165,33 @@ export function WarehouseReceiving() {
       inventory.filter((item) => item.status === "zero").length,
     [inventory],
   );
+
+  const pagedInventory = useMemo(() => {
+    const start = (inventoryPage - 1) * warehouseRowsPerPage;
+    return filteredInventory.slice(
+      start,
+      start + warehouseRowsPerPage,
+    );
+  }, [filteredInventory, inventoryPage]);
+
+  const inventoryTotalPages = useMemo(() => {
+    return Math.max(
+      1,
+      Math.ceil(
+        filteredInventory.length / warehouseRowsPerPage,
+      ),
+    );
+  }, [filteredInventory.length]);
+
+  useEffect(() => {
+    setInventoryPage(1);
+  }, [stockSearch]);
+
+  useEffect(() => {
+    if (inventoryPage > inventoryTotalPages) {
+      setInventoryPage(inventoryTotalPages);
+    }
+  }, [inventoryPage, inventoryTotalPages]);
 
   const fetchInventory = useCallback(async () => {
     setLoadingInventory(true);
@@ -232,6 +274,56 @@ export function WarehouseReceiving() {
   useEffect(() => {
     fetchInventory();
   }, [fetchInventory]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadBackorderAlerts = async () => {
+      const { data, error } = await supabase
+        .from("backorder_alerts")
+        .select(
+          "id, sku, message, grn_reference, pending_backorder_count, created_at",
+        )
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (!isMounted || error) return;
+      setBackorderAlerts(
+        (data as BackorderAlertRow[]) ?? [],
+      );
+    };
+
+    void loadBackorderAlerts();
+
+    const channel = supabase
+      .channel("warehouse-backorder-alerts")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "backorder_alerts",
+        },
+        (payload) => {
+          const nextAlert = payload.new as BackorderAlertRow;
+          setBackorderAlerts((prev) => [
+            nextAlert,
+            ...prev,
+          ].slice(0, 5));
+          toast.success("Backorder Match Found", {
+            description:
+              nextAlert.message ||
+              `${nextAlert.sku} has pending retailer demand waiting for this inbound stock.`,
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      void supabase.removeChannel(channel);
+    };
+  }, []);
 
   const incrementReceivedForItem = (
     item: InventoryItem,
@@ -1537,7 +1629,7 @@ export function WarehouseReceiving() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredInventory.map((item) => (
+                  {pagedInventory.map((item) => (
                     <tr
                       key={item.id}
                       className="border-b border-[#E5E7EB] last:border-b-0"
@@ -1569,6 +1661,44 @@ export function WarehouseReceiving() {
                   ))}
                 </tbody>
               </table>
+              <div className="flex items-center justify-between px-4 py-4 border-t border-[#E5E7EB] bg-white">
+                <div className="text-xs text-[#6B7280]">
+                  Page {inventoryPage} of {inventoryTotalPages}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-[#111827]/20 text-[#111827]"
+                    onClick={() =>
+                      setInventoryPage((prev) =>
+                        Math.max(1, prev - 1),
+                      )
+                    }
+                    disabled={inventoryPage <= 1}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-[#111827]/20 text-[#111827]"
+                    onClick={() =>
+                      setInventoryPage((prev) =>
+                        Math.min(
+                          inventoryTotalPages,
+                          prev + 1,
+                        ),
+                      )
+                    }
+                    disabled={
+                      inventoryPage >= inventoryTotalPages
+                    }
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
         </CardContent>

@@ -117,7 +117,8 @@ const formatMoney = (
 const normalizeLocationValue = (value: string): string =>
   value.trim().toLowerCase();
 
-const pricingRowsPerPage = 20;
+const inventoryRowsPerPage = 10;
+const pricingRowsPerPage = 10;
 
 const buildCategoryOptions = (
   rows: ProductCategory[],
@@ -342,6 +343,7 @@ export function ProductMaster() {
     useState("");
   const [pricingDateFilter, setPricingDateFilter] =
     useState<string>("30d");
+  const [inventoryPage, setInventoryPage] = useState(1);
   const [pricingPage, setPricingPage] = useState(1);
   const [barcodeSearchTerm, setBarcodeSearchTerm] =
     useState("");
@@ -705,6 +707,21 @@ export function ProductMaster() {
     () => categories.filter((c) => !c.parent_id),
     [categories],
   );
+
+  const pagedInventoryProducts = useMemo(() => {
+    const start = (inventoryPage - 1) * inventoryRowsPerPage;
+    return filteredProducts.slice(
+      start,
+      start + inventoryRowsPerPage,
+    );
+  }, [filteredProducts, inventoryPage]);
+
+  const inventoryTotalPages = useMemo(() => {
+    return Math.max(
+      1,
+      Math.ceil(filteredProducts.length / inventoryRowsPerPage),
+    );
+  }, [filteredProducts.length]);
 
   const childCategories = useMemo(() => {
     if (!selectedParentCategoryId) return [];
@@ -1706,6 +1723,21 @@ export function ProductMaster() {
   }, [pricingSearchTerm, pricingDateFilter, searchTerm]);
 
   useEffect(() => {
+    setInventoryPage(1);
+  }, [
+    searchTerm,
+    parentCategoryFilter,
+    childCategoryFilter,
+    locationFilter,
+  ]);
+
+  useEffect(() => {
+    if (inventoryPage > inventoryTotalPages) {
+      setInventoryPage(inventoryTotalPages);
+    }
+  }, [inventoryPage, inventoryTotalPages]);
+
+  useEffect(() => {
     if (pricingPage > pricingTotalPages) {
       setPricingPage(pricingTotalPages);
     }
@@ -2456,7 +2488,7 @@ export function ProductMaster() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredProducts.map((product) => {
+                    {pagedInventoryProducts.map((product) => {
                       const currentPricing =
                         currentPricingByProductId.get(
                           product.id,
@@ -2564,6 +2596,42 @@ export function ProductMaster() {
                     })}
                   </tbody>
                 </table>
+              </div>
+              <div className="flex items-center justify-between mt-4">
+                <div className="text-xs text-[#6B7280]">
+                  Page {inventoryPage} of {inventoryTotalPages}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-[#111827]/20 text-[#111827]"
+                    onClick={() =>
+                      setInventoryPage((prev) =>
+                        Math.max(1, prev - 1),
+                      )
+                    }
+                    disabled={inventoryPage <= 1}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-[#111827]/20 text-[#111827]"
+                    onClick={() =>
+                      setInventoryPage((prev) =>
+                        Math.min(
+                          inventoryTotalPages,
+                          prev + 1,
+                        ),
+                      )
+                    }
+                    disabled={inventoryPage >= inventoryTotalPages}
+                  >
+                    Next
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

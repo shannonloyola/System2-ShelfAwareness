@@ -1,7 +1,7 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { 
   Plus, 
   TrendingUp
@@ -31,6 +31,34 @@ type RetailOrder = {
   notes: string | null;
   created_at: string;
   retail_order_lines: RetailOrderLine[];
+};
+
+type AvailableProduct = {
+  product_id: string;
+  sku: string;
+  product_name: string;
+  current_stock: number;
+  unit_price: number;
+};
+
+type FulfillmentLineResult = {
+  sku: string;
+  qty: number;
+  qty_fulfilled: number;
+  qty_backordered: number;
+  available_stock_before: number;
+  available_stock_after: number;
+};
+
+type FulfillmentResult = {
+  order_uuid?: string;
+  order_no?: string;
+  status?: RetailOrder["status"];
+  backordered?: boolean;
+  fulfilled?: boolean;
+  qty_backordered_total?: number;
+  lines?: FulfillmentLineResult[];
+  error?: string;
 };
 
 const retailerPerformance = [
@@ -66,7 +94,7 @@ export function OutboundDistribution() {
     lines: [{ sku: "", qty: 1, unitPrice: 0 }],
   });
   const [availableProducts, setAvailableProducts] = useState<
-    { sku: string; product_name: string; available_stock: number; unit_price: number }[]
+    AvailableProduct[]
   >([]);
   const totalCategoryValue = inventoryValueByCategory.reduce(
     (sum, cat) => sum + Number(cat.total_value_php ?? 0),
@@ -177,21 +205,95 @@ export function OutboundDistribution() {
   };
 
   const fetchAvailableProducts = async () => {
-    const { data, error } = await supabase
-      .from("products")
-      .select("sku, product_name, available_stock, unit_price")
-      .gt("available_stock", 0)
-      .order("product_name");
+    const [productsRes, inventoryRes, pricingRes] =
+      await Promise.all([
+        supabase
+          .from("products")
+          .select("product_id, sku, product_name, unit_price")
+          .order("product_name"),
+        supabase
+          .from("v_products_with_inventory")
+          .select("product_id, qty_on_hand"),
+        supabase
+          .from("product_pricing")
+          .select(
+            "product_id, selling_price, is_active, effective_from, created_at",
+          )
+          .eq("is_active", true)
+          .order("effective_from", { ascending: false })
+          .order("created_at", { ascending: false }),
+      ]);
 
-    if (!error && data) {
-      setAvailableProducts(data as {
-        sku: string;
-        product_name: string;
-        available_stock: number;
-        unit_price: number;
-      }[]);
+    if (productsRes.error) {
+      toast.error("Failed to load products", {
+        description: productsRes.error.message,
+      });
+      return;
     }
+
+    const inventoryByProductId = new Map<string, number>(
+      ((inventoryRes.data as any[]) || []).map((row) => [
+        String(row.product_id),
+        Number(row.qty_on_hand ?? 0),
+      ]),
+    );
+
+    const pricingByProductId = new Map<string, number>();
+    for (const row of (pricingRes.data as any[]) || []) {
+      const productId = String(row.product_id);
+      if (!pricingByProductId.has(productId)) {
+        pricingByProductId.set(
+          productId,
+          Number(row.selling_price ?? 0),
+        );
+      }
+    }
+
+    setAvailableProducts(
+      (((productsRes.data as any[]) || []).map((product) => {
+        const productId = String(product.product_id);
+        return {
+          product_id: productId,
+          sku: product.sku,
+          product_name: product.product_name,
+          current_stock:
+            inventoryByProductId.get(productId) ?? 0,
+          unit_price:
+            pricingByProductId.get(productId) ??
+            Number(product.unit_price ?? 0),
+        };
+      }) as AvailableProduct[]).sort((a, b) =>
+        a.product_name.localeCompare(b.product_name),
+      ),
+    );
   };
+
+  const lineAvailability = useMemo(() => {
+    return newOrder.lines.map((line) => {
+      const product = availableProducts.find(
+        (entry) => entry.sku === line.sku,
+      );
+      const available = Number(product?.current_stock ?? 0);
+      const requested = Number(line.qty ?? 0);
+      const shortage =
+        line.sku && requested > available
+          ? requested - available
+          : 0;
+
+      return {
+        sku: line.sku,
+        available,
+        requested,
+        shortage,
+        isShort: shortage > 0,
+      };
+    });
+  }, [availableProducts, newOrder.lines]);
+
+  const shortageCount = useMemo(
+    () => lineAvailability.filter((line) => line.isShort).length,
+    [lineAvailability],
+  );
 
   const filteredOrders = orders.filter((order) => {
     if (activeTab === "All") return true;
@@ -343,7 +445,45 @@ export function OutboundDistribution() {
       return;
     }
 
-    toast.success("Order logged successfully!");
+    const { data: fulfillmentData, error: fulfillmentError } =
+      await supabase.rpc("fulfill_retail_order", {
+        p_order_uuid: order.order_uuid,
+      });
+
+    if (fulfillmentError) {
+      toast.error("Order saved but fulfillment failed", {
+        description: fulfillmentError.message,
+      });
+      setSubmitting(false);
+      return;
+    }
+
+    const fulfillment = (fulfillmentData ||
+      {}) as FulfillmentResult;
+
+    if (fulfillment.error) {
+      toast.error("Order saved but fulfillment failed", {
+        description: fulfillment.error,
+      });
+      setSubmitting(false);
+      return;
+    }
+
+    const backorderedQty = Number(
+      fulfillment.qty_backordered_total ?? 0,
+    );
+    toast.success(
+      fulfillment.status === "partially_fulfilled"
+        ? "Order partially fulfilled"
+        : "Order fulfilled",
+      {
+        description:
+          backorderedQty > 0
+            ? `${backorderedQty} unit(s) moved to backorder.`
+            : "All ordered quantities were allocated from stock.",
+      },
+    );
+
     setNewOrder({
       retailerName: "",
       paymentTerms: "",
@@ -355,6 +495,7 @@ export function OutboundDistribution() {
     setShowLogForm(false);
     setSubmitting(false);
     fetchOrders();
+    fetchAvailableProducts();
   };
 
   useEffect(() => {
@@ -438,6 +579,11 @@ export function OutboundDistribution() {
       {showLogForm && (
         <div className="border rounded-xl p-5 bg-white shadow-sm space-y-4 mb-4">
           <h2 className="font-semibold text-gray-800">Log New Retailer Order</h2>
+          {shortageCount > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {shortageCount} line{shortageCount === 1 ? "" : "s"} exceed current stock. Available units will be fulfilled first, and the remaining quantity will be saved as backorder.
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
@@ -515,7 +661,8 @@ export function OutboundDistribution() {
               <div className="w-8" />
             </div>
             {newOrder.lines.map((line, idx) => (
-              <div key={idx} className="flex items-center gap-2">
+              <div key={idx} className="space-y-1">
+                <div className="flex items-center gap-2">
                 <select
                   value={line.sku}
                   onChange={(event) => {
@@ -528,7 +675,7 @@ export function OutboundDistribution() {
                   <option value="">Select SKU...</option>
                   {availableProducts.map((product) => (
                     <option key={product.sku} value={product.sku}>
-                      {product.sku} — {product.product_name} (stock: {product.available_stock})
+                      {product.sku} - {product.product_name} (stock: {product.current_stock}, price: {product.unit_price})
                     </option>
                   ))}
                 </select>
@@ -555,6 +702,21 @@ export function OutboundDistribution() {
                   >
                     ✕
                   </button>
+                )}
+                </div>
+                {lineAvailability[idx]?.sku && (
+                  <div
+                    className={`text-xs ${
+                      lineAvailability[idx].isShort
+                        ? "text-amber-700"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    Available: {lineAvailability[idx].available} unit(s)
+                    {lineAvailability[idx].isShort
+                      ? ` | Backorder on submit: ${lineAvailability[idx].shortage}`
+                      : " | Fully allocatable"}
+                  </div>
                 )}
               </div>
             ))}
@@ -640,6 +802,36 @@ export function OutboundDistribution() {
 
                       {order.notes && (
                         <p className="text-xs text-gray-500 italic">📝 {order.notes}</p>
+                      )}
+
+                      {(order.retail_order_lines || []).length > 0 && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                          <div className="space-y-2">
+                            {order.retail_order_lines.map((line) => (
+                              <div
+                                key={line.line_uuid}
+                                className="flex items-center justify-between gap-4 text-xs text-gray-600"
+                              >
+                                <span className="font-mono font-semibold text-gray-800">
+                                  {line.sku}
+                                </span>
+                                <span>Ordered: {line.qty}</span>
+                                <span className="text-emerald-700">
+                                  Fulfilled: {line.qty_fulfilled ?? 0}
+                                </span>
+                                <span
+                                  className={
+                                    Number(line.qty_backordered ?? 0) > 0
+                                      ? "text-amber-700 font-medium"
+                                      : "text-gray-500"
+                                  }
+                                >
+                                  Backorder: {line.qty_backordered ?? 0}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
 
                       <div className="flex items-center gap-2 pt-1">

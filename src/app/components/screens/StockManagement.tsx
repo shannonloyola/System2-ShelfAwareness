@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   TrendingDown,
@@ -69,6 +69,27 @@ interface StockItem {
   maxStock: number;
   status: "healthy" | "low" | "critical" | "overstock";
   lastRestocked: string;
+}
+
+interface BackorderAgingRow {
+  backorder_id: string;
+  order_uuid: string | null;
+  order_no: string | null;
+  retailer_name: string | null;
+  sku: string;
+  qty_backordered: number;
+  created_at: string;
+  age_days: number;
+  latest_status: string | null;
+}
+
+interface BackorderAlertRow {
+  id: string;
+  sku: string;
+  message: string | null;
+  grn_reference: string | null;
+  pending_backorder_count: number | null;
+  created_at: string;
 }
 
 const mockStock: StockItem[] = [
@@ -176,6 +197,31 @@ const EMPTY_FORM = {
   requested_by: "",
 };
 
+const getCalendarAgeDays = (createdAt: string): number => {
+  const created = new Date(createdAt);
+  if (Number.isNaN(created.getTime())) return 0;
+
+  const today = new Date();
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  );
+  const createdStart = new Date(
+    created.getFullYear(),
+    created.getMonth(),
+    created.getDate(),
+  );
+
+  return Math.max(
+    0,
+    Math.round(
+      (todayStart.getTime() - createdStart.getTime()) /
+        (1000 * 60 * 60 * 24),
+    ),
+  );
+};
+
 export function StockManagement() {
   // Inventory states
   const [searchTerm, setSearchTerm] = useState("");
@@ -187,6 +233,14 @@ export function StockManagement() {
     useState(false);
   const [selectedItem, setSelectedItem] =
     useState<StockItem | null>(null);
+  const [backorders, setBackorders] = useState<
+    BackorderAgingRow[]
+  >([]);
+  const [backorderAlerts, setBackorderAlerts] = useState<
+    BackorderAlertRow[]
+  >([]);
+  const [backorderLoading, setBackorderLoading] =
+    useState(false);
 
   // Main tab state
   const [mainTab, setMainTab] = useState("inventory");
@@ -207,6 +261,78 @@ export function StockManagement() {
   const [modalAction, setModalAction] = useState<
     "approve" | "reject" | null
   >(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadBackorderData = async () => {
+      setBackorderLoading(true);
+      const [backordersRes, alertsRes] = await Promise.all([
+        supabase
+          .from("v_backorder_aging")
+          .select(
+            "backorder_id, order_uuid, order_no, retailer_name, sku, qty_backordered, created_at, age_days, latest_status",
+          )
+          .order("created_at", { ascending: true })
+          .limit(25),
+        supabase
+          .from("backorder_alerts")
+          .select(
+            "id, sku, message, grn_reference, pending_backorder_count, created_at",
+          )
+          .order("created_at", { ascending: false })
+          .limit(10),
+      ]);
+
+      if (!isMounted) return;
+
+      if (!backordersRes.error) {
+        setBackorders(
+          (backordersRes.data as BackorderAgingRow[]) ?? [],
+        );
+      }
+
+      if (!alertsRes.error) {
+        setBackorderAlerts(
+          (alertsRes.data as BackorderAlertRow[]) ?? [],
+        );
+      }
+
+      setBackorderLoading(false);
+    };
+
+    void loadBackorderData();
+
+    const channel = supabase
+      .channel("stock-management-backorder-alerts")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "backorder_alerts",
+        },
+        (payload) => {
+          const nextAlert = payload.new as BackorderAlertRow;
+          setBackorderAlerts((prev) => [
+            nextAlert,
+            ...prev,
+          ].slice(0, 10));
+          toast.success("Inbound Priority Alert", {
+            description:
+              nextAlert.message ||
+              `${nextAlert.sku} has pending backorders ready for review.`,
+          });
+          void loadBackorderData();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      void supabase.removeChannel(channel);
+    };
+  }, []);
 
   // Load products and adjustments when switching to adjustments tab
   useEffect(() => {
@@ -246,6 +372,18 @@ export function StockManagement() {
   );
   const criticalItems = mockStock.filter(
     (item) => item.status === "critical",
+  );
+  const backordersWithAge = useMemo(
+    () =>
+      backorders.map((row) => ({
+        ...row,
+        computed_age_days: getCalendarAgeDays(row.created_at),
+      })),
+    [backorders],
+  );
+  const oldestBackorderAge = backordersWithAge.reduce(
+    (max, row) => Math.max(max, row.computed_age_days),
+    0,
   );
 
   const getStatusColor = (status: string) => {
@@ -751,6 +889,153 @@ export function StockManagement() {
                     </div>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card className="bg-white border-[#0F766E]/20 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-[#6B7280]">
+                  Pending Backorders
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-[#0F172A]">
+                  {backorders.length}
+                </div>
+                <p className="text-xs text-[#6B7280] mt-1">
+                  Open retailer line items waiting for inbound stock
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white border-[#F59E0B]/20 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-[#6B7280]">
+                  Oldest Backorder Age
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-[#B45309]">
+                  {oldestBackorderAge}
+                </div>
+                <p className="text-xs text-[#6B7280] mt-1">
+                  Days since the oldest pending backorder was logged
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <Card className="bg-white border-[#111827]/10 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-[#111827] font-semibold">
+                  Backorder Aging
+                </CardTitle>
+                <p className="text-sm text-[#6B7280]">
+                  Retailers waiting on incoming Japan shipments.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {backorderLoading ? (
+                  <div className="text-sm text-[#6B7280]">
+                    Loading backorders...
+                  </div>
+                ) : backorders.length === 0 ? (
+                  <div className="text-sm text-[#6B7280]">
+                    No pending backorders found.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {backordersWithAge.map((row) => (
+                      <div
+                        key={row.backorder_id}
+                        className="rounded-lg border border-[#E5E7EB] p-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-semibold text-[#111827]">
+                              {row.sku}
+                            </div>
+                            <div className="text-sm text-[#6B7280]">
+                              {row.retailer_name || "Retailer N/A"}
+                              {row.order_no
+                                ? ` | ${row.order_no}`
+                                : ""}
+                            </div>
+                          </div>
+                          <span className="rounded-full bg-[#FEF3C7] px-3 py-1 text-xs font-medium text-[#92400E]">
+                            {row.computed_age_days} day
+                            {row.computed_age_days === 1
+                              ? ""
+                              : "s"}
+                          </span>
+                        </div>
+                        <div className="mt-2 text-sm text-[#111827]">
+                          Backordered Qty:{" "}
+                          <span className="font-semibold">
+                            {row.qty_backordered}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white border-[#111827]/10 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-[#111827] font-semibold">
+                  Inbound Priority Alerts
+                </CardTitle>
+                <p className="text-sm text-[#6B7280]">
+                  Instant flags from posted GRNs that match pending backorders.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {backorderAlerts.length === 0 ? (
+                  <div className="text-sm text-[#6B7280]">
+                    No inbound alerts yet.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {backorderAlerts.map((alert) => (
+                      <div
+                        key={alert.id}
+                        className="rounded-lg border border-[#BFDBFE] bg-[#EFF6FF] p-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-semibold text-[#1D4ED8]">
+                              {alert.sku}
+                            </div>
+                            <div className="text-sm text-[#1E3A8A]">
+                              {alert.message ||
+                                "Pending backorders can now be reviewed."}
+                            </div>
+                          </div>
+                          <div className="text-right text-xs text-[#1E3A8A]">
+                            <div>
+                              {alert.pending_backorder_count || 0} pending
+                            </div>
+                            <div>
+                              {new Date(
+                                alert.created_at,
+                              ).toLocaleString()}
+                            </div>
+                          </div>
+                        </div>
+                        {alert.grn_reference && (
+                          <div className="mt-2 text-xs text-[#1E40AF]">
+                            Source GRN: {alert.grn_reference}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

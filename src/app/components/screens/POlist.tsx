@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Building2,
@@ -47,6 +47,8 @@ interface ReservationPO {
   expires_at: string;
   reserved_at: string;
 }
+
+const poRowsPerPage = 10;
 
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-US", {
@@ -301,6 +303,7 @@ export function POList() {
   const [pos, setPos] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [expiringSoon, setExpiringSoon] = useState<ReservationPO[]>(
     [],
   );
@@ -413,6 +416,25 @@ export function POList() {
       po.supplier_name.toLowerCase().includes(search.toLowerCase()) ||
       po.status.toLowerCase().includes(search.toLowerCase()),
   );
+
+  const pagedPOs = useMemo(() => {
+    const start = (currentPage - 1) * poRowsPerPage;
+    return filtered.slice(start, start + poRowsPerPage);
+  }, [filtered, currentPage]);
+
+  const totalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(filtered.length / poRowsPerPage));
+  }, [filtered.length]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   return (
     <div className="p-4 space-y-4 bg-white">
@@ -616,7 +638,7 @@ export function POList() {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((po, i) => (
+                  pagedPOs.map((po, i) => (
                     <tr
                       key={po.po_id}
                       onClick={() => navigate(`/po-list/${po.po_id}`)}
@@ -636,6 +658,37 @@ export function POList() {
                 )}
               </tbody>
             </table>
+          </div>
+          <div className="flex items-center justify-between px-4 py-4">
+            <div className="text-xs text-[#6B7280]">
+              Page {currentPage} of {totalPages}
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-[#111827]/20 text-[#111827]"
+                onClick={() =>
+                  setCurrentPage((prev) => Math.max(1, prev - 1))
+                }
+                disabled={currentPage <= 1}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-[#111827]/20 text-[#111827]"
+                onClick={() =>
+                  setCurrentPage((prev) =>
+                    Math.min(totalPages, prev + 1),
+                  )
+                }
+                disabled={currentPage >= totalPages}
+              >
+                Next
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
