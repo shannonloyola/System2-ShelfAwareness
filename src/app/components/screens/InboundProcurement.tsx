@@ -51,6 +51,22 @@ interface ProductRow {
   barcode: string | null;
 }
 
+interface SupplierScorecardRow {
+  supplier_key: string;
+  supplier_name: string;
+  total_pos: number;
+  approved_pos: number;
+  po_approval_rate: number;
+  total_receipts: number;
+  clean_receipts: number;
+  clean_receipt_rate: number;
+  total_discrepancies: number;
+  approved_discrepancies: number;
+  rejected_discrepancies: number;
+  avg_discrepancy_units: number;
+  reliability_score: number;
+}
+
 interface LineItemForm {
   formId: string;
   editingPoItemId: string | null;
@@ -120,6 +136,8 @@ export function InboundProcurement() {
 
   const [poNo, setPoNo] = useState("");
   const [supplierName, setSupplierName] = useState("");
+  const [supplierScorecard, setSupplierScorecard] = useState<SupplierScorecardRow | null>(null);
+  const [loadingSupplierScorecard, setLoadingSupplierScorecard] = useState(false);
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
   const [preferredCommunication, setPreferredCommunication] = useState("");
 
@@ -139,6 +157,30 @@ export function InboundProcurement() {
     "in-transit": ["received"],
     received: [],
   };
+
+  const fetchSupplierScorecard = async (supplier: string) => {
+  if (!supplier) {
+    setSupplierScorecard(null);
+    return;
+  }
+
+  setLoadingSupplierScorecard(true);
+
+  const { data, error } = await supabase
+    .from("supplier_scorecards_view")
+    .select("*")
+    .ilike("supplier_name", supplier)
+    .maybeSingle();
+
+  setLoadingSupplierScorecard(false);
+
+  if (error) {
+    console.error("Scorecard fetch error", error);
+    return;
+  }
+
+  setSupplierScorecard(data ?? null);
+};
 
   const fetchPurchaseOrders = useCallback(async () => {
     setLoadingPOs(true);
@@ -696,10 +738,27 @@ export function InboundProcurement() {
                   <Label>Supplier</Label>
                   <Input
                     value={supplierName}
-                    onChange={(e) => setSupplierName(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setSupplierName(value);
+                      fetchSupplierScorecard(value);
+                    }}
                     placeholder="Enter supplier name..."
                     className="mt-2 border-[#111827]/10 rounded-lg"
                   />
+
+                  {supplierScorecard && (
+                    <div
+                      className={`text-sm mt-2 ${
+                        supplierScorecard.reliability_score < 70
+                          ? "text-red-600"
+                          : "text-green-600"
+                      }`}
+                    >
+                      Supplier Scorecard — Reliability: {supplierScorecard.reliability_score}%
+                    </div>
+                  )}
+                  
                 </div>
 
                 <div>
