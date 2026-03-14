@@ -303,6 +303,7 @@ export function POList() {
   const [pos, setPos] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted" | "in-transit" | "received">("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [expiringSoon, setExpiringSoon] = useState<ReservationPO[]>(
     [],
@@ -417,14 +418,19 @@ export function POList() {
       po.status.toLowerCase().includes(search.toLowerCase()),
   );
 
+  const statusFiltered = useMemo(() => {
+    if (statusFilter === "all") return filtered;
+    return filtered.filter((po) => normalizeStatus(po.status) === statusFilter);
+  }, [filtered, statusFilter]);
+
   const pagedPOs = useMemo(() => {
     const start = (currentPage - 1) * poRowsPerPage;
-    return filtered.slice(start, start + poRowsPerPage);
-  }, [filtered, currentPage]);
+    return statusFiltered.slice(start, start + poRowsPerPage);
+  }, [statusFiltered, currentPage]);
 
   const totalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(filtered.length / poRowsPerPage));
-  }, [filtered.length]);
+    return Math.max(1, Math.ceil(statusFiltered.length / poRowsPerPage));
+  }, [statusFiltered.length]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -587,7 +593,7 @@ export function POList() {
               PO List
               {!loading && (
                 <span className="ml-2 text-sm font-normal text-[#6B7280]">
-                  {filtered.length} order{filtered.length !== 1 ? "s" : ""}
+                  {statusFiltered.length} order{statusFiltered.length !== 1 ? "s" : ""}
                 </span>
               )}
             </CardTitle>
@@ -599,6 +605,17 @@ export function POList() {
                 onChange={(e) => setSearch(e.target.value)}
                 className="text-sm border border-[#111827]/10 rounded-md px-3 py-1.5 w-52 focus:outline-none focus:border-[#00A3AD]"
               />
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as any)}
+                className="text-sm border border-[#111827]/10 rounded-md px-2 py-1.5 focus:outline-none focus:border-[#00A3AD]"
+              >
+                <option value="all">All statuses</option>
+                <option value="draft">Draft</option>
+                <option value="posted">Posted</option>
+                <option value="in-transit">In-Transit</option>
+                <option value="received">Received</option>
+              </select>
               <Button
                 variant="outline"
                 size="sm"
@@ -631,7 +648,7 @@ export function POList() {
                   <tr>
                     <td colSpan={7} className="text-center py-12 text-[#6B7280]">Loading purchase orders...</td>
                   </tr>
-                ) : filtered.length === 0 ? (
+                ) : statusFiltered.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="text-center py-12 text-[#6B7280]">
                       {search ? "No purchase orders match your search." : "No purchase orders found."}
@@ -651,7 +668,7 @@ export function POList() {
                       <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">{formatDateOnly(po.expected_delivery_date)}</td>
                       <td className="px-4 py-3 text-center text-[#6B7280]">{po.items.length}</td>
                       <td className="px-4 py-3 text-right">
-                        <span className="text-xs text-[#00A3AD] font-semibold hover:underline">View all →</span>
+                        <span className="text-xs text-[#00A3AD] font-semibold hover:underline">View details &gt;</span>
                       </td>
                     </tr>
                   ))
@@ -695,3 +712,4 @@ export function POList() {
     </div>
   );
 }
+

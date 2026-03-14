@@ -11,6 +11,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
+import { useNavigate } from "react-router";
 import {
   Select,
   SelectContent,
@@ -106,6 +107,7 @@ const buildProductLabel = (product: ProductRow) => {
 
 
 export function InboundProcurement() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabFilter>("all");
 
   const [poList, setPoList] = useState<PurchaseOrderRow[]>([]);
@@ -126,6 +128,13 @@ export function InboundProcurement() {
   const [savingDraft, setSavingDraft] = useState(false);
   const [sendingPO, setSendingPO] = useState(false);
   const [isEditingPO, setIsEditingPO] = useState(true);
+  const statusFlow: Record<string, string[]> = {
+    draft: ["posted"],
+    "pending supplier confirmation": ["posted"],
+    posted: ["in-transit"],
+    "in-transit": ["received"],
+    received: [],
+  };
 
   const fetchPurchaseOrders = useCallback(async () => {
     setLoadingPOs(true);
@@ -446,6 +455,34 @@ export function InboundProcurement() {
     setPreferredCommunication(po.preferred_communication ?? "");
   };
 
+  const updateStatus = useCallback(
+    async (targetStatus: string) => {
+      if (!selectedPO?.po_id) return;
+      const current = normalizeStatus(selectedPO.status);
+      const allowedNext = statusFlow[current] ?? [];
+      if (!allowedNext.includes(normalizeStatus(targetStatus))) {
+        toast.error("Invalid status transition", {
+          description: `Cannot move from "${selectedPO.status ?? "Unknown"}" to "${targetStatus}".`,
+        });
+        return;
+      }
+      const { data, error } = await supabase
+        .from("purchase_orders")
+        .update({ status: targetStatus })
+        .eq("po_id", selectedPO.po_id)
+        .select("po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication")
+        .single();
+      if (error || !data) {
+        toast.error("Failed to update status", { description: toErrorMessage(error) });
+        return;
+      }
+      setSelectedPO(data as PurchaseOrderRow);
+      await fetchPurchaseOrders();
+      toast.success("Status updated", { description: `${data.po_no ?? "Purchase order"} is now ${targetStatus}.` });
+    },
+    [fetchPurchaseOrders, selectedPO, statusFlow],
+  );
+
   return (
     <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
       <div className="flex items-center justify-between">
@@ -508,15 +545,28 @@ export function InboundProcurement() {
                               {po.status ?? "Unknown"}
                             </span>
                           </div>
-                          <div className="text-xs text-[#6B7280]">
-                            <span className="font-semibold">Date Created:</span> {formatDate(po.created_at)}
-                          </div>
-                          <div className="text-xs text-[#6B7280]">
-                            <span className="font-semibold">Expected Delivery:</span> {formatDateOnly(po.expected_delivery_date)}
-                          </div>
+                        <div className="text-xs text-[#6B7280]">
+                          <span className="font-semibold">Date Created:</span> {formatDate(po.created_at)}
                         </div>
-                      ))
-                    )}
+                        <div className="text-xs text-[#6B7280]">
+                          <span className="font-semibold">Expected Delivery:</span> {formatDateOnly(po.expected_delivery_date)}
+                        </div>
+                        <div className="flex justify-end mt-3">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-[#00A3AD] hover:text-[#0891B2]"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/po-list/${po.po_id}`);
+                            }}
+                          >
+                            View details &gt;
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                  )}
                   </TabsContent>
                 );
               })}
@@ -647,6 +697,34 @@ export function InboundProcurement() {
                         {sendingPO ? "Sending..." : "Send to Supplier"}
                       </Button>
                     </div>
+                  </div>
+                )}
+
+                {selectedPO && !includesDraftTab(selectedPO.status) && (
+                  <div className="rounded-lg border border-[#E5E7EB] p-3 space-y-3 bg-[#F8FAFC]">
+                    <p className="text-sm text-[#6B7280]">Progress the order status in sequence.</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        disabled={!statusFlow[normalizeStatus(selectedPO.status)]?.includes("in-transit")}
+                        onClick={() => void updateStatus("in-transit")}
+                        className="bg-[#00A3AD] hover:bg-[#0891B2] text-white rounded-lg"
+                      >
+                        Mark In-Transit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!statusFlow[normalizeStatus(selectedPO.status)]?.includes("received")}
+                        onClick={() => void updateStatus("received")}
+                        className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
+                      >
+                        Mark Received
+                      </Button>
+                    </div>
+                    {!statusFlow[normalizeStatus(selectedPO.status)]?.length && (
+                      <p className="text-xs text-[#6B7280]">No further transitions available.</p>
+                    )}
                   </div>
                 )}
 

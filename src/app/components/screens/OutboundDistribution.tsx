@@ -9,6 +9,8 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { supabase } from "@/lib/supabase";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 type RetailOrderLine = {
   line_uuid: string;
@@ -384,6 +386,40 @@ export function OutboundDistribution() {
       ...prev,
       lines: [...prev.lines, { sku: "", qty: 1, unitPrice: 0 }],
     }));
+
+  const generateInvoice = (order: RetailOrder) => {
+    const doc = new jsPDF();
+    const lines = order.retail_order_lines ?? [];
+    doc.setFontSize(16);
+    doc.text("Enterprise Invoice", 14, 18);
+    doc.setFontSize(10);
+    const metaStart = 26;
+    doc.text(`Invoice #: ${order.order_no ?? "N/A"}`, 14, metaStart);
+    doc.text(`Retailer: ${order.retailer_name}`, 14, metaStart + 6);
+    doc.text(`Status: ${order.status}`, 14, metaStart + 12);
+    doc.text(`Created: ${new Date(order.created_at).toLocaleDateString()}`, 14, metaStart + 18);
+    doc.text(`Due Date: ${order.due_date ? new Date(order.due_date).toLocaleDateString() : "N/A"}`, 14, metaStart + 24);
+    doc.text(`Payment Terms: ${order.payment_terms ?? "N/A"}`, 14, metaStart + 30);
+
+    autoTable(doc, {
+      startY: metaStart + 40,
+      head: [["SKU", "Qty", "Unit Price", "Line Total"]],
+      body: lines.map((line) => [
+        line.sku,
+        String(line.qty),
+        formatPHP(Number(line.unit_price ?? 0)),
+        formatPHP(Number(line.line_total ?? 0)),
+      ]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [0, 163, 173] },
+    });
+
+    const endY = (doc as any).lastAutoTable?.finalY ?? metaStart + 40;
+    doc.setFontSize(12);
+    doc.text(`Total: ${formatPHP(Number(order.total_amount ?? 0))}`, 14, endY + 10);
+
+    doc.save(`${order.order_no ?? "invoice"}.pdf`);
+  };
 
   const removeLine = (idx: number) =>
     setNewOrder((prev) => ({
@@ -835,6 +871,12 @@ export function OutboundDistribution() {
                       )}
 
                       <div className="flex items-center gap-2 pt-1">
+                        <button
+                          onClick={() => generateInvoice(order)}
+                          className="px-3 py-1.5 rounded border text-sm font-medium transition-colors border-teal-400 text-teal-600 hover:bg-teal-50"
+                        >
+                          Generate Invoice
+                        </button>
                         <button
                           onClick={() => openEditModal(order)}
                           disabled={isLocked(order.status)}
