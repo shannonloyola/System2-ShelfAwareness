@@ -21,6 +21,8 @@ import {
 } from "../ui/select";
 import { toast } from "sonner";
 import { supabase } from "../../../lib/supabase";
+import { CSVUploader } from "../CSVUploader";
+import type { CSVRow } from "../../../lib/csvParser";
 
 type TabFilter = "all" | "draft" | "posted";
 
@@ -30,6 +32,7 @@ interface PurchaseOrderRow {
   supplier_name: string | null;
   status: string | null;
   created_at: string | null;
+  paid_at?: string | null;
   expected_delivery_date: string | null;
   preferred_communication: string | null;
 }
@@ -128,6 +131,7 @@ export function InboundProcurement() {
   const [savingDraft, setSavingDraft] = useState(false);
   const [sendingPO, setSendingPO] = useState(false);
   const [isEditingPO, setIsEditingPO] = useState(true);
+  const [importingPO, setImportingPO] = useState(false);
   const statusFlow: Record<string, string[]> = {
     draft: ["posted"],
     "pending supplier confirmation": ["posted"],
@@ -328,6 +332,89 @@ export function InboundProcurement() {
       setSendingPO(false);
     }
   }, [expectedDeliveryDate, fetchPurchaseOrders, generateUniquePONumber, poNo, preferredCommunication, selectedPO?.po_id, supplierName, updatePOHeader]);
+
+  const handleImportPO = useCallback(
+    async (rows: CSVRow[]) => {
+      if (!rows || rows.length === 0) {
+        toast.error("CSV has no rows to import");
+        return;
+      }
+
+      const cleanedItems = rows
+        .map((row) => ({
+          item_name: row.sku,
+          quantity: Number(row.qty),
+        }))
+        .filter((item) => item.item_name && Number.isFinite(item.quantity) && item.quantity > 0);
+
+      if (cleanedItems.length === 0) {
+        toast.error("No valid rows to import", { description: "Ensure sku and qty columns are filled." });
+        return;
+      }
+
+      setImportingPO(true);
+      try {
+        const poNumber = poNo || (await generateUniquePONumber());
+        if (!poNo) setPoNo(poNumber);
+
+        const payload = {
+          po_no: poNumber,
+          supplier_name: supplierName.trim() || "From CSV",
+          expected_delivery_date: expectedDeliveryDate || null,
+          preferred_communication: preferredCommunication || null,
+          items: cleanedItems,
+        };
+
+        const { data, error } = await supabase.rpc("bulk_import_po", { p_payload: payload });
+        if (error) {
+          toast.error("Import failed", { description: toErrorMessage(error) });
+          return;
+        }
+
+        toast.success("PO imported", { description: "Bulk items inserted via RPC." });
+        await fetchPurchaseOrders();
+
+        // Attempt to select the newly created PO using returned UUID if present
+        const newId = typeof data === "string" ? data : null;
+        if (newId) {
+          const match = (await supabase
+            .from("purchase_orders")
+            .select("po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication, paid_at")
+            .eq("po_id", newId)
+            .single()).data as PurchaseOrderRow | null;
+          if (match) {
+            if (!match.paid_at) {
+              await supabase
+                .from("purchase_orders")
+                .update({ paid_at: match.created_at })
+                .eq("po_id", newId);
+              match.paid_at = match.created_at as string;
+            }
+            setSelectedPO(match);
+            await fetchPOItems(match.po_id);
+            setIsEditingPO(false);
+            return;
+          }
+        }
+
+        // Fallback: clear selection so user can pick from refreshed list
+        setSelectedPO(null);
+      } catch (error) {
+        toast.error("Import failed", { description: toErrorMessage(error) });
+      } finally {
+        setImportingPO(false);
+      }
+    },
+    [
+      expectedDeliveryDate,
+      fetchPOItems,
+      fetchPurchaseOrders,
+      generateUniquePONumber,
+      poNo,
+      preferredCommunication,
+      supplierName,
+    ],
+  );
 
   const savePOItem = useCallback(async (formId: string) => {
     const form = lineItemForms.find((f) => f.formId === formId);
@@ -655,6 +742,23 @@ export function InboundProcurement() {
                       </SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-[#111827]">Bulk import via CSV</Label>
+                      <p className="text-xs text-[#6B7280]">Uploads call the Supabase RPC bulk_import_po</p>
+                    </div>
+                    {importingPO && <span className="text-xs text-[#00A3AD]">Importing...</span>}
+                  </div>
+                  <CSVUploader
+                    onParsed={(rows) => void handleImportPO(rows)}
+                    onError={(msg) => toast.error("CSV parse failed", { description: msg })}
+                  />
+                  <p className="text-xs text-[#6B7280]">
+                    Required columns: sku, qty. We will auto-generate the P.O. number if blank and create items in one call.
+                  </p>
                 </div>
 
                 {selectedPO && (
