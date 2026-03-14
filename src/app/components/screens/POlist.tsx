@@ -9,6 +9,7 @@ import {
   Plane,
   RefreshCw,
   Ship,
+  Upload,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -125,6 +126,9 @@ export function PODetailPage() {
   const [po, setPo] = useState<PurchaseOrder | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [documentUrl, setDocumentUrl] = useState<string | null>(null);
+  
   const loadDetail = useCallback(async () => {
     if (!poId) return;
     setLoading(true);
@@ -162,6 +166,18 @@ export function PODetailPage() {
         quantity: it.quantity ?? 0,
       })),
     });
+
+        const { data: historyData } = await supabase
+        .from("po_status_history")
+        .select("document_url")
+        .eq("po_id", poId)
+        .not("document_url", "is", null)
+        .order("changed_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+  
+      setDocumentUrl(historyData?.document_url ?? null);
+    
   }, [poId]);
 
   useEffect(() => {

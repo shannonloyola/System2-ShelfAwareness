@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { useEffect, useState } from "react";
+import { supabase } from "../../../lib/supabase";
 
 const supplyChainSteps = [
   { id: 1, label: "P.O. Created", status: "complete", count: 12 },
@@ -60,6 +62,52 @@ const statCards = [
 ];
 
 export function GlobalDashboard() {
+  const [allocatedAmount, setAllocatedAmount] = useState(0);
+  const [spentAmount, setSpentAmount] = useState(0);
+
+  useEffect(() => {
+  const fetchMonthlyBudget = async () => {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const year = now.getFullYear();
+
+    const { data, error } = await supabase
+      .from("monthly_budgets")
+      .select("allocated_amount, spent_amount")
+      .eq("month", month)
+      .eq("year", year)
+      .single();
+
+    if (!error && data) {
+      setAllocatedAmount(data.allocated_amount || 0);
+      setSpentAmount(data.spent_amount || 0);
+    }
+  };
+
+  fetchMonthlyBudget();
+}, []);
+
+    const budgetUsedPercent =
+    allocatedAmount > 0 ? (spentAmount / allocatedAmount) * 100 : 0;
+
+    let budgetStatus = "Safe";
+    let budgetStatusColor = "text-green-600";
+    
+    if (budgetUsedPercent >= 90) {
+      budgetStatus = "Critical";
+      budgetStatusColor = "text-red-600";
+    } else if (budgetUsedPercent >= 80) {
+      budgetStatus = "Warning";
+      budgetStatusColor = "text-yellow-600";
+    }
+
+  const budgetBarColor =
+    budgetUsedPercent >= 90
+      ? "bg-red-600"
+      : budgetUsedPercent >= 80
+        ? "bg-yellow-500"
+        : "bg-green-500";
+  
   return (
     <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
       {/* Header */}
@@ -91,7 +139,43 @@ export function GlobalDashboard() {
           </Card>
         ))}
       </div>
-
+      
+      {/* Monthly Procurement Budget */}
+      <Card className="bg-white border-[#111827]/10 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-[#111827] font-semibold">
+            Monthly Procurement Budget
+          </CardTitle>
+          <p className="text-sm text-[#6B7280]">
+            Track current procurement spending against monthly allocation
+          </p>
+        </CardHeader>
+      
+        <CardContent>
+          <div className="flex justify-between mb-2 text-sm text-[#6B7280]">
+            <span>₱{spentAmount.toLocaleString()}</span>
+            <span>₱{allocatedAmount.toLocaleString()}</span>
+          </div>
+      
+          <div className="w-full bg-[#E5E7EB] rounded-full h-4">
+            <div
+              className={`${budgetBarColor} h-4 rounded-full transition-all`}
+              style={{ width: `${Math.min(budgetUsedPercent, 100)}%` }}
+            />
+          </div>
+      
+          <div className="flex justify-between items-center mt-2 text-xs">
+          <span className="text-[#6B7280]">
+            {budgetUsedPercent.toFixed(1)}% of monthly procurement budget used
+          </span>
+        
+          <span className={`font-semibold ${budgetStatusColor}`}>
+            {budgetStatus}
+          </span>
+        </div>
+        </CardContent>
+      </Card>
+      
       {/* Supply Chain Tracker */}
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardHeader>
