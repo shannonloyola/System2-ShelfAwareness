@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   AlertCircle,
   Building2,
@@ -12,9 +17,19 @@ import {
   Upload,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../ui/card";
 import { Button } from "../ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../ui/tabs";
 import { toast } from "sonner";
 import { supabase } from "../../../lib/supabase";
 import { PerItemTracker } from "../PerItemTracker";
@@ -37,6 +52,9 @@ interface PurchaseOrder {
   status: string;
   created_at: string;
   expected_delivery_date: string | null;
+  approval_status: string;
+  approved_by: string | null;
+  approved_at: string | null;
   items: POItem[];
 }
 
@@ -50,6 +68,14 @@ interface ReservationPO {
 }
 
 const poRowsPerPage = 10;
+
+type POStatusFilter =
+  | "all"
+  | "draft"
+  | "posted"
+  | "in-transit"
+  | "received"
+  | "pending-my-approval";
 
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-US", {
@@ -69,12 +95,35 @@ const formatDateOnly = (value: string | null) => {
   });
 };
 
-const normalizeStatus = (status: string) => status.trim().toLowerCase();
+const normalizeStatus = (status: string) =>
+  status.trim().toLowerCase();
+
+const normalizeOptional = (value: string | null | undefined) =>
+  (value ?? "").trim().toLowerCase();
+
+const getApprovalStatusClass = (
+  status: string | null | undefined,
+) => {
+  const normalized = normalizeOptional(status);
+  if (normalized === "approved") {
+    return "bg-[#DCFCE7] text-[#166534]";
+  }
+  if (normalized === "rejected") {
+    return "bg-[#FEE2E2] text-[#991B1B]";
+  }
+  return "bg-[#FEF3C7] text-[#92400E]";
+};
 
 const toErrorMessage = (error: unknown) => {
-  if (!error || typeof error !== "object") return "Unexpected error";
-  const maybe = error as { status?: number; message?: string; code?: string };
-  if (maybe.status === 401 || maybe.status === 403) return "No permission / check RLS";
+  if (!error || typeof error !== "object")
+    return "Unexpected error";
+  const maybe = error as {
+    status?: number;
+    message?: string;
+    code?: string;
+  };
+  if (maybe.status === 401 || maybe.status === 403)
+    return "No permission / check RLS";
   return maybe.message ?? maybe.code ?? "Unexpected error";
 };
 
@@ -82,41 +131,137 @@ const getTrackerSteps = (status: string) => {
   const normalized = normalizeStatus(status);
   if (normalized === "posted") {
     return [
-      { label: "Pending Supplier Confirmation", completed: true, active: false },
-      { label: "Order Received", completed: true, active: false },
-      { label: "Packaging (Supplier)", completed: false, active: true },
-      { label: "Handed to Freight", completed: false, active: false },
-      { label: "Arrived at Customs (PH)", completed: false, active: false },
-      { label: "Warehouse Ready", completed: false, active: false },
+      {
+        label: "Pending Supplier Confirmation",
+        completed: true,
+        active: false,
+      },
+      {
+        label: "Order Received",
+        completed: true,
+        active: false,
+      },
+      {
+        label: "Packaging (Supplier)",
+        completed: false,
+        active: true,
+      },
+      {
+        label: "Handed to Freight",
+        completed: false,
+        active: false,
+      },
+      {
+        label: "Arrived at Customs (PH)",
+        completed: false,
+        active: false,
+      },
+      {
+        label: "Warehouse Ready",
+        completed: false,
+        active: false,
+      },
     ];
   }
   if (normalized === "in-transit") {
     return [
-      { label: "Pending Supplier Confirmation", completed: true, active: false },
-      { label: "Order Received", completed: true, active: false },
-      { label: "Packaging (Supplier)", completed: true, active: false },
-      { label: "Handed to Freight", completed: false, active: true },
-      { label: "Arrived at Customs (PH)", completed: false, active: false },
-      { label: "Warehouse Ready", completed: false, active: false },
+      {
+        label: "Pending Supplier Confirmation",
+        completed: true,
+        active: false,
+      },
+      {
+        label: "Order Received",
+        completed: true,
+        active: false,
+      },
+      {
+        label: "Packaging (Supplier)",
+        completed: true,
+        active: false,
+      },
+      {
+        label: "Handed to Freight",
+        completed: false,
+        active: true,
+      },
+      {
+        label: "Arrived at Customs (PH)",
+        completed: false,
+        active: false,
+      },
+      {
+        label: "Warehouse Ready",
+        completed: false,
+        active: false,
+      },
     ];
   }
   if (normalized === "received") {
     return [
-      { label: "Pending Supplier Confirmation", completed: true, active: false },
-      { label: "Order Received", completed: true, active: false },
-      { label: "Packaging (Supplier)", completed: true, active: false },
-      { label: "Handed to Freight", completed: true, active: false },
-      { label: "Arrived at Customs (PH)", completed: true, active: false },
-      { label: "Warehouse Ready", completed: true, active: false },
+      {
+        label: "Pending Supplier Confirmation",
+        completed: true,
+        active: false,
+      },
+      {
+        label: "Order Received",
+        completed: true,
+        active: false,
+      },
+      {
+        label: "Packaging (Supplier)",
+        completed: true,
+        active: false,
+      },
+      {
+        label: "Handed to Freight",
+        completed: true,
+        active: false,
+      },
+      {
+        label: "Arrived at Customs (PH)",
+        completed: true,
+        active: false,
+      },
+      {
+        label: "Warehouse Ready",
+        completed: true,
+        active: false,
+      },
     ];
   }
   return [
-    { label: "Pending Supplier Confirmation", completed: false, active: true },
-    { label: "Order Received", completed: false, active: false },
-    { label: "Packaging (Supplier)", completed: false, active: false },
-    { label: "Handed to Freight", completed: false, active: false },
-    { label: "Arrived at Customs (PH)", completed: false, active: false },
-    { label: "Warehouse Ready", completed: false, active: false },
+    {
+      label: "Pending Supplier Confirmation",
+      completed: false,
+      active: true,
+    },
+    {
+      label: "Order Received",
+      completed: false,
+      active: false,
+    },
+    {
+      label: "Packaging (Supplier)",
+      completed: false,
+      active: false,
+    },
+    {
+      label: "Handed to Freight",
+      completed: false,
+      active: false,
+    },
+    {
+      label: "Arrived at Customs (PH)",
+      completed: false,
+      active: false,
+    },
+    {
+      label: "Warehouse Ready",
+      completed: false,
+      active: false,
+    },
   ];
 };
 
@@ -125,17 +270,27 @@ export function PODetailPage() {
   const { poId = "" } = useParams();
   const [po, setPo] = useState<PurchaseOrder | null>(null);
   const [loading, setLoading] = useState(false);
+  const [approvalSubmitting, setApprovalSubmitting] = useState<
+    "approve" | "reject" | null
+  >(null);
 
   const [uploadingDoc, setUploadingDoc] = useState(false);
-  const [documentUrl, setDocumentUrl] = useState<string | null>(null);
-  
+  const [documentUrl, setDocumentUrl] = useState<string | null>(
+    null,
+  );
+
   const loadDetail = useCallback(async () => {
     if (!poId) return;
     setLoading(true);
-    const [{ data: poData, error: poError }, { data: itemData, error: itemError }] = await Promise.all([
+    const [
+      { data: poData, error: poError },
+      { data: itemData, error: itemError },
+    ] = await Promise.all([
       supabase
         .from("purchase_orders")
-        .select("po_id, po_no, supplier_name, status, created_at, expected_delivery_date")
+        .select(
+          "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, approval_status, approved_by, approved_at",
+        )
         .eq("po_id", poId)
         .maybeSingle(),
       supabase
@@ -147,11 +302,16 @@ export function PODetailPage() {
     setLoading(false);
 
     if (poError || !poData) {
-      toast.error("Failed to load purchase order", { description: toErrorMessage(poError) });
+      toast.error("Failed to load purchase order", {
+        description: toErrorMessage(poError),
+      });
       setPo(null);
       return;
     }
-    if (itemError) toast.error("Failed to load line items", { description: toErrorMessage(itemError) });
+    if (itemError)
+      toast.error("Failed to load line items", {
+        description: toErrorMessage(itemError),
+      });
 
     setPo({
       po_id: poData.po_id,
@@ -159,7 +319,11 @@ export function PODetailPage() {
       supplier_name: poData.supplier_name ?? "N/A",
       status: poData.status ?? "Unknown",
       created_at: poData.created_at ?? new Date().toISOString(),
-      expected_delivery_date: poData.expected_delivery_date ?? null,
+      expected_delivery_date:
+        poData.expected_delivery_date ?? null,
+      approval_status: poData.approval_status ?? "Pending",
+      approved_by: poData.approved_by ?? null,
+      approved_at: poData.approved_at ?? null,
       items: (itemData ?? []).map((it) => ({
         po_item_id: it.po_item_id,
         item_name: it.item_name ?? "Unnamed item",
@@ -167,20 +331,19 @@ export function PODetailPage() {
       })),
     });
 
-        const { data: historyData } = await supabase
-        .from("po_status_history")
-        .select("document_url")
-        .eq("po_id", poId)
-        .not("document_url", "is", null)
-        .order("changed_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-  
-      setDocumentUrl(historyData?.document_url ?? null);
-    
+    const { data: historyData } = await supabase
+      .from("po_status_history")
+      .select("document_url")
+      .eq("po_id", poId)
+      .not("document_url", "is", null)
+      .order("changed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    setDocumentUrl(historyData?.document_url ?? null);
   }, [poId]);
 
-    const handleUploadDocument = async (
+  const handleUploadDocument = async (
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const file = e.target.files?.[0];
@@ -213,30 +376,34 @@ export function PODetailPage() {
 
     const publicUrl = publicUrlData.publicUrl;
 
-        let { data: latestHistory } = await supabase
+    let { data: latestHistory } = await supabase
       .from("po_status_history")
       .select("history_id")
       .eq("po_id", po.po_id)
       .order("changed_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    
+
     if (!latestHistory) {
-      const { data: insertedHistory, error: insertHistoryError } = await supabase
+      const {
+        data: insertedHistory,
+        error: insertHistoryError,
+      } = await supabase
         .from("po_status_history")
         .insert({
           po_id: po.po_id,
-          status_name: po.status || "Pending Supplier Confirmation",
+          status_name:
+            po.status || "Pending Supplier Confirmation",
         })
         .select("history_id")
         .single();
-    
+
       if (insertHistoryError || !insertedHistory) {
         setUploadingDoc(false);
         toast.error("Could not link file to status history");
         return;
       }
-    
+
       latestHistory = insertedHistory;
     }
 
@@ -255,12 +422,62 @@ export function PODetailPage() {
     void loadDetail();
   }, [loadDetail]);
 
+  const handleApprovalAction = async (
+    action: "approve" | "reject",
+  ) => {
+    if (!po) return;
+
+    setApprovalSubmitting(action);
+    const nextStatus =
+      action === "approve" ? "Approved" : "Rejected";
+
+    const { data, error } = await supabase
+      .from("purchase_orders")
+      .update({
+        approval_status: nextStatus,
+        approved_at: new Date().toISOString(),
+      })
+      .eq("po_id", po.po_id)
+      .select("approval_status, approved_by, approved_at")
+      .single();
+
+    setApprovalSubmitting(null);
+
+    if (error || !data) {
+      toast.error(`Failed to ${action} purchase order`, {
+        description: toErrorMessage(error),
+      });
+      return;
+    }
+
+    setPo((current) =>
+      current
+        ? {
+            ...current,
+            approval_status: data.approval_status ?? nextStatus,
+            approved_by:
+              data.approved_by ?? current.approved_by,
+            approved_at:
+              data.approved_at ?? new Date().toISOString(),
+          }
+        : current,
+    );
+
+    toast.success(
+      action === "approve"
+        ? "Purchase order approved"
+        : "Purchase order rejected",
+    );
+  };
+
   if (loading || !po) {
     return (
       <div className="p-4">
         <Card className="bg-white border-[#111827]/10 shadow-sm">
           <CardContent className="py-10 text-center text-[#6B7280]">
-            {loading ? "Loading purchase order..." : "Purchase order not found."}
+            {loading
+              ? "Loading purchase order..."
+              : "Purchase order not found."}
           </CardContent>
         </Card>
       </div>
@@ -279,45 +496,126 @@ export function PODetailPage() {
 
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardHeader>
-          <CardTitle className="text-xl text-[#111827] font-bold">{po.po_no}</CardTitle>
+          <CardTitle className="text-xl text-[#111827] font-bold">
+            {po.po_no}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
             <div className="flex items-center gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB]">
               <Building2 className="w-5 h-5 text-[#00A3AD] shrink-0" />
               <div>
-                <p className="text-xs text-[#6B7280]">Supplier</p>
-                <p className="text-sm font-semibold text-[#111827]">{po.supplier_name}</p>
+                <p className="text-xs text-[#6B7280]">
+                  Supplier
+                </p>
+                <p className="text-sm font-semibold text-[#111827]">
+                  {po.supplier_name}
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB]">
               <Hash className="w-5 h-5 text-[#00A3AD] shrink-0" />
               <div>
-                <p className="text-xs text-[#6B7280]">PO Number</p>
-                <p className="text-sm font-semibold text-[#111827]">{po.po_no}</p>
+                <p className="text-xs text-[#6B7280]">
+                  PO Number
+                </p>
+                <p className="text-sm font-semibold text-[#111827]">
+                  {po.po_no}
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB]">
               <Clock className="w-5 h-5 text-[#00A3AD] shrink-0" />
               <div>
                 <p className="text-xs text-[#6B7280]">Status</p>
-                <p className="text-sm font-semibold text-[#111827]">{po.status}</p>
+                <p className="text-sm font-semibold text-[#111827]">
+                  {po.status}
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB]">
               <Clock className="w-5 h-5 text-[#00A3AD] shrink-0" />
               <div>
-                <p className="text-xs text-[#6B7280]">Created</p>
-                <p className="text-sm font-semibold text-[#111827]">{formatDate(po.created_at)}</p>
+                <p className="text-xs text-[#6B7280]">
+                  Created
+                </p>
+                <p className="text-sm font-semibold text-[#111827]">
+                  {formatDate(po.created_at)}
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB]">
               <Clock className="w-5 h-5 text-[#00A3AD] shrink-0" />
               <div>
-                <p className="text-xs text-[#6B7280]">Expected Delivery</p>
-                <p className="text-sm font-semibold text-[#111827]">{formatDateOnly(po.expected_delivery_date)}</p>
+                <p className="text-xs text-[#6B7280]">
+                  Expected Delivery
+                </p>
+                <p className="text-sm font-semibold text-[#111827]">
+                  {formatDateOnly(po.expected_delivery_date)}
+                </p>
               </div>
             </div>
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB] sm:col-span-2">
+              <Clock className="w-5 h-5 text-[#00A3AD] shrink-0" />
+              <div>
+                <p className="text-xs text-[#6B7280]">
+                  Approval Status
+                </p>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getApprovalStatusClass(po.approval_status)}`}
+                  >
+                    {po.approval_status}
+                  </span>
+                  {po.approved_at && (
+                    <span className="text-xs text-[#6B7280]">
+                      {formatDate(po.approved_at)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-white border-[#111827]/10 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-[#111827] text-base">
+            Purchase Approval
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-[#6B7280]">
+            Review this purchase order and sign off if it is
+            ready to move forward.
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() =>
+                void handleApprovalAction("reject")
+              }
+              disabled={approvalSubmitting !== null}
+              className="border-[#DC2626] text-[#DC2626] hover:bg-[#FEF2F2]"
+            >
+              {approvalSubmitting === "reject"
+                ? "Rejecting..."
+                : "Reject"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() =>
+                void handleApprovalAction("approve")
+              }
+              disabled={approvalSubmitting !== null}
+              className="bg-[#16A34A] hover:bg-[#15803D] text-white"
+            >
+              {approvalSubmitting === "approve"
+                ? "Approving..."
+                : "Approve"}
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -332,23 +630,33 @@ export function PODetailPage() {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             {po.items.length === 0 ? (
-              <div className="text-sm text-[#6B7280]">No line items yet.</div>
+              <div className="text-sm text-[#6B7280]">
+                No line items yet.
+              </div>
             ) : (
               po.items.map((item) => (
-                <div key={item.po_item_id} className="flex items-center justify-between rounded-lg border border-[#E5E7EB] p-3">
-                  <div className="text-sm text-[#111827]">{item.item_name}</div>
-                  <div className="text-sm font-semibold text-[#111827]">Qty: {item.quantity}</div>
+                <div
+                  key={item.po_item_id}
+                  className="flex items-center justify-between rounded-lg border border-[#E5E7EB] p-3"
+                >
+                  <div className="text-sm text-[#111827]">
+                    {item.item_name}
+                  </div>
+                  <div className="text-sm font-semibold text-[#111827]">
+                    Qty: {item.quantity}
+                  </div>
                 </div>
               ))
             )}
           </div>
-
         </CardContent>
       </Card>
 
       <Card className="bg-[#F8FAFC] border-[#E5E7EB]">
         <CardHeader>
-          <CardTitle className="text-[#111827] text-base">Freight Monitor</CardTitle>
+          <CardTitle className="text-[#111827] text-base">
+            Freight Monitor
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="air" className="w-full">
@@ -362,11 +670,19 @@ export function PODetailPage() {
                 Freight Sea
               </TabsTrigger>
             </TabsList>
-            <TabsContent value="air" className="text-sm text-[#6B7280]">
-              PO {po.po_no} is currently {po.status}. Air freight timeline is placeholder data.
+            <TabsContent
+              value="air"
+              className="text-sm text-[#6B7280]"
+            >
+              PO {po.po_no} is currently {po.status}. Air
+              freight timeline is placeholder data.
             </TabsContent>
-            <TabsContent value="sea" className="text-sm text-[#6B7280]">
-              PO {po.po_no} is currently {po.status}. Sea freight timeline is placeholder data.
+            <TabsContent
+              value="sea"
+              className="text-sm text-[#6B7280]"
+            >
+              PO {po.po_no} is currently {po.status}. Sea
+              freight timeline is placeholder data.
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -374,10 +690,15 @@ export function PODetailPage() {
 
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardHeader>
-          <CardTitle className="text-[#111827] text-base">Per-Order Item Status Tracker</CardTitle>
+          <CardTitle className="text-[#111827] text-base">
+            Per-Order Item Status Tracker
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <PerItemTracker poNumber={po.po_no} steps={getTrackerSteps(po.status)} />
+          <PerItemTracker
+            poNumber={po.po_no}
+            steps={getTrackerSteps(po.status)}
+          />
         </CardContent>
       </Card>
 
@@ -389,7 +710,8 @@ export function PODetailPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-[#6B7280]">
-            Upload BoL, Packing Lists, and other transit-stage PDFs.
+            Upload BoL, Packing Lists, and other transit-stage
+            PDFs.
           </p>
 
           <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#00A3AD] text-white cursor-pointer hover:bg-[#0891B2] transition-colors">
@@ -421,7 +743,6 @@ export function PODetailPage() {
           )}
         </CardContent>
       </Card>
-
     </div>
   );
 }
@@ -431,11 +752,12 @@ export function POList() {
   const [pos, setPos] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted" | "in-transit" | "received">("all");
+  const [statusFilter, setStatusFilter] =
+    useState<POStatusFilter>("all");
   const [currentPage, setCurrentPage] = useState(1);
-  const [expiringSoon, setExpiringSoon] = useState<ReservationPO[]>(
-    [],
-  );
+  const [expiringSoon, setExpiringSoon] = useState<
+    ReservationPO[]
+  >([]);
   const [expiredPOs, setExpiredPOs] = useState<ReservationPO[]>(
     [],
   );
@@ -449,10 +771,15 @@ export function POList() {
 
   const fetchPOs = useCallback(async () => {
     setLoading(true);
-    const [{ data: poData, error: poError }, { data: itemData, error: itemError }] = await Promise.all([
+    const [
+      { data: poData, error: poError },
+      { data: itemData, error: itemError },
+    ] = await Promise.all([
       supabase
         .from("purchase_orders")
-        .select("po_id, po_no, supplier_name, status, created_at, expected_delivery_date")
+        .select(
+          "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, approval_status, approved_by, approved_at",
+        )
         .order("created_at", { ascending: false }),
       supabase
         .from("purchase_order_items")
@@ -461,11 +788,16 @@ export function POList() {
     setLoading(false);
 
     if (poError) {
-      toast.error("Failed to load purchase orders", { description: toErrorMessage(poError) });
+      toast.error("Failed to load purchase orders", {
+        description: toErrorMessage(poError),
+      });
       setPos([]);
       return;
     }
-    if (itemError) toast.error("Failed to load line item counts", { description: toErrorMessage(itemError) });
+    if (itemError)
+      toast.error("Failed to load line item counts", {
+        description: toErrorMessage(itemError),
+      });
 
     const map = new Map<string, POItem[]>();
     (itemData ?? []).forEach((it) => {
@@ -485,7 +817,11 @@ export function POList() {
         supplier_name: po.supplier_name ?? "N/A",
         status: po.status ?? "Unknown",
         created_at: po.created_at ?? new Date().toISOString(),
-        expected_delivery_date: po.expected_delivery_date ?? null,
+        expected_delivery_date:
+          po.expected_delivery_date ?? null,
+        approval_status: po.approval_status ?? "Pending",
+        approved_by: po.approved_by ?? null,
+        approved_at: po.approved_at ?? null,
         items: map.get(po.po_id) ?? [],
       })),
     );
@@ -542,13 +878,26 @@ export function POList() {
     (po) =>
       !search ||
       po.po_no.toLowerCase().includes(search.toLowerCase()) ||
-      po.supplier_name.toLowerCase().includes(search.toLowerCase()) ||
-      po.status.toLowerCase().includes(search.toLowerCase()),
+      po.supplier_name
+        .toLowerCase()
+        .includes(search.toLowerCase()) ||
+      po.status.toLowerCase().includes(search.toLowerCase()) ||
+      po.approval_status
+        .toLowerCase()
+        .includes(search.toLowerCase()),
   );
 
   const statusFiltered = useMemo(() => {
     if (statusFilter === "all") return filtered;
-    return filtered.filter((po) => normalizeStatus(po.status) === statusFilter);
+    if (statusFilter === "pending-my-approval") {
+      return filtered.filter(
+        (po) =>
+          normalizeOptional(po.approval_status) === "pending",
+      );
+    }
+    return filtered.filter(
+      (po) => normalizeStatus(po.status) === statusFilter,
+    );
   }, [filtered, statusFilter]);
 
   const pagedPOs = useMemo(() => {
@@ -557,12 +906,15 @@ export function POList() {
   }, [statusFiltered, currentPage]);
 
   const totalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(statusFiltered.length / poRowsPerPage));
+    return Math.max(
+      1,
+      Math.ceil(statusFiltered.length / poRowsPerPage),
+    );
   }, [statusFiltered.length]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [search]);
+  }, [search, statusFilter]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -573,8 +925,12 @@ export function POList() {
   return (
     <div className="p-4 space-y-4 bg-white">
       <div>
-        <h1 className="text-2xl lg:text-4xl font-semibold mb-2 text-[#111827]">Purchase Orders</h1>
-        <p className="text-sm lg:text-base text-[#6B7280]">View and track all purchase orders</p>
+        <h1 className="text-2xl lg:text-4xl font-semibold mb-2 text-[#111827]">
+          Purchase Orders
+        </h1>
+        <p className="text-sm lg:text-base text-[#6B7280]">
+          View and track all purchase orders
+        </p>
       </div>
 
       <Card className="bg-white border-[#111827]/10 shadow-sm">
@@ -610,7 +966,8 @@ export function POList() {
             </div>
           </div>
           <p className="text-xs text-[#6B7280]">
-            Available = Total - Reserved. Reservations auto-expire after 24 hours.
+            Available = Total - Reserved. Reservations
+            auto-expire after 24 hours.
             {lastExpirationRun && (
               <>
                 {" "}
@@ -668,7 +1025,9 @@ export function POList() {
                       </p>
                       <p className="text-xs text-[#92400E]">
                         Expires:{" "}
-                        {new Date(po.expires_at).toLocaleString()}
+                        {new Date(
+                          po.expires_at,
+                        ).toLocaleString()}
                       </p>
                     </div>
                   ))
@@ -697,7 +1056,9 @@ export function POList() {
                       </p>
                       <p className="text-xs text-[#991B1B]">
                         Expired:{" "}
-                        {new Date(po.expires_at).toLocaleString()}
+                        {new Date(
+                          po.expires_at,
+                        ).toLocaleString()}
                       </p>
                     </div>
                   ))
@@ -708,7 +1069,10 @@ export function POList() {
           <div className="rounded-md border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2 text-xs text-[#1E3A8A] flex items-start gap-2">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <span>
-              This monitor depends on DB functions (`reserve_product_stock`, `expire_reservations`) and fields (`reserved_at`, `expires_at`) on `purchase_orders`.
+              This monitor depends on DB functions
+              (`reserve_product_stock`, `expire_reservations`)
+              and fields (`reserved_at`, `expires_at`) on
+              `purchase_orders`.
             </span>
           </div>
         </CardContent>
@@ -721,7 +1085,8 @@ export function POList() {
               PO List
               {!loading && (
                 <span className="ml-2 text-sm font-normal text-[#6B7280]">
-                  {statusFiltered.length} order{statusFiltered.length !== 1 ? "s" : ""}
+                  {statusFiltered.length} order
+                  {statusFiltered.length !== 1 ? "s" : ""}
                 </span>
               )}
             </CardTitle>
@@ -735,10 +1100,15 @@ export function POList() {
               />
               <select
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as any)}
+                onChange={(e) =>
+                  setStatusFilter(e.target.value as any)
+                }
                 className="text-sm border border-[#111827]/10 rounded-md px-2 py-1.5 focus:outline-none focus:border-[#00A3AD]"
               >
                 <option value="all">All statuses</option>
+                <option value="pending-my-approval">
+                  Pending My Approval
+                </option>
                 <option value="draft">Draft</option>
                 <option value="posted">Posted</option>
                 <option value="in-transit">In-Transit</option>
@@ -751,7 +1121,9 @@ export function POList() {
                 disabled={loading}
                 className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
               >
-                <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
+                <RefreshCw
+                  className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`}
+                />
                 Refresh
               </Button>
             </div>
@@ -762,41 +1134,81 @@ export function POList() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-y border-[#E5E7EB] bg-[#F8FAFC]">
-                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">PO No.</th>
-                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280]">Supplier</th>
-                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280]">Status</th>
-                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">Date Created</th>
-                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">Expected Delivery</th>
-                  <th className="text-center px-4 py-3 font-semibold text-[#6B7280]">Items</th>
+                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">
+                    PO No.
+                  </th>
+                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280]">
+                    Supplier
+                  </th>
+                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280]">
+                    Status
+                  </th>
+                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">
+                    Date Created
+                  </th>
+                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">
+                    Expected Delivery
+                  </th>
+                  <th className="text-center px-4 py-3 font-semibold text-[#6B7280]">
+                    Items
+                  </th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
                 {loading && pos.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-12 text-[#6B7280]">Loading purchase orders...</td>
+                    <td
+                      colSpan={7}
+                      className="text-center py-12 text-[#6B7280]"
+                    >
+                      Loading purchase orders...
+                    </td>
                   </tr>
                 ) : statusFiltered.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-12 text-[#6B7280]">
-                      {search ? "No purchase orders match your search." : "No purchase orders found."}
+                    <td
+                      colSpan={7}
+                      className="text-center py-12 text-[#6B7280]"
+                    >
+                      {search
+                        ? "No purchase orders match your search."
+                        : "No purchase orders found."}
                     </td>
                   </tr>
                 ) : (
                   pagedPOs.map((po, i) => (
                     <tr
                       key={po.po_id}
-                      onClick={() => navigate(`/po-list/${po.po_id}`)}
+                      onClick={() =>
+                        navigate(`/po-list/${po.po_id}`)
+                      }
                       className={`border-b border-[#E5E7EB] cursor-pointer transition-colors hover:bg-[#F0FAFA] ${i % 2 === 0 ? "" : "bg-[#FAFAFA]"}`}
                     >
-                      <td className="px-4 py-3 font-mono font-semibold text-[#111827] whitespace-nowrap">{po.po_no}</td>
-                      <td className="px-4 py-3 text-[#111827]">{po.supplier_name}</td>
-                      <td className="px-4 py-3 text-[#6B7280]">{po.status}</td>
-                      <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">{formatDate(po.created_at)}</td>
-                      <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">{formatDateOnly(po.expected_delivery_date)}</td>
-                      <td className="px-4 py-3 text-center text-[#6B7280]">{po.items.length}</td>
+                      <td className="px-4 py-3 font-mono font-semibold text-[#111827] whitespace-nowrap">
+                        {po.po_no}
+                      </td>
+                      <td className="px-4 py-3 text-[#111827]">
+                        {po.supplier_name}
+                      </td>
+                      <td className="px-4 py-3 text-[#6B7280]">
+                        {po.status}
+                      </td>
+                      <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">
+                        {formatDate(po.created_at)}
+                      </td>
+                      <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">
+                        {formatDateOnly(
+                          po.expected_delivery_date,
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center text-[#6B7280]">
+                        {po.items.length}
+                      </td>
                       <td className="px-4 py-3 text-right">
-                        <span className="text-xs text-[#00A3AD] font-semibold hover:underline">View details &gt;</span>
+                        <span className="text-xs text-[#00A3AD] font-semibold hover:underline">
+                          View details &gt;
+                        </span>
                       </td>
                     </tr>
                   ))
@@ -814,7 +1226,9 @@ export function POList() {
                 size="sm"
                 className="border-[#111827]/20 text-[#111827]"
                 onClick={() =>
-                  setCurrentPage((prev) => Math.max(1, prev - 1))
+                  setCurrentPage((prev) =>
+                    Math.max(1, prev - 1),
+                  )
                 }
                 disabled={currentPage <= 1}
               >
@@ -840,4 +1254,3 @@ export function POList() {
     </div>
   );
 }
-
