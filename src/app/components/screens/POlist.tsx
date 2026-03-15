@@ -180,6 +180,77 @@ export function PODetailPage() {
     
   }, [poId]);
 
+    const handleUploadDocument = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file || !po) return;
+
+    if (file.type !== "application/pdf") {
+      toast.error("Only PDF files are allowed");
+      return;
+    }
+
+    setUploadingDoc(true);
+
+    const filePath = `${po.po_id}/${Date.now()}-${file.name}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("transit-documents")
+      .upload(filePath, file, { upsert: true });
+
+    if (uploadError) {
+      setUploadingDoc(false);
+      toast.error("Upload failed", {
+        description: uploadError.message,
+      });
+      return;
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from("transit-documents")
+      .getPublicUrl(filePath);
+
+    const publicUrl = publicUrlData.publicUrl;
+
+        let { data: latestHistory } = await supabase
+      .from("po_status_history")
+      .select("history_id")
+      .eq("po_id", po.po_id)
+      .order("changed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    
+    if (!latestHistory) {
+      const { data: insertedHistory, error: insertHistoryError } = await supabase
+        .from("po_status_history")
+        .insert({
+          po_id: po.po_id,
+          status_name: po.status || "Pending Supplier Confirmation",
+        })
+        .select("history_id")
+        .single();
+    
+      if (insertHistoryError || !insertedHistory) {
+        setUploadingDoc(false);
+        toast.error("Could not link file to status history");
+        return;
+      }
+    
+      latestHistory = insertedHistory;
+    }
+
+    await supabase
+      .from("po_status_history")
+      .update({ document_url: publicUrl })
+      .eq("history_id", latestHistory.history_id);
+
+    setUploadingDoc(false);
+    setDocumentUrl(publicUrl);
+
+    toast.success("Document uploaded successfully");
+  };
+
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
@@ -307,6 +378,47 @@ export function PODetailPage() {
         </CardHeader>
         <CardContent>
           <PerItemTracker poNumber={po.po_no} steps={getTrackerSteps(po.status)} />
+        </CardContent>
+      </Card>
+
+      <Card className="bg-white border-[#111827]/10 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-[#111827] text-base">
+            Shipment Documents
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-[#6B7280]">
+            Upload BoL, Packing Lists, and other transit-stage PDFs.
+          </p>
+
+          <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#00A3AD] text-white cursor-pointer hover:bg-[#0891B2] transition-colors">
+            <Upload className="w-4 h-4" />
+            {uploadingDoc ? "Uploading..." : "Upload PDF"}
+            <input
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              onChange={handleUploadDocument}
+              disabled={uploadingDoc}
+            />
+          </label>
+
+          {documentUrl && (
+            <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC]">
+              <p className="text-sm font-medium text-[#111827] mb-1">
+                Uploaded Document
+              </p>
+              <a
+                href={documentUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sm text-[#00A3AD] hover:underline break-all"
+              >
+                View uploaded PDF
+              </a>
+            </div>
+          )}
         </CardContent>
       </Card>
 
