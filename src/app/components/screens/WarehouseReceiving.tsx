@@ -66,6 +66,8 @@ interface GrnLine {
   qtyReceived: string;
   discrepancyReason: string;
   otherReason: string;
+  batchNumber: string;
+  expiryDate: string;
 }
 
 interface BackorderAlertRow {
@@ -95,6 +97,8 @@ const createEmptyLine = (): GrnLine => ({
   qtyReceived: "",
   discrepancyReason: "",
   otherReason: "",
+  batchNumber: "",
+  expiryDate: "",
 });
 
 export function WarehouseReceiving() {
@@ -368,6 +372,8 @@ export function WarehouseReceiving() {
           qtyReceived: "1",
           discrepancyReason: "",
           otherReason: "",
+          batchNumber: "",
+          expiryDate: "",
         },
       ];
     });
@@ -849,6 +855,14 @@ export function WarehouseReceiving() {
         );
         return false;
       }
+      if (!line.batchNumber.trim()) {
+        toast.error(`Line ${i + 1}: Batch/Lot # is required`);
+        return false;
+      }
+      if (!line.expiryDate) {
+        toast.error(`Line ${i + 1}: Expiry date is required`);
+        return false;
+      }
 
       const mismatch = expected !== received;
       if (mismatch && !line.discrepancyReason) {
@@ -921,6 +935,8 @@ export function WarehouseReceiving() {
         qty_received: received,
         variance: received - expected,
         discrepancy_reason: reason,
+        batch_number: line.batchNumber.trim(),
+        expiry_date: line.expiryDate || null,
       };
     });
 
@@ -1451,6 +1467,42 @@ export function WarehouseReceiving() {
                           }
                           className="mt-2 border-[#111827]/10 bg-white"
                           placeholder="0"
+                          disabled={isPosted}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-[#6B7280]">
+                          Batch/Lot # (Required)
+                        </Label>
+                        <Input
+                          value={line.batchNumber}
+                          onChange={(e) =>
+                            updateLine(
+                              line.lineId,
+                              "batchNumber",
+                              e.target.value,
+                            )
+                          }
+                          className="mt-2 border-[#111827]/10 bg-white"
+                          placeholder="Enter batch or lot number"
+                          disabled={isPosted}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-[#6B7280]">
+                          Expiry Date (Required)
+                        </Label>
+                        <Input
+                          type="date"
+                          value={line.expiryDate}
+                          onChange={(e) =>
+                            updateLine(
+                              line.lineId,
+                              "expiryDate",
+                              e.target.value,
+                            )
+                          }
+                          className="mt-2 border-[#111827]/10 bg-white"
                           disabled={isPosted}
                         />
                       </div>

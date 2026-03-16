@@ -38,6 +38,23 @@ import {
   fetchExpiringSoon,
   runExpirationCheck,
 } from "../../../imports/expirationService";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
+import { Textarea } from "../ui/textarea";
+import { useForm, useFieldArray, Controller } from "react-hook-form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 
 interface POItem {
   po_item_id: string;
@@ -56,6 +73,12 @@ interface PurchaseOrder {
   approved_by: string | null;
   approved_at: string | null;
   items: POItem[];
+}
+
+interface POStatusHistory {
+  history_id: string;
+  status_name: string;
+  changed_at: string;
 }
 
 interface ReservationPO {
@@ -126,6 +149,19 @@ const toErrorMessage = (error: unknown) => {
     return "No permission / check RLS";
   return maybe.message ?? maybe.code ?? "Unexpected error";
 };
+
+const formatCurrency = (value: string) => {
+  const numeric = Number(value.replace(/[^0-9.]/g, ""));
+  if (!numeric) return "";
+  return new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+    minimumFractionDigits: 2,
+  }).format(numeric);
+};
+
+const parseCurrency = (value: string) =>
+  Number(value.replace(/[^0-9.]/g, "")) || 0;
 
 const getTrackerSteps = (status: string) => {
   const normalized = normalizeStatus(status);
@@ -265,6 +301,26 @@ const getTrackerSteps = (status: string) => {
   ];
 };
 
+const getStepperState = (
+  step: string,
+  history: POStatusHistory[],
+  currentStatus: string,
+) => {
+  const completedStatuses = history.map((h) =>
+    normalizeStatus(h.status_name),
+  );
+  const current = normalizeStatus(currentStatus);
+  const stepNorm = normalizeStatus(step);
+
+  if (completedStatuses.includes(stepNorm) || stepNorm === current) {
+    if (stepNorm === current) {
+      return "current";
+    }
+    return "completed";
+  }
+  return "pending";
+};
+
 export function PODetailPage() {
   const navigate = useNavigate();
   const { poId = "" } = useParams();
@@ -278,6 +334,69 @@ export function PODetailPage() {
   const [documentUrl, setDocumentUrl] = useState<string | null>(
     null,
   );
+  const [statusHistory, setStatusHistory] = useState<POStatusHistory[]>([]);
+
+  const [editEtaOpen, setEditEtaOpen] = useState(false);
+  const [etaDraft, setEtaDraft] = useState("");
+  const [etaReason, setEtaReason] = useState("");
+  const [savingEta, setSavingEta] = useState(false);
+
+  const [uploadingCustoms, setUploadingCustoms] = useState(false);
+  const [customsDocumentUrl, setCustomsDocumentUrl] = useState<string | null>(null);
+
+  const [postingLandedCosts, setPostingLandedCosts] = useState(false);
+
+  // Adjust this field to your schema (example: landed_costs_posted_at)
+  const landedCostsPosted = Boolean(
+    (po as any)?.landed_costs_posted_at ||
+    (po as any)?.landed_costs_posted
+  );
+
+  const { control, handleSubmit } = useForm({
+    defaultValues: {
+      fees: [{ fee_type: "", amount: "" }],
+    },
+  });
+
+  const { fields, append, remove } = useFieldArray({
+    control,
+    name: "fees",
+  });
+
+  const handlePostLandedCosts = async (values: {
+    fees: { fee_type: string; amount: string }[];
+  }) => {
+    if (!po?.po_id) return;
+    if (landedCostsPosted) return;
+
+    setPostingLandedCosts(true);
+    try {
+      const payload = {
+        po_id: po.po_id,
+        fees: values.fees.map((f) => ({
+          fee_type: f.fee_type,
+          amount: parseCurrency(f.amount),
+        })),
+      };
+
+      // Replace RPC name + args with your actual T2 RPC signature
+      const { error } = await supabase.rpc(
+        "t2_post_landed_costs",
+        { p_payload: payload }
+      );
+
+      if (error) {
+        toast.error("Failed to post landed costs", {
+          description: toErrorMessage(error),
+        });
+        return;
+      }
+
+      toast.success("Landed costs posted successfully");
+    } finally {
+      setPostingLandedCosts(false);
+    }
+  };
 
   const loadDetail = useCallback(async () => {
     if (!poId) return;
@@ -285,6 +404,7 @@ export function PODetailPage() {
     const [
       { data: poData, error: poError },
       { data: itemData, error: itemError },
+      { data: historyData, error: historyError },
     ] = await Promise.all([
       supabase
         .from("purchase_orders")
@@ -298,6 +418,11 @@ export function PODetailPage() {
         .select("po_item_id, po_id, item_name, quantity")
         .eq("po_id", poId)
         .order("po_item_id", { ascending: true }),
+      supabase
+        .from("po_status_history")
+        .select("history_id, status_name, changed_at")
+        .eq("po_id", poId)
+        .order("changed_at", { ascending: false }),
     ]);
     setLoading(false);
 
@@ -311,6 +436,10 @@ export function PODetailPage() {
     if (itemError)
       toast.error("Failed to load line items", {
         description: toErrorMessage(itemError),
+      });
+    if (historyError)
+      toast.error("Failed to load status history", {
+        description: toErrorMessage(historyError),
       });
 
     setPo({
@@ -331,16 +460,7 @@ export function PODetailPage() {
       })),
     });
 
-    const { data: historyData } = await supabase
-      .from("po_status_history")
-      .select("document_url")
-      .eq("po_id", poId)
-      .not("document_url", "is", null)
-      .order("changed_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    setDocumentUrl(historyData?.document_url ?? null);
+    setStatusHistory(historyData ?? []);
   }, [poId]);
 
   const handleUploadDocument = async (
@@ -418,6 +538,37 @@ export function PODetailPage() {
     toast.success("Document uploaded successfully");
   };
 
+  const handleUploadCustoms = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file || !po) return;
+    if (file.type !== "application/pdf") {
+      toast.error("Only PDF files are allowed");
+      return;
+    }
+    setUploadingCustoms(true);
+
+    const filePath = `${po.po_id}/${Date.now()}-${file.name}`;
+    const { error } = await supabase.storage
+      .from("customs_documents")
+      .upload(filePath, file, { upsert: true });
+
+    if (error) {
+      setUploadingCustoms(false);
+      toast.error("Upload failed", { description: error.message });
+      return;
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from("customs_documents")
+      .getPublicUrl(filePath);
+
+    setCustomsDocumentUrl(publicUrlData.publicUrl);
+    setUploadingCustoms(false);
+    toast.success("Customs document uploaded");
+  };
+
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
@@ -468,6 +619,47 @@ export function PODetailPage() {
         ? "Purchase order approved"
         : "Purchase order rejected",
     );
+  };
+
+  const saveEta = async () => {
+    if (!po) return;
+    if (!etaDraft || !etaReason.trim()) {
+      toast.error("Date and reason are required");
+      return;
+    }
+    setSavingEta(true);
+
+    const { error: updateError } = await supabase
+      .from("purchase_orders")
+      .update({ expected_delivery_date: etaDraft })
+      .eq("po_id", po.po_id);
+
+    if (updateError) {
+      setSavingEta(false);
+      toast.error("Failed to update ETA");
+      return;
+    }
+
+    await supabase.from("po_status_history").insert({
+      po_id: po.po_id,
+      status_name: "ETA Updated",
+      changed_at: new Date().toISOString(),
+      reason: etaReason
+    });
+
+    setSavingEta(false);
+    setEditEtaOpen(false);
+    toast.success("ETA updated");
+    
+    // Update local state
+    setPo((current) =>
+      current
+        ? { ...current, expected_delivery_date: etaDraft }
+        : current,
+    );
+    
+    // Reload to refresh status history
+    await loadDetail();
   };
 
   if (loading || !po) {
@@ -536,24 +728,34 @@ export function PODetailPage() {
             <div className="flex items-center gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB]">
               <Clock className="w-5 h-5 text-[#00A3AD] shrink-0" />
               <div>
-                <p className="text-xs text-[#6B7280]">
-                  Created
-                </p>
+                <p className="text-xs text-[#6B7280]">Created</p>
                 <p className="text-sm font-semibold text-[#111827]">
                   {formatDate(po.created_at)}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB]">
-              <Clock className="w-5 h-5 text-[#00A3AD] shrink-0" />
-              <div>
-                <p className="text-xs text-[#6B7280]">
-                  Expected Delivery
-                </p>
-                <p className="text-sm font-semibold text-[#111827]">
-                  {formatDateOnly(po.expected_delivery_date)}
-                </p>
+            <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB]">
+              <div className="flex items-center gap-3">
+                <Clock className="w-5 h-5 text-[#00A3AD] shrink-0" />
+                <div>
+                  <p className="text-xs text-[#6B7280]">Expected Delivery</p>
+                  <p className="text-sm font-semibold text-[#111827]">
+                    {formatDateOnly(po.expected_delivery_date)}
+                  </p>
+                </div>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setEtaDraft(po.expected_delivery_date ?? "");
+                  setEtaReason("");
+                  setEditEtaOpen(true);
+                }}
+                className="border-[#111827]/20 text-[#111827]"
+              >
+                Edit ETA
+              </Button>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB] sm:col-span-2">
               <Clock className="w-5 h-5 text-[#00A3AD] shrink-0" />
@@ -575,6 +777,46 @@ export function PODetailPage() {
                 </div>
               </div>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-white border-[#111827]/10 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-[#111827] text-base">
+            Order Status Progress
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between gap-2 sm:gap-4">
+            {["Draft", "Posted", "In-Transit", "Received"].map((step) => {
+              const state = getStepperState(step, statusHistory, po.status);
+              const isCompleted = state === "completed";
+              const isCurrent = state === "current";
+
+              return (
+                <div key={step} className="flex flex-col items-center flex-1">
+                  <div
+                    className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-sm sm:text-base font-bold transition-all ${
+                      isCompleted
+                        ? "bg-[#00A3AD] text-white"
+                        : isCurrent
+                          ? "bg-white border-2 border-[#00A3AD] text-[#00A3AD]"
+                          : "bg-[#E5E7EB] text-[#6B7280]"
+                    }`}
+                  >
+                    {step[0]}
+                  </div>
+                  <div
+                    className={`text-[10px] sm:text-xs mt-2 text-center font-medium ${
+                      isCompleted || isCurrent ? "text-[#111827]" : "text-[#6B7280]"
+                    }`}
+                  >
+                    {step}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </CardContent>
       </Card>
@@ -743,6 +985,183 @@ export function PODetailPage() {
           )}
         </CardContent>
       </Card>
+
+      <Card className="bg-white border-[#111827]/10 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-[#111827] text-base">
+            Customs Documents
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-[#6B7280]">
+            Upload BoC clearance papers (PDF only).
+          </p>
+
+          <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#00A3AD] text-white cursor-pointer hover:bg-[#0891B2] transition-colors">
+            <Upload className="w-4 h-4" />
+            {uploadingCustoms ? "Uploading..." : "Upload Customs PDF"}
+            <input
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              onChange={handleUploadCustoms}
+              disabled={uploadingCustoms}
+            />
+          </label>
+
+          {customsDocumentUrl && (
+            <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC]">
+              <p className="text-sm font-medium text-[#111827] mb-1">
+                Uploaded Customs Document
+              </p>
+              <a
+                href={customsDocumentUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sm text-[#00A3AD] hover:underline break-all"
+              >
+                View uploaded PDF
+              </a>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Logistics Fees & Landed Costs Panel */}
+      <div className="rounded-lg border border-[#E5E7EB] p-4 bg-[#F8FAFC] space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-[#111827]">
+              Logistics Fees & Landed Costs
+            </h3>
+            <p className="text-xs text-[#6B7280]">
+              Encode port bills and post landed costs to trigger the T2 distribution algorithm.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => append({ fee_type: "", amount: "" })}
+            disabled={landedCostsPosted}
+            className="border-[#111827]/20 text-[#111827]"
+          >
+            Add Fee
+          </Button>
+        </div>
+
+        {landedCostsPosted && (
+          <div className="text-xs text-[#991B1B] bg-[#FEF2F2] border border-[#FECACA] rounded-md px-3 py-2">
+            Landed costs already posted. Inputs are read-only to prevent double-counting.
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {fields.map((field, index) => (
+            <div
+              key={field.id}
+              className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center"
+            >
+              <Controller
+                control={control}
+                name={`fees.${index}.fee_type`}
+                render={({ field: feeField }) => (
+                  <Select
+                    value={feeField.value || ""}
+                    onValueChange={feeField.onChange}
+                    disabled={landedCostsPosted}
+                  >
+                    <SelectTrigger className="border-[#111827]/10 rounded-lg">
+                      <SelectValue placeholder="Select fee type..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="customs">Customs Duty</SelectItem>
+                      <SelectItem value="brokerage">Brokerage</SelectItem>
+                      <SelectItem value="arrastre">Arrastre</SelectItem>
+                      <SelectItem value="storage">Storage</SelectItem>
+                      <SelectItem value="trucking">Trucking</SelectItem>
+                      <SelectItem value="insurance">Insurance</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+
+              <Controller
+                control={control}
+                name={`fees.${index}.amount`}
+                render={({ field: amountField }) => (
+                  <Input
+                    {...amountField}
+                    inputMode="decimal"
+                    placeholder="₱0.00"
+                    onBlur={(e) =>
+                      amountField.onChange(formatCurrency(e.target.value))
+                    }
+                    onChange={(e) => amountField.onChange(e.target.value)}
+                    readOnly={landedCostsPosted}
+                    className="border-[#111827]/10 rounded-lg"
+                  />
+                )}
+              />
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => remove(index)}
+                disabled={landedCostsPosted}
+                className="border-[#DC2626] text-[#DC2626] hover:bg-[#DC2626]/10"
+              >
+                Remove
+              </Button>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            onClick={handleSubmit(handlePostLandedCosts)}
+            disabled={landedCostsPosted || postingLandedCosts}
+            className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+          >
+            {postingLandedCosts ? "Posting..." : "Post Landed Costs"}
+          </Button>
+        </div>
+      </div>
+
+      <Dialog open={editEtaOpen} onOpenChange={setEditEtaOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Expected Delivery</DialogTitle>
+          </DialogHeader>
+
+          <Label>New Expected Delivery Date</Label>
+          <Input
+            type="date"
+            value={etaDraft}
+            onChange={(e) => setEtaDraft(e.target.value)}
+          />
+
+          <Label className="mt-3">Reason for Change</Label>
+          <Textarea
+            value={etaReason}
+            onChange={(e) => setEtaReason(e.target.value)}
+            placeholder="Required for audit trail..."
+          />
+
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setEditEtaOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={saveEta}
+              disabled={!etaDraft || !etaReason.trim() || savingEta}
+            >
+              {savingEta ? "Saving..." : "Save ETA"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1177,41 +1596,66 @@ export function POList() {
                     </td>
                   </tr>
                 ) : (
-                  pagedPOs.map((po, i) => (
-                    <tr
-                      key={po.po_id}
-                      onClick={() =>
-                        navigate(`/po-list/${po.po_id}`)
-                      }
-                      className={`border-b border-[#E5E7EB] cursor-pointer transition-colors hover:bg-[#F0FAFA] ${i % 2 === 0 ? "" : "bg-[#FAFAFA]"}`}
-                    >
-                      <td className="px-4 py-3 font-mono font-semibold text-[#111827] whitespace-nowrap">
-                        {po.po_no}
-                      </td>
-                      <td className="px-4 py-3 text-[#111827]">
-                        {po.supplier_name}
-                      </td>
-                      <td className="px-4 py-3 text-[#6B7280]">
-                        {po.status}
-                      </td>
-                      <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">
-                        {formatDate(po.created_at)}
-                      </td>
-                      <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">
-                        {formatDateOnly(
-                          po.expected_delivery_date,
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-center text-[#6B7280]">
-                        {po.items.length}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <span className="text-xs text-[#00A3AD] font-semibold hover:underline">
-                          View details &gt;
-                        </span>
-                      </td>
-                    </tr>
-                  ))
+                  pagedPOs.map((po, i) => {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const eta = po.expected_delivery_date ? new Date(`${po.expected_delivery_date}T00:00:00`) : null;
+                    if (eta) eta.setHours(0, 0, 0, 0);
+                    const isReceived = normalizeStatus(po.status) === "received";
+                    const isDelayed = eta && eta < today && !isReceived;
+                    
+                    let badgeText = "On Track";
+                    let badgeClass = "bg-[#FEF3C7] text-[#92400E]";
+                    
+                    if (isReceived) {
+                      badgeText = "Received";
+                      badgeClass = "bg-[#DCFCE7] text-[#166534]";
+                    } else if (isDelayed) {
+                      badgeText = "Delayed";
+                      badgeClass = "bg-[#FEE2E2] text-[#991B1B]";
+                    }
+                    
+                    return (
+                      <tr
+                        key={po.po_id}
+                        onClick={() =>
+                          navigate(`/po-list/${po.po_id}`)
+                        }
+                        className={`border-b border-[#E5E7EB] cursor-pointer transition-colors hover:bg-[#F0FAFA] ${i % 2 === 0 ? "" : "bg-[#FAFAFA]"}`}
+                      >
+                        <td className="px-4 py-3 font-mono font-semibold text-[#111827] whitespace-nowrap">
+                          {po.po_no}
+                        </td>
+                        <td className="px-4 py-3 text-[#111827]">
+                          {po.supplier_name}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[#6B7280]">{po.status}</span>
+                            <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${badgeClass}`}>
+                              {badgeText}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">
+                          {formatDate(po.created_at)}
+                        </td>
+                        <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">
+                          {formatDateOnly(
+                            po.expected_delivery_date,
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-center text-[#6B7280]">
+                          {po.items.length}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-xs text-[#00A3AD] font-semibold hover:underline">
+                            View details &gt;
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

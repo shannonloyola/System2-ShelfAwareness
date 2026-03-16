@@ -33,6 +33,20 @@ import { toast } from "sonner";
 import { supabase } from "../../../lib/supabase";
 import { CSVUploader } from "../CSVUploader";
 import type { CSVRow } from "../../../lib/csvParser";
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle 
+} from "../ui/dialog";
+import { 
+  Table, 
+  TableBody, 
+  TableCell, 
+  TableHead, 
+  TableHeader, 
+  TableRow 
+} from "../ui/table";
 
 type TabFilter = "all" | "draft" | "posted";
 
@@ -84,6 +98,14 @@ interface LineItemForm {
   editingPoItemId: string | null;
   product: string;
   qty: number;
+}
+
+interface POTemplate {
+  id: string;
+  name: string;
+  supplier_name: string;
+  expected_delivery_date: string;
+  preferred_communication: string;
 }
 
 const DEFAULT_PO_STATUS = "Draft";
@@ -210,6 +232,19 @@ export function InboundProcurement() {
   const [lineItemForms, setLineItemForms] = useState<
     LineItemForm[]
   >([]);
+
+  // Template state
+  const [templates, setTemplates] = useState<POTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [templateName, setTemplateName] = useState("");
+
+  // Freight quotes state
+  const [showQuotes, setShowQuotes] = useState(false);
+  const [quotes, setQuotes] = useState([
+    { id: "1", provider: "Nippon Yusen (NYK Line)", freightType: "Sea", cost: 350000, days: 14, winner: false },
+    { id: "2", provider: "Japan Airlines Cargo", freightType: "Air", cost: 620000, days: 4, winner: false }
+  ]);
+  const [newQuote, setNewQuote] = useState({ provider: "", freightType: "", cost: "", days: "" });
 
   const [loadingPOs, setLoadingPOs] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -820,6 +855,96 @@ export function InboundProcurement() {
     [fetchPurchaseOrders, selectedPO, statusFlow],
   );
 
+  // Template management functions
+  const loadTemplates = useCallback(() => {
+    const saved = localStorage.getItem("po_templates");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as POTemplate[];
+        setTemplates(parsed);
+      } catch {
+        setTemplates([]);
+      }
+    }
+  }, []);
+
+  const handleSaveTemplate = useCallback(() => {
+    if (!templateName.trim()) {
+      toast.error("Template name is required");
+      return;
+    }
+
+    if (!supplierName.trim()) {
+      toast.error("Cannot save template without supplier");
+      return;
+    }
+
+    const newTemplate: POTemplate = {
+      id: `template-${Date.now()}`,
+      name: templateName.trim(),
+      supplier_name: supplierName,
+      expected_delivery_date: expectedDeliveryDate,
+      preferred_communication: preferredCommunication,
+    };
+
+    const updatedTemplates = [...templates, newTemplate];
+    setTemplates(updatedTemplates);
+    localStorage.setItem("po_templates", JSON.stringify(updatedTemplates));
+    
+    toast.success("Template saved", {
+      description: `"${newTemplate.name}" is now available in the Templates dropdown.`,
+    });
+    setTemplateName("");
+  }, [templateName, supplierName, expectedDeliveryDate, preferredCommunication, templates]);
+
+  const applyTemplate = useCallback((templateId: string) => {
+    if (!templateId || templateId === "none") return;
+    
+    const template = templates.find((t) => t.id === templateId);
+    if (!template) return;
+
+    setSupplierName(template.supplier_name);
+    setExpectedDeliveryDate(template.expected_delivery_date);
+    setPreferredCommunication(template.preferred_communication);
+    
+    toast.success("Template applied", {
+      description: `Loaded "${template.name}" template settings.`,
+    });
+    
+    setSelectedTemplateId("");
+  }, [templates]);
+
+  // Freight quote handlers
+  const addQuote = useCallback(() => {
+    if (!newQuote.provider || !newQuote.freightType || !newQuote.cost || !newQuote.days) {
+      toast.error("All quote fields are required");
+      return;
+    }
+    
+    setQuotes((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}`,
+        provider: newQuote.provider,
+        freightType: newQuote.freightType,
+        cost: Number(newQuote.cost),
+        days: Number(newQuote.days),
+        winner: false
+      }
+    ]);
+    setNewQuote({ provider: "", freightType: "", cost: "", days: "" });
+    toast.success("Quote added");
+  }, [newQuote]);
+
+  const selectWinner = useCallback((id: string) => {
+    setQuotes((prev) => prev.map((q) => ({ ...q, winner: q.id === id })));
+    toast.success("Freight quote selected as winner");
+  }, []);
+
+  useEffect(() => {
+    loadTemplates();
+  }, [loadTemplates]);
+
   return (
     <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
       <div className="flex items-center justify-between">
@@ -832,13 +957,35 @@ export function InboundProcurement() {
             Japan
           </p>
         </div>
-        <Button
-          onClick={() => void openBuilder()}
-          className="bg-[#00A3AD] hover:bg-[#0891B2] text-white shadow-sm"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          New P.O.
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="min-w-[180px]">
+            <Select value={selectedTemplateId} onValueChange={applyTemplate}>
+              <SelectTrigger className="border-[#111827]/20 bg-white">
+                <SelectValue placeholder="Templates" />
+              </SelectTrigger>
+              <SelectContent>
+                {templates.length === 0 && (
+                  <SelectItem value="none" disabled>
+                    No templates saved
+                  </SelectItem>
+                )}
+                {templates.map((template) => (
+                  <SelectItem key={template.id} value={template.id}>
+                    {template.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Button
+            onClick={() => void openBuilder()}
+            className="bg-[#00A3AD] hover:bg-[#0891B2] text-white shadow-sm"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            New P.O.
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
@@ -1101,6 +1248,23 @@ export function InboundProcurement() {
                     </SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC] space-y-3">
+                <Label className="text-[#111827]">Save as Template</Label>
+                <Input
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  placeholder="e.g., Monthly JP Restock"
+                  className="border-[#111827]/10 rounded-lg"
+                />
+                <Button
+                  variant="outline"
+                  onClick={handleSaveTemplate}
+                  className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
+                >
+                  Save as Template
+                </Button>
               </div>
 
               <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC] space-y-3">
@@ -1407,6 +1571,14 @@ export function InboundProcurement() {
                     ))}
                   </div>
 
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowQuotes(true)}
+                    className="w-full border-[#111827]/20 text-[#111827]"
+                  >
+                    Manage Freight Quotes
+                  </Button>
+
                   <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <Button
                       variant="outline"
@@ -1435,6 +1607,82 @@ export function InboundProcurement() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={showQuotes} onOpenChange={setShowQuotes}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Freight Quotes</DialogTitle>
+          </DialogHeader>
+
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Provider</TableHead>
+                <TableHead>Freight Type</TableHead>
+                <TableHead>Quoted Cost</TableHead>
+                <TableHead>Estimated Days</TableHead>
+                <TableHead>Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {quotes.map((q) => (
+                <TableRow key={q.id} className={q.winner ? "bg-[#00A3AD]/10" : ""}>
+                  <TableCell>{q.provider}</TableCell>
+                  <TableCell>{q.freightType}</TableCell>
+                  <TableCell>₱{q.cost.toLocaleString()}</TableCell>
+                  <TableCell>{q.days} days</TableCell>
+                  <TableCell>
+                    <Button 
+                      size="sm" 
+                      onClick={() => selectWinner(q.id)} 
+                      className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+                    >
+                      {q.winner ? "Selected" : "Select as Winner"}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+
+          <div className="mt-6 space-y-3 rounded-lg border border-[#E5E7EB] p-4 bg-[#F8FAFC]">
+            <div className="font-semibold text-[#111827]">Add New Quote</div>
+            <Input 
+              placeholder="Logistics Provider" 
+              value={newQuote.provider} 
+              onChange={(e) => setNewQuote({ ...newQuote, provider: e.target.value })} 
+            />
+            <Select 
+              value={newQuote.freightType} 
+              onValueChange={(value) => setNewQuote({ ...newQuote, freightType: value })}
+            >
+              <SelectTrigger><SelectValue placeholder="Freight Type" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Sea">Sea</SelectItem>
+                <SelectItem value="Air">Air</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input 
+              type="number" 
+              placeholder="Quoted Cost" 
+              value={newQuote.cost} 
+              onChange={(e) => setNewQuote({ ...newQuote, cost: e.target.value })} 
+            />
+            <Input 
+              type="number" 
+              placeholder="Estimated Days" 
+              value={newQuote.days} 
+              onChange={(e) => setNewQuote({ ...newQuote, days: e.target.value })} 
+            />
+            <Button 
+              onClick={addQuote} 
+              className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+            >
+              Add Quote
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

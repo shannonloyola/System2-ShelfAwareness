@@ -64,6 +64,8 @@ const statCards = [
 export function GlobalDashboard() {
   const [allocatedAmount, setAllocatedAmount] = useState(0);
   const [spentAmount, setSpentAmount] = useState(0);
+  const [customsDelays, setCustomsDelays] = useState<any[]>([]);
+  const [customsLoading, setCustomsLoading] = useState(false);
 
   useEffect(() => {
   const fetchMonthlyBudget = async () => {
@@ -84,7 +86,21 @@ export function GlobalDashboard() {
     }
   };
 
+  const fetchCustomsDelays = async () => {
+    setCustomsLoading(true);
+    const { data, error } = await supabase
+      .from("stuck_at_customs_view")
+      .select("po_id, po_no, supplier_name, customs_entry_date, transit_status")
+      .order("customs_entry_date", { ascending: true });
+
+    if (!error && data) {
+      setCustomsDelays(data);
+    }
+    setCustomsLoading(false);
+  };
+
   fetchMonthlyBudget();
+  fetchCustomsDelays();
 }, []);
 
     const budgetUsedPercent =
@@ -176,6 +192,74 @@ export function GlobalDashboard() {
         </CardContent>
       </Card>
       
+      {/* Critical Alerts - Customs Delays */}
+      <Card className="bg-white border-[#111827]/10 shadow-sm">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-[#111827] font-semibold flex items-center gap-2">
+                Critical Alerts
+                {customsDelays.length > 0 && (
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-600 text-white">
+                    Red Tape
+                  </span>
+                )}
+              </CardTitle>
+              <p className="text-sm text-[#6B7280] mt-1">
+                Red Tape delays at Port Customs (over 5 days)
+              </p>
+            </div>
+          </div>
+        </CardHeader>
+
+        <CardContent>
+          {customsLoading ? (
+            <div className="text-center py-8 text-[#6B7280]">Loading...</div>
+          ) : customsDelays.length === 0 ? (
+            <div className="text-center py-8 text-[#6B7280]">
+              No customs delays detected.
+            </div>
+          ) : (
+            <>
+              <div className="mb-4">
+                <p className="font-semibold text-[#111827]">
+                  {customsDelays.length} delayed shipment{customsDelays.length !== 1 ? 's' : ''}
+                </p>
+              </div>
+              
+              <div className="space-y-3">
+                {customsDelays.slice(0, 5).map((delay) => (
+                  <div
+                    key={delay.po_id}
+                    className="p-4 bg-red-50 border border-red-200 rounded-lg"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="font-semibold text-[#111827] mb-1">
+                          {delay.po_no}
+                        </p>
+                        <p className="text-sm text-[#6B7280]">
+                          {delay.supplier_name}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm text-red-600 font-medium">
+                          Entry: {new Date(delay.customs_entry_date).toLocaleDateString('en-US', { 
+                            month: 'short', 
+                            day: 'numeric', 
+                            year: 'numeric' 
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+      
       {/* Supply Chain Tracker */}
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardHeader>
@@ -247,9 +331,9 @@ export function GlobalDashboard() {
                 }}
               />
               <Bar dataKey="units" radius={[8, 8, 0, 0]}>
-                {inventoryData.map((entry, index) => (
+                {inventoryData.map((entry) => (
                   <Cell 
-                    key={`cell-${index}`} 
+                    key={`cell-${entry.sku}`} 
                     fill={entry.status === 'low' ? '#D1D5DB' : '#1A2B47'} 
                     className="cursor-pointer hover:opacity-80 transition-opacity"
                   />

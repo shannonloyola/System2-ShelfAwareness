@@ -1,11 +1,12 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
-  CheckCircle,
-  XCircle,
-  Eye,
+  ChevronDown,
+  ChevronUp,
   FileText,
   Package,
+  Search,
+  XCircle,
 } from "lucide-react";
 import {
   Card,
@@ -14,14 +15,7 @@ import {
   CardTitle,
 } from "../ui/card";
 import { Button } from "../ui/button";
-import { Label } from "../ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "../ui/dialog";
+import { Input } from "../ui/input";
 import {
   Select,
   SelectContent,
@@ -31,91 +25,117 @@ import {
 } from "../ui/select";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { supabase } from "@/lib/supabase";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
-interface Discrepancy {
+type ShipmentDiscrepancy = {
   id: string;
-  poNumber: string;
-  productName: string;
-  sku: string;
-  expectedQty: number;
-  receivedQty: number;
-  status: "pending" | "approved" | "rejected";
-  reportedBy: string;
-  dateReported: string;
-  notes: string;
-}
-
-type GrnDraftLine = {
-  id: string;
-  grn_draft_id: string;
-  line_no: number;
-  product_id: string;
-  product_name: string;
-  sku: string;
-  qty_expected: number;
-  qty_received: number;
-  discrepancy_reason: string | null;
-  variance?: number; // if you already store it
+  status?: string | null;
+  created_at?: string | null;
+  shipment_id?: string | null;
+  shipment_reference?: string | null;
+  po_number?: string | null;
+  sku?: string | null;
+  product_name?: string | null;
+  expected_qty?: number | null;
+  received_qty?: number | null;
+  discrepancy_reason?: string | null;
+  notes?: string | null;
+  reported_by?: string | null;
+  image_urls?: string[] | string | null;
+  disposition?: "released" | "returned" | "scrapped" | null;
+  [key: string]: unknown;
 };
 
-type GrnDraft = {
-  id: string;
-  grn_number: string;
-  received_date: string;
-  notes: string | null;
-  status: string;
-  review_status: string | null;
-  created_by: string | null;
-  has_discrepancy: boolean;
-  grn_draft_lines: GrnDraftLine[];
+type QcInspectionRow = Record<string, unknown>;
+
+const normalizeStatus = (rawStatus: string | null | undefined) => {
+  const s = (rawStatus ?? "").trim().toLowerCase();
+  if (!s) return "pending";
+  return s;
 };
 
-const mockDiscrepancies: Discrepancy[] = [
-  {
-    id: "1",
-    poNumber: "PO-2026-002",
-    productName: "Amoxicillin 500mg",
-    sku: "AMX-500",
-    expectedQty: 10000,
-    receivedQty: 9850,
-    status: "pending",
-    reportedBy: "Maria Santos",
-    dateReported: "2026-02-24",
-    notes: "Short delivery - 3 boxes missing",
-  },
-  {
-    id: "2",
-    poNumber: "PO-2026-003",
-    productName: "Medical Syringe 50ml",
-    sku: "SYR-50ML",
-    expectedQty: 5000,
-    receivedQty: 5200,
-    status: "pending",
-    reportedBy: "Juan Reyes",
-    dateReported: "2026-02-23",
-    notes: "Over delivery - extra box included",
-  },
-];
+const formatMaybeNumber = (value: unknown) => {
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return num.toLocaleString();
+};
+
+const extractImageUrls = (
+  row: ShipmentDiscrepancy | null,
+): string[] => {
+  if (!row) return [];
+  const raw = row.image_urls ?? row["image_url"] ?? row["images"];
+  if (!raw) return [];
+
+  if (Array.isArray(raw)) {
+    return raw.filter((item) => typeof item === "string" && item.trim());
+  }
+
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(
+            (item) => typeof item === "string" && item.trim(),
+          );
+        }
+      } catch {
+        // fall through to split handling
+      }
+    }
+    return trimmed
+      .split(/[\s,]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+};
 
 export function DiscrepancyApprovals() {
-  const [grns, setGrns] = useState<GrnDraft[]>([]);
+  const [discrepancies, setDiscrepancies] = useState<
+    ShipmentDiscrepancy[]
+  >([]);
+  const [qcSummary, setQcSummary] = useState({
+    pass: 0,
+    fail: 0,
+  });
+  const [supplierDefects, setSupplierDefects] = useState<
+    Array<{ name: string; defects: number }>
+  >([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isReportsLoading, setIsReportsLoading] =
+    useState(false);
   const [statusFilter, setStatusFilter] =
     useState<string>("all");
-  const [selectedDetail, setSelectedDetail] = useState<{
-    grn: GrnDraft;
-    line: GrnDraftLine;
-  } | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedDetail, setSelectedDetail] =
+    useState<ShipmentDiscrepancy | null>(null);
+  const [isUpdatingId, setIsUpdatingId] = useState<string | null>(
+    null,
+  );
+  const [reportsOpen, setReportsOpen] = useState(true);
 
   const fetchDiscrepancies = async () => {
     setIsLoading(true);
     try {
       const url =
-        `https://${projectId}.supabase.co/rest/v1/grn_drafts` +
-        `?select=id,grn_number,received_date,notes,status, review_status, created_by,has_discrepancy,` +
-        `grn_draft_lines(id,grn_draft_id,line_no,product_id,product_name,sku,qty_expected,qty_received,discrepancy_reason,variance)` +
-        `&has_discrepancy=eq.true` +
-        `&order=received_date.desc`;
+        `https://${projectId}.supabase.co/rest/v1/shipment_discrepancies` +
+        `?select=*` +
+        `&status=neq.approved` +
+        `&order=created_at.desc`;
 
       const res = await fetch(url, {
         headers: {
@@ -127,14 +147,11 @@ export function DiscrepancyApprovals() {
 
       if (!res.ok) throw new Error(await res.text());
 
-      const data = (await res.json()) as GrnDraft[];
-      setGrns(data);
-      console.log(
-        "Fetched GRN statuses sample:",
-        data
-          .slice(0, 5)
-          .map((g) => ({ id: g.id, status: g.status })),
-      );
+      const data = (await res.json()) as ShipmentDiscrepancy[];
+      setDiscrepancies(data);
+      if (!selectedDetail && data.length > 0) {
+        setSelectedDetail(data[0]);
+      }
     } catch (err) {
       toast.error("Failed to load discrepancies", {
         description:
@@ -145,83 +162,31 @@ export function DiscrepancyApprovals() {
     }
   };
 
-  useEffect(() => {
-    fetchDiscrepancies();
-  }, []);
-
-  const normalizeStatus = (
-    rawStatus: string | null | undefined,
+  const applyLocalUpdate = (
+    id: string,
+    patch: Partial<ShipmentDiscrepancy>,
   ) => {
-    const s = (rawStatus ?? "").toLowerCase();
-    if (s === "approved") return "approved";
-    if (s === "rejected") return "rejected";
-    return "pending";
+    setDiscrepancies((prev) =>
+      prev.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    );
+    setSelectedDetail((prev) =>
+      prev && prev.id === id ? { ...prev, ...patch } : prev,
+    );
   };
 
-  const discrepancyCards = grns
-    .filter((grn) => {
-      if (statusFilter === "all") return true;
-      return (
-        normalizeStatus(grn.review_status) === statusFilter
-      );
-    })
-    .flatMap((grn) =>
-      (grn.grn_draft_lines || [])
-        .filter(
-          (l) =>
-            Number(l.qty_expected) !== Number(l.qty_received),
-        )
-        .map((line) => ({ grn, line })),
-    );
-  const updateGrnStatus = async (
-    grnId: string,
-    action: "approve" | "reject",
+  const updateDisposition = async (
+    row: ShipmentDiscrepancy,
+    action: "released" | "returned" | "scrapped",
   ) => {
+    if (!row?.id) return;
+    setIsUpdatingId(row.id);
     try {
-      console.log("Updating GRN ID:", grnId, "action:", action);
-
-      // update variances
-      const grnToUpdate = grns.find((g) => g.id === grnId);
-      if (grnToUpdate?.grn_draft_lines?.length) {
-        for (const line of grnToUpdate.grn_draft_lines) {
-          const calculatedVariance =
-            Number(line.qty_received) -
-            Number(line.qty_expected);
-
-          const lineRes = await fetch(
-            `https://${projectId}.supabase.co/rest/v1/grn_draft_lines?id=eq.${line.id}`,
-            {
-              method: "PATCH",
-              headers: {
-                apikey: publicAnonKey,
-                Authorization: `Bearer ${publicAnonKey}`,
-                "Content-Type": "application/json",
-                Prefer: "return=minimal",
-              },
-              body: JSON.stringify({
-                variance: calculatedVariance,
-              }),
-            },
-          );
-
-          if (!lineRes.ok) {
-            console.error(
-              "Failed to update line variance:",
-              await lineRes.text(),
-            );
-          }
-        }
-      }
-
-      // APPROVE => posted
-      // REJECT => keep draft, but remove from discrepancy queue
-      const payload =
-        action === "approve"
-          ? { status: "posted", review_status: "approved" }
-          : { status: "draft", review_status: "rejected" };
+      const payload = {
+        disposition: action,
+      };
 
       const res = await fetch(
-        `https://${projectId}.supabase.co/rest/v1/grn_drafts?id=eq.${grnId}`,
+        `https://${projectId}.supabase.co/rest/v1/shipment_discrepancies?id=eq.${row.id}`,
         {
           method: "PATCH",
           headers: {
@@ -234,93 +199,310 @@ export function DiscrepancyApprovals() {
         },
       );
 
-      console.log("PATCH response status:", res.status);
-
       if (!res.ok) {
-        const errorText = await res.text();
-        console.error("PATCH FAILED:", errorText);
-        throw new Error(errorText);
+        const errText = await res.text();
+        throw new Error(errText);
       }
 
-      toast.success(
-        action === "approve"
-          ? "Marked as approved"
-          : "Marked as rejected",
-        {
-          description:
-            "Variance has been saved to the database",
-        },
-      );
-
-      fetchDiscrepancies();
+      applyLocalUpdate(row.id, payload);
+      toast.success("Disposition updated", {
+        description: `Marked as ${action}.`,
+      });
     } catch (err) {
-      toast.error("Update failed", {
+      toast.error("Failed to update disposition", {
         description:
           err instanceof Error ? err.message : "Unknown error",
       });
+    } finally {
+      setIsUpdatingId(null);
     }
   };
 
-  const pendingCount = grns.filter(
-    (g) => normalizeStatus(g.review_status) === "pending",
-  ).length;
-  const approvedCount = grns.filter(
-    (g) => normalizeStatus(g.review_status) === "approved",
-  ).length;
-  const rejectedCount = grns.filter(
-    (g) => normalizeStatus(g.review_status) === "rejected",
-  ).length;
+  const loadReports = async () => {
+    setIsReportsLoading(true);
+    try {
+      const [qcRes, discrepanciesRes] = await Promise.all([
+        supabase.from("qc_inspections").select("*"),
+        supabase.from("shipment_discrepancies").select("*"),
+      ]);
 
-  const getStatusColor = (status: string) => {
+      if (qcRes.error) throw qcRes.error;
+      if (discrepanciesRes.error) throw discrepanciesRes.error;
+
+      const qcRows = (qcRes.data ?? []) as QcInspectionRow[];
+      const qcTotals = { pass: 0, fail: 0 };
+
+      qcRows.forEach((row) => {
+        const raw =
+          (row.result ??
+            row.status ??
+            row.outcome ??
+            row.qc_status ??
+            row.decision ??
+            "") as string;
+        const value = String(raw).toLowerCase();
+        if (value.includes("pass")) qcTotals.pass += 1;
+        if (value.includes("fail") || value.includes("reject")) {
+          qcTotals.fail += 1;
+        }
+      });
+
+      const discrepancyRows =
+        (discrepanciesRes.data ?? []) as ShipmentDiscrepancy[];
+      const supplierMap = new Map<string, number>();
+
+      discrepancyRows.forEach((row) => {
+        const name =
+          (row["supplier_name"] as string | undefined) ??
+          (row["vendor_name"] as string | undefined) ??
+          (row["supplier"] as string | undefined) ??
+          (row["vendor"] as string | undefined) ??
+          row.reported_by ??
+          "Unknown Supplier";
+        const key = name || "Unknown Supplier";
+        supplierMap.set(key, (supplierMap.get(key) ?? 0) + 1);
+      });
+
+      const supplierData = Array.from(supplierMap.entries())
+        .map(([name, defects]) => ({ name, defects }))
+        .sort((a, b) => b.defects - a.defects)
+        .slice(0, 6);
+
+      setQcSummary(qcTotals);
+      setSupplierDefects(supplierData);
+    } catch (err) {
+      toast.error("Failed to load quality reports", {
+        description:
+          err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setIsReportsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDiscrepancies();
+    loadReports();
+  }, []);
+
+  const statusOptions = useMemo(() => {
+    const unique = new Set<string>();
+    discrepancies.forEach((row) => {
+      unique.add(normalizeStatus(row.status));
+    });
+    return ["all", ...Array.from(unique).sort()];
+  }, [discrepancies]);
+
+  const filteredDiscrepancies = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+    return discrepancies.filter((row) => {
+      if (
+        statusFilter !== "all" &&
+        normalizeStatus(row.status) !== statusFilter
+      ) {
+        return false;
+      }
+      if (!keyword) return true;
+      const haystack = [
+        row.id,
+        row.shipment_reference,
+        row.shipment_id,
+        row.po_number,
+        row.sku,
+        row.product_name,
+        row.reported_by,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [discrepancies, searchTerm, statusFilter]);
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    discrepancies.forEach((row) => {
+      const status = normalizeStatus(row.status);
+      counts[status] = (counts[status] ?? 0) + 1;
+    });
+    return counts;
+  }, [discrepancies]);
+
+  const selectedImages = useMemo(
+    () => extractImageUrls(selectedDetail),
+    [selectedDetail],
+  );
+
+  const getStatusStyle = (status: string) => {
     switch (status) {
       case "pending":
         return "bg-[#F97316] text-white";
-      case "approved":
-        return "bg-[#00A3AD] text-white";
       case "rejected":
         return "bg-[#DC2626] text-white";
+      case "in_review":
+        return "bg-[#2563EB] text-white";
+      case "resolved":
+        return "bg-[#10B981] text-white";
+      case "released":
+        return "bg-[#10B981] text-white";
+      case "returned":
+        return "bg-[#F59E0B] text-white";
+      case "scrapped":
+        return "bg-[#DC2626] text-white";
       default:
-        return "bg-[#D1D5DB] text-[#111827]";
+        return "bg-[#E5E7EB] text-[#111827]";
     }
   };
 
-  const getVarianceColor = (variance: number) => {
-    if (variance < 0) return "text-[#F97316]";
-    if (variance > 0) return "text-[#00A3AD]";
-    return "text-[#111827]";
-  };
+  const qcChartData = useMemo(
+    () => [
+      { name: "Pass", count: qcSummary.pass },
+      { name: "Fail", count: qcSummary.fail },
+    ],
+    [qcSummary],
+  );
 
   return (
-    <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
-      {/* Header */}
+    <div className="p-4 lg:p-8 space-y-6 bg-[#F8FAFC]">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl lg:text-4xl font-semibold mb-2 text-[#111827]">
-            Discrepancy Approvals
+            Discrepancies Dashboard
           </h1>
           <p className="text-[#6B7280]">
-            Review and approve inventory discrepancies
+            Monitor inbound shipment issues awaiting approval
           </p>
         </div>
-        <div className="flex gap-3">
-          <Select
-            value={statusFilter}
-            onValueChange={setStatusFilter}
-          >
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative">
+            <Search className="w-4 h-4 text-[#9CA3AF] absolute left-3 top-1/2 -translate-y-1/2" />
+            <Input
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search shipment, SKU, product"
+              className="pl-9 w-64 border-[#111827]/10"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-[180px] border-[#111827]/10">
               <SelectValue placeholder="Filter by status" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="approved">Approved</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
+              {statusOptions.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option === "all"
+                    ? "All Status"
+                    : option.replace(/_/g, " ")}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
+          <Button
+            variant="outline"
+            className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
+            onClick={fetchDiscrepancies}
+            disabled={isLoading}
+          >
+            Refresh
+          </Button>
         </div>
       </div>
 
-      {/* Summary Stats */}
+      <Card className="bg-white border-[#111827]/10 shadow-sm">
+        <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <CardTitle className="text-[#111827] font-semibold">
+              View Reports
+            </CardTitle>
+            <p className="text-sm text-[#6B7280]">
+              Quality analytics for inbound shipments
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
+              onClick={loadReports}
+              disabled={isReportsLoading}
+            >
+              Refresh Reports
+            </Button>
+            <Button
+              variant="outline"
+              className="border-[#111827]/20 text-[#111827]"
+              onClick={() => setReportsOpen((prev) => !prev)}
+            >
+              {reportsOpen ? (
+                <>
+                  <ChevronUp className="w-4 h-4 mr-2" />
+                  Collapse
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="w-4 h-4 mr-2" />
+                  Expand
+                </>
+              )}
+            </Button>
+          </div>
+        </CardHeader>
+        {reportsOpen && (
+          <CardContent className="space-y-4">
+            {isReportsLoading ? (
+              <div className="text-center py-8 text-[#6B7280]">
+                Loading analytics...
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="rounded-lg border border-[#E5E7EB] p-4">
+                  <p className="text-sm font-semibold text-[#111827] mb-1">
+                    Pass/Fail QC Ratio
+                  </p>
+                  <p className="text-xs text-[#6B7280] mb-4">
+                    Inspection outcomes across inbound shipments
+                  </p>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={qcChartData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" />
+                        <YAxis allowDecimals={false} />
+                        <Tooltip />
+                        <Bar dataKey="count" fill="#00A3AD" radius={4} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-[#E5E7EB] p-4">
+                  <p className="text-sm font-semibold text-[#111827] mb-1">
+                    Supplier Defect Volume
+                  </p>
+                  <p className="text-xs text-[#6B7280] mb-4">
+                    Discrepancy counts by supplier
+                  </p>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={supplierDefects}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="name"
+                          interval={0}
+                          tick={{ fontSize: 10 }}
+                        />
+                        <YAxis allowDecimals={false} />
+                        <Tooltip />
+                        <Bar dataKey="defects" fill="#F97316" radius={4} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        )}
+      </Card>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="bg-white border-[#111827]/10">
           <CardContent className="pt-6">
@@ -330,10 +512,10 @@ export function DiscrepancyApprovals() {
               </div>
               <div>
                 <div className="text-2xl font-bold text-[#111827]">
-                  {pendingCount}
+                  {statusCounts.pending ?? 0}
                 </div>
                 <div className="text-sm text-[#6B7280]">
-                  Pending Review
+                  Pending
                 </div>
               </div>
             </div>
@@ -343,15 +525,15 @@ export function DiscrepancyApprovals() {
         <Card className="bg-white border-[#111827]/10">
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-lg bg-[#00A3AD]/10 flex items-center justify-center">
-                <CheckCircle className="w-6 h-6 text-[#00A3AD]" />
+              <div className="w-12 h-12 rounded-lg bg-[#2563EB]/10 flex items-center justify-center">
+                <FileText className="w-6 h-6 text-[#2563EB]" />
               </div>
               <div>
                 <div className="text-2xl font-bold text-[#111827]">
-                  {approvedCount}
+                  {statusCounts.in_review ?? 0}
                 </div>
                 <div className="text-sm text-[#6B7280]">
-                  Approved
+                  In Review
                 </div>
               </div>
             </div>
@@ -366,7 +548,7 @@ export function DiscrepancyApprovals() {
               </div>
               <div>
                 <div className="text-2xl font-bold text-[#111827]">
-                  {rejectedCount}
+                  {statusCounts.rejected ?? 0}
                 </div>
                 <div className="text-sm text-[#6B7280]">
                   Rejected
@@ -377,323 +559,390 @@ export function DiscrepancyApprovals() {
         </Card>
       </div>
 
-      {/* Discrepancies List */}
-      <Card className="bg-white border-[#111827]/10 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-[#111827] font-semibold">
-            Discrepancy Reports ({discrepancyCards.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
+        <Card className="bg-white border-[#111827]/10 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-[#111827] font-semibold">
+              Discrepancy Queue ({filteredDiscrepancies.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
             {isLoading ? (
               <div className="text-center py-12">
                 <p className="text-[#6B7280]">
                   Loading discrepancies...
                 </p>
               </div>
-            ) : discrepancyCards.length === 0 ? (
+            ) : filteredDiscrepancies.length === 0 ? (
               <div className="text-center py-12">
                 <Package className="w-16 h-16 mx-auto text-[#D1D5DB] mb-4" />
                 <p className="text-[#6B7280] font-medium">
                   No discrepancies found
                 </p>
                 <p className="text-sm text-[#9CA3AF] mt-2">
-                  All inventory receipts match expected
-                  quantities
+                  Everything is currently approved or resolved
                 </p>
               </div>
             ) : (
-              discrepancyCards.map(({ grn, line }) => {
-                // Variance = Received - Expected
-                // Positive variance = Overage, Negative variance = Shortage
-                const expectedQty = Number(line.qty_expected);
-                const receivedQty = Number(line.qty_received);
-                const variance = receivedQty - expectedQty;
+              <div className="overflow-x-auto rounded-lg border border-[#E5E7EB]">
+                <table className="w-full min-w-[880px] text-sm">
+                  <thead>
+                    <tr className="bg-[#F8FAFC] border-b border-[#E5E7EB]">
+                      <th className="text-left py-3 px-4 font-semibold text-[#111827]">
+                        Discrepancy ID
+                      </th>
+                      <th className="text-left py-3 px-4 font-semibold text-[#111827]">
+                        Shipment / PO
+                      </th>
+                      <th className="text-left py-3 px-4 font-semibold text-[#111827]">
+                        Item
+                      </th>
+                      <th className="text-right py-3 px-4 font-semibold text-[#111827]">
+                        Expected
+                      </th>
+                      <th className="text-right py-3 px-4 font-semibold text-[#111827]">
+                        Received
+                      </th>
+                      <th className="text-right py-3 px-4 font-semibold text-[#111827]">
+                        Variance
+                      </th>
+                      <th className="text-left py-3 px-4 font-semibold text-[#111827]">
+                        Status
+                      </th>
+                      <th className="text-left py-3 px-4 font-semibold text-[#111827]">
+                        Reported
+                      </th>
+                      <th className="text-left py-3 px-4 font-semibold text-[#111827]">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredDiscrepancies.map((row) => {
+                      const expectedQty = Number(row.expected_qty);
+                      const receivedQty = Number(row.received_qty);
+                      const variance =
+                        Number.isFinite(expectedQty) &&
+                        Number.isFinite(receivedQty)
+                          ? receivedQty - expectedQty
+                          : null;
+                      const status = normalizeStatus(row.status);
 
-                const uiStatus = normalizeStatus(
-                  grn.review_status,
-                );
-                const canTakeAction = uiStatus === "pending";
-
-                return (
-                  <Card
-                    key={line.id}
-                    className="border-[#111827]/10"
-                  >
-                    <CardContent className="pt-6">
-                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                        {/* Main Info */}
-                        <div className="lg:col-span-7 space-y-3">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="font-mono text-[#00A3AD] font-semibold">
-                                  {grn.grn_number}
-                                </span>
-                                <span
-                                  className={[
-                                    "inline-flex items-center justify-center",
-                                    "px-2.5 py-1",
-                                    "rounded-full",
-                                    "text-[11px] font-semibold leading-none",
-                                    "uppercase tracking-wide",
-                                    getStatusColor(uiStatus),
-                                  ].join(" ")}
-                                >
-                                  {uiStatus}
-                                </span>
+                      return (
+                        <tr
+                          key={row.id}
+                          className="border-b border-[#E5E7EB] last:border-b-0 hover:bg-[#F8FAFC]/60"
+                        >
+                          <td className="py-3 px-4 font-mono text-[#00A3AD]">
+                            {row.id?.slice(0, 8) || "-"}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="text-[#111827] font-medium">
+                              {row.shipment_reference ||
+                                row.shipment_id ||
+                                row.po_number ||
+                                "-"}
+                            </div>
+                            {row.po_number && (
+                              <div className="text-xs text-[#6B7280]">
+                                PO: {row.po_number}
                               </div>
-                              <h3 className="text-lg font-semibold text-[#111827]">
-                                {line.product_name}
-                              </h3>
-                              <p className="text-sm text-[#6B7280]">
-                                SKU: {line.sku}
-                              </p>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="text-[#111827] font-medium">
+                              {row.product_name || "-"}
                             </div>
-                          </div>
-
-                          <div className="grid grid-cols-3 gap-4 p-3 bg-[#F8FAFC] rounded-lg">
-                            <div>
-                              <Label className="text-xs text-[#6B7280]">
-                                Expected
-                              </Label>
-                              <p className="text-lg font-bold text-[#111827]">
-                                {expectedQty.toLocaleString()}
-                              </p>
+                            <div className="text-xs text-[#6B7280]">
+                              SKU: {row.sku || "-"}
                             </div>
-                            <div>
-                              <Label className="text-xs text-[#6B7280]">
-                                Received
-                              </Label>
-                              <p className="text-lg font-bold text-[#111827]">
-                                {receivedQty.toLocaleString()}
-                              </p>
-                            </div>
-                            <div>
-                              <Label className="text-xs text-[#6B7280]">
-                                Variance
-                              </Label>
-                              <p
-                                className={`text-lg font-bold ${getVarianceColor(variance)}`}
+                          </td>
+                          <td className="py-3 px-4 text-right text-[#111827]">
+                            {formatMaybeNumber(row.expected_qty)}
+                          </td>
+                          <td className="py-3 px-4 text-right text-[#111827]">
+                            {formatMaybeNumber(row.received_qty)}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            {variance === null ? (
+                              <span className="text-[#9CA3AF]">-</span>
+                            ) : (
+                              <span
+                                className={
+                                  variance < 0
+                                    ? "text-[#F97316] font-semibold"
+                                    : variance > 0
+                                      ? "text-[#00A3AD] font-semibold"
+                                      : "text-[#111827]"
+                                }
                               >
                                 {variance > 0 ? "+" : ""}
                                 {variance.toLocaleString()}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2 text-sm">
-                              <span className="text-[#6B7280]">
-                                Reported by:
                               </span>
-                              <span className="text-[#111827] font-medium">
-                                {grn.created_by}
-                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={[
+                                "inline-flex items-center justify-center",
+                                "px-2.5 py-1",
+                                "rounded-full",
+                                "text-[11px] font-semibold leading-none",
+                                "uppercase tracking-wide",
+                                getStatusStyle(status),
+                              ].join(" ")}
+                            >
+                              {status.replace(/_/g, " ")}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-[#6B7280]">
+                            <div>{row.reported_by || "-"}</div>
+                            <div className="text-xs">
+                              {row.created_at
+                                ? new Date(row.created_at).toLocaleString()
+                                : "-"}
                             </div>
-                            <div className="flex items-center gap-2 text-sm">
-                              <span className="text-[#6B7280]">
-                                Date:
-                              </span>
-                              <span className="text-[#111827]">
-                                {grn.received_date}
-                              </span>
-                            </div>
-                            <div className="text-sm">
-                              <span className="text-[#6B7280]">
-                                Notes:
-                              </span>
-                              <p className="text-[#111827] mt-1">
-                                {grn.notes}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="lg:col-span-5 flex flex-col justify-center gap-3">
-                          {canTakeAction ? (
-                            <>
-                              <Button
-                                onClick={() =>
-                                  updateGrnStatus(
-                                    grn.id,
-                                    "approve",
-                                  )
-                                }
-                                className="bg-[#00A3AD] hover:bg-[#0891B2] text-white w-full"
-                              >
-                                <CheckCircle className="w-4 h-4 mr-2" />
-                                Approve Discrepancy
-                              </Button>
-                              <Button
-                                onClick={() =>
-                                  updateGrnStatus(
-                                    grn.id,
-                                    "reject",
-                                  )
-                                }
-                                variant="outline"
-                                className="border-[#DC2626] text-[#DC2626] hover:bg-[#DC2626]/10 w-full"
-                              >
-                                <XCircle className="w-4 h-4 mr-2" />
-                                Reject & Investigate
-                              </Button>
-                            </>
-                          ) : (
-                            <div className="text-center p-4 bg-[#F8FAFC] rounded-lg">
-                              <p className="text-sm text-[#6B7280]">
-                                This discrepancy has been{" "}
-                                {uiStatus}
-                              </p>
-                            </div>
-                          )}
-                          <Button
-                            variant="outline"
-                            className="border-[#111827]/20 text-[#111827] w-full"
-                            onClick={() =>
-                              setSelectedDetail({ grn, line })
-                            }
-                          >
-                            <Eye className="w-4 h-4 mr-2" />
-                            View Details
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })
+                          </td>
+                          <td className="py-3 px-4">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="border-[#111827]/20 text-[#111827]"
+                              onClick={() => setSelectedDetail(row)}
+                            >
+                              View
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
-      <Dialog
-        open={selectedDetail !== null}
-        onOpenChange={(open) => {
-          if (!open) setSelectedDetail(null);
-        }}
-      >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-[#111827]">
+        <Card className="bg-white border-[#111827]/10 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-[#111827] font-semibold flex items-center gap-2">
               <FileText className="w-5 h-5 text-[#00A3AD]" />
-              Discrepancy Details
-            </DialogTitle>
-            <DialogDescription className="text-[#6B7280]">
-              Full line-level discrepancy information for
-              review.
-            </DialogDescription>
-          </DialogHeader>
-
-          {selectedDetail &&
-            (() => {
-              const { grn, line } = selectedDetail;
-              const expectedQty = Number(line.qty_expected);
-              const receivedQty = Number(line.qty_received);
-              const variance = receivedQty - expectedQty;
-              const uiStatus = normalizeStatus(
-                grn.review_status,
-              );
-
-              return (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="rounded-md border border-[#E5E7EB] p-3">
-                      <p className="text-xs text-[#6B7280]">
-                        GRN Number
-                      </p>
-                      <p className="font-semibold text-[#111827]">
-                        {grn.grn_number}
-                      </p>
-                    </div>
-                    <div className="rounded-md border border-[#E5E7EB] p-3">
-                      <p className="text-xs text-[#6B7280]">
-                        Status
-                      </p>
-                      <p className="font-semibold text-[#111827] capitalize">
-                        {uiStatus}
-                      </p>
-                    </div>
-                    <div className="rounded-md border border-[#E5E7EB] p-3">
-                      <p className="text-xs text-[#6B7280]">
-                        Product
-                      </p>
-                      <p className="font-semibold text-[#111827]">
-                        {line.product_name}
-                      </p>
-                      <p className="text-xs text-[#6B7280]">
-                        SKU: {line.sku}
-                      </p>
-                    </div>
-                    <div className="rounded-md border border-[#E5E7EB] p-3">
-                      <p className="text-xs text-[#6B7280]">
-                        Received Date
-                      </p>
-                      <p className="font-semibold text-[#111827]">
-                        {grn.received_date}
-                      </p>
-                      <p className="text-xs text-[#6B7280]">
-                        Line #{line.line_no}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-3 rounded-md border border-[#E5E7EB] bg-[#F8FAFC] p-3">
-                    <div>
-                      <p className="text-xs text-[#6B7280]">
-                        Expected
-                      </p>
-                      <p className="text-lg font-semibold text-[#111827]">
-                        {expectedQty.toLocaleString()}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-[#6B7280]">
-                        Received
-                      </p>
-                      <p className="text-lg font-semibold text-[#111827]">
-                        {receivedQty.toLocaleString()}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-[#6B7280]">
-                        Variance
-                      </p>
-                      <p
-                        className={`text-lg font-semibold ${getVarianceColor(variance)}`}
-                      >
-                        {variance > 0 ? "+" : ""}
-                        {variance.toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
+              Detail Panel
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!selectedDetail ? (
+              <div className="text-center py-8 text-[#9CA3AF]">
+                Select a discrepancy to view details.
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="rounded-md border border-[#E5E7EB] p-3">
                     <p className="text-xs text-[#6B7280]">
-                      Discrepancy Reason
+                      Discrepancy ID
                     </p>
-                    <p className="text-sm text-[#111827]">
-                      {line.discrepancy_reason?.trim() ||
-                        "No reason provided"}
+                    <p className="font-semibold text-[#111827]">
+                      {selectedDetail.id}
                     </p>
                   </div>
-
-                  <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
-                    <p className="text-xs text-[#6B7280]">
-                      Header Notes
+                  <div className="rounded-md border border-[#E5E7EB] p-3">
+                    <p className="text-xs text-[#6B7280]">Status</p>
+                    <p className="font-semibold text-[#111827] capitalize">
+                      {normalizeStatus(selectedDetail.status).replace(
+                        /_/g,
+                        " ",
+                      )}
                     </p>
-                    <p className="text-sm text-[#111827]">
-                      {grn.notes?.trim() || "No notes"}
+                  </div>
+                  <div className="rounded-md border border-[#E5E7EB] p-3">
+                    <p className="text-xs text-[#6B7280]">
+                      Disposition
+                    </p>
+                    <p className="font-semibold text-[#111827] capitalize">
+                      {selectedDetail.disposition
+                        ? selectedDetail.disposition.replace(
+                            /_/g,
+                            " ",
+                          )
+                        : "Unassigned"}
                     </p>
                   </div>
                 </div>
-              );
-            })()}
-        </DialogContent>
-      </Dialog>
+
+                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-1">
+                  <p className="text-xs text-[#6B7280]">Shipment</p>
+                  <p className="font-semibold text-[#111827]">
+                    {selectedDetail.shipment_reference ||
+                      selectedDetail.shipment_id ||
+                      "-"}
+                  </p>
+                  {selectedDetail.po_number && (
+                    <p className="text-xs text-[#6B7280]">
+                      PO: {selectedDetail.po_number}
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-1">
+                  <p className="text-xs text-[#6B7280]">Item</p>
+                  <p className="font-semibold text-[#111827]">
+                    {selectedDetail.product_name || "-"}
+                  </p>
+                  <p className="text-xs text-[#6B7280]">
+                    SKU: {selectedDetail.sku || "-"}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 rounded-md border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                  <div>
+                    <p className="text-xs text-[#6B7280]">Expected</p>
+                    <p className="text-lg font-semibold text-[#111827]">
+                      {formatMaybeNumber(selectedDetail.expected_qty)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-[#6B7280]">Received</p>
+                    <p className="text-lg font-semibold text-[#111827]">
+                      {formatMaybeNumber(selectedDetail.received_qty)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-[#6B7280]">Variance</p>
+                    <p className="text-lg font-semibold text-[#111827]">
+                      {(() => {
+                        const expected = Number(selectedDetail.expected_qty);
+                        const received = Number(selectedDetail.received_qty);
+                        if (!Number.isFinite(expected) || !Number.isFinite(received)) {
+                          return "-";
+                        }
+                        const variance = received - expected;
+                        return `${variance > 0 ? "+" : ""}${variance.toLocaleString()}`;
+                      })()}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
+                  <p className="text-xs text-[#6B7280]">Reason</p>
+                  <p className="text-sm text-[#111827]">
+                    {selectedDetail.discrepancy_reason || "No reason provided"}
+                  </p>
+                </div>
+
+                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
+                  <p className="text-xs text-[#6B7280]">Notes</p>
+                  <p className="text-sm text-[#111827]">
+                    {selectedDetail.notes || "No notes"}
+                  </p>
+                </div>
+
+                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
+                  <p className="text-xs text-[#6B7280]">Reported By</p>
+                  <p className="text-sm text-[#111827]">
+                    {selectedDetail.reported_by || "-"}
+                  </p>
+                  <p className="text-xs text-[#6B7280]">
+                    {selectedDetail.created_at
+                      ? new Date(selectedDetail.created_at).toLocaleString()
+                      : "-"}
+                  </p>
+                </div>
+
+                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
+                  <p className="text-xs text-[#6B7280]">Image URLs</p>
+                  {selectedImages.length === 0 ? (
+                    <p className="text-sm text-[#9CA3AF]">
+                      No images attached
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {selectedImages.map((url, idx) => (
+                        <a
+                          key={`${url}-${idx}`}
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block text-sm text-[#2563EB] underline break-all"
+                        >
+                          {url}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-[#6B7280]">
+                        Quarantined Stock
+                      </p>
+                      <p className="text-sm text-[#111827]">
+                        Variance placed on hold for disposition
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-[#6B7280]">
+                        Quarantined Qty
+                      </p>
+                      <p className="text-lg font-semibold text-[#111827]">
+                        {(() => {
+                          const expected = Number(
+                            selectedDetail.expected_qty,
+                          );
+                          const received = Number(
+                            selectedDetail.received_qty,
+                          );
+                          if (
+                            !Number.isFinite(expected) ||
+                            !Number.isFinite(received)
+                          ) {
+                            return "-";
+                          }
+                          return Math.abs(
+                            received - expected,
+                          ).toLocaleString();
+                        })()}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <Button
+                      className="bg-[#10B981] hover:bg-[#059669] text-white"
+                      onClick={() =>
+                        updateDisposition(selectedDetail, "released")
+                      }
+                      disabled={isUpdatingId === selectedDetail.id}
+                    >
+                      Release
+                    </Button>
+                    <Button
+                      className="bg-[#F59E0B] hover:bg-[#D97706] text-white"
+                      onClick={() =>
+                        updateDisposition(selectedDetail, "returned")
+                      }
+                      disabled={isUpdatingId === selectedDetail.id}
+                    >
+                      Return
+                    </Button>
+                    <Button
+                      className="bg-[#DC2626] hover:bg-[#B91C1C] text-white"
+                      onClick={() =>
+                        updateDisposition(selectedDetail, "scrapped")
+                      }
+                      disabled={isUpdatingId === selectedDetail.id}
+                    >
+                      Scrap
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
