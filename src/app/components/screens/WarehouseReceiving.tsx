@@ -39,6 +39,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
+import {
+  RadioGroup,
+  RadioGroupItem,
+} from "../ui/radio-group";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { postGRN } from "/utils/postGRN";
@@ -122,6 +126,23 @@ export function WarehouseReceiving() {
   const [supplierName, setSupplierName] = useState("");
   const [supplierContact, setSupplierContact] = useState("");
   const [supplierAddress, setSupplierAddress] = useState("");
+  
+  // Pharma checks state
+  const [grnCheckPhoto, setGrnCheckPhoto] = useState<File | null>(null);
+  const [grnCheckNotes, setGrnCheckNotes] = useState("");
+  const [grnChecks, setGrnChecks] = useState<Record<string, string>>({
+    packaging_intact: "",
+    correct_label: "",
+    temperature_ok: "",
+    expiry_ok: "",
+  });
+  const [qcDiscrepancies, setQcDiscrepancies] = useState<Record<string, { reason_code: string; severity: string }>>({
+    packaging_intact: { reason_code: "", severity: "" },
+    correct_label: { reason_code: "", severity: "" },
+    temperature_ok: { reason_code: "", severity: "" },
+    expiry_ok: { reason_code: "", severity: "" },
+  });
+  const [savingGrnChecks, setSavingGrnChecks] = useState(false);
 
   const [inventory, setInventory] = useState<InventoryItem[]>(
     [],
@@ -783,6 +804,83 @@ export function WarehouseReceiving() {
 
   const handleViewGrn = () => {
     setShowGrnForm(true);
+  };
+
+  const uploadGrnCheckPhoto = async (grnId: string) => {
+    if (!grnCheckPhoto) return null;
+
+    const filePath = `${grnId}/${Date.now()}-${grnCheckPhoto.name}`;
+    const { error: uploadError } = await supabase.storage
+      .from("grn-qa-photos")
+      .upload(filePath, grnCheckPhoto, { upsert: true });
+
+    if (uploadError) {
+      toast.error("Upload failed", { description: uploadError.message });
+      return null;
+    }
+
+    const { data } = supabase.storage
+      .from("grn-qa-photos")
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
+  };
+
+  const handleSaveGrnChecks = async () => {
+    if (!savedGrnId) {
+      toast.error("Please save the GRN first before adding checks");
+      return;
+    }
+
+    // Validate failed items have required discrepancy details
+    const hasFailWithoutContext = Object.entries(grnChecks).some(([key, val]) => {
+      if (val !== "fail") return false;
+      const d = qcDiscrepancies[key];
+      return !d?.reason_code || !d?.severity;
+    });
+
+    if (hasFailWithoutContext) {
+      toast.error("Failed QC items require reason and severity.");
+      return;
+    }
+
+    setSavingGrnChecks(true);
+
+    const photoUrl = await uploadGrnCheckPhoto(savedGrnId);
+
+    const { error } = await supabase
+      .from("grn_quality_checks")
+      .insert({
+        grn_id: savedGrnId,
+        checks: grnChecks,
+        discrepancies: qcDiscrepancies,
+        notes: grnCheckNotes || null,
+        photo_url: photoUrl,
+      });
+
+    setSavingGrnChecks(false);
+
+    if (error) {
+      toast.error("Failed to save checks", { description: error.message });
+      return;
+    }
+
+    toast.success("GRN checks saved");
+    // Reset form
+    setGrnChecks({
+      packaging_intact: "",
+      correct_label: "",
+      temperature_ok: "",
+      expiry_ok: "",
+    });
+    setQcDiscrepancies({
+      packaging_intact: { reason_code: "", severity: "" },
+      correct_label: { reason_code: "", severity: "" },
+      temperature_ok: { reason_code: "", severity: "" },
+      expiry_ok: { reason_code: "", severity: "" },
+    });
+    setGrnCheckNotes("");
+    setGrnCheckPhoto(null);
   };
 
   const addLine = () =>
@@ -1582,6 +1680,150 @@ export function WarehouseReceiving() {
               </Button>
             </CardContent>
           </Card>
+
+          {/* Pharma Checks Section */}
+          {savedGrnId && (
+            <Card className="bg-white border-[#111827]/10 shadow-lg">
+              <CardHeader>
+                <CardTitle className="text-[#111827] font-semibold">
+                  Pharma Checks
+                </CardTitle>
+                <p className="text-sm text-[#6B7280]">
+                  Complete the checklist and upload proof if needed.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-lg border border-[#E5E7EB] p-4 bg-[#F8FAFC] space-y-4">
+                  {[
+                    { key: "packaging_intact", label: "Packaging Intact" },
+                    { key: "correct_label", label: "Correct Labeling" },
+                    { key: "temperature_ok", label: "Temperature OK" },
+                    { key: "expiry_ok", label: "Expiry Date Valid" },
+                  ].map((check) => (
+                    <div key={check.key} className="space-y-2">
+                      <Label className="text-sm text-[#111827] font-medium">{check.label}</Label>
+                      <RadioGroup
+                        value={grnChecks[check.key]}
+                        onValueChange={(val) =>
+                          setGrnChecks((prev) => ({ ...prev, [check.key]: val }))
+                        }
+                        className="flex gap-6"
+                      >
+                        <div className="flex items-center gap-2">
+                          <RadioGroupItem value="pass" id={`${check.key}-pass`} />
+                          <Label htmlFor={`${check.key}-pass`} className="cursor-pointer font-normal">Pass</Label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <RadioGroupItem value="fail" id={`${check.key}-fail`} />
+                          <Label htmlFor={`${check.key}-fail`} className="cursor-pointer font-normal">Fail</Label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <RadioGroupItem value="na" id={`${check.key}-na`} />
+                          <Label htmlFor={`${check.key}-na`} className="cursor-pointer font-normal">N/A</Label>
+                        </div>
+                      </RadioGroup>
+
+                      {grnChecks[check.key] === "fail" && (
+                        <div className="rounded-lg border border-[#FECACA] bg-[#FEF2F2] p-3 space-y-3 mt-2">
+                          <p className="text-xs text-[#991B1B] font-semibold">
+                            Required when failed
+                          </p>
+
+                          <div>
+                            <Label className="text-xs text-[#111827] font-medium">Reason Code</Label>
+                            <Select
+                              value={qcDiscrepancies[check.key]?.reason_code || ""}
+                              onValueChange={(val) =>
+                                setQcDiscrepancies((prev) => ({
+                                  ...prev,
+                                  [check.key]: {
+                                    ...prev[check.key],
+                                    reason_code: val,
+                                  },
+                                }))
+                              }
+                            >
+                              <SelectTrigger className="mt-1 border-[#111827]/10 rounded-lg bg-white">
+                                <SelectValue placeholder="Select reason code..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="damaged">Damaged</SelectItem>
+                                <SelectItem value="label_mismatch">Label Mismatch</SelectItem>
+                                <SelectItem value="temp_excursion">Temperature Excursion</SelectItem>
+                                <SelectItem value="expiry_issue">Expiry Issue</SelectItem>
+                                <SelectItem value="other">Other</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div>
+                            <Label className="text-xs text-[#111827] font-medium">Severity</Label>
+                            <Select
+                              value={qcDiscrepancies[check.key]?.severity || ""}
+                              onValueChange={(val) =>
+                                setQcDiscrepancies((prev) => ({
+                                  ...prev,
+                                  [check.key]: {
+                                    ...prev[check.key],
+                                    severity: val,
+                                  },
+                                }))
+                              }
+                            >
+                              <SelectTrigger className="mt-1 border-[#111827]/10 rounded-lg bg-white">
+                                <SelectValue placeholder="Select severity..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="low">Low</SelectItem>
+                                <SelectItem value="medium">Medium</SelectItem>
+                                <SelectItem value="high">High</SelectItem>
+                                <SelectItem value="critical">Critical</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  <div>
+                    <Label className="text-sm text-[#111827] font-medium">Notes</Label>
+                    <Input
+                      value={grnCheckNotes}
+                      onChange={(e) => setGrnCheckNotes(e.target.value)}
+                      placeholder="Enter notes (optional)"
+                      className="mt-2 border-[#111827]/10 rounded-lg"
+                    />
+                  </div>
+
+                  <div>
+                    <Label className="text-sm text-[#111827] font-medium">Upload Photo</Label>
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setGrnCheckPhoto(e.target.files?.[0] ?? null)}
+                      className="mt-2 border-[#111827]/10 rounded-lg"
+                    />
+                    {grnCheckPhoto && (
+                      <p className="text-xs text-[#00A3AD] mt-1">
+                        Selected: {grnCheckPhoto.name}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <Button
+                      onClick={() => void handleSaveGrnChecks()}
+                      disabled={savingGrnChecks}
+                      className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+                    >
+                      {savingGrnChecks ? "Saving..." : "Save Checks"}
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
 

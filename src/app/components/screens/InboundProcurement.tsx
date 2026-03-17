@@ -37,7 +37,8 @@ import {
   Dialog, 
   DialogContent, 
   DialogHeader, 
-  DialogTitle 
+  DialogTitle,
+  DialogDescription
 } from "../ui/dialog";
 import { 
   Table, 
@@ -253,12 +254,56 @@ export function InboundProcurement() {
   const [sendingPO, setSendingPO] = useState(false);
   const [isEditingPO, setIsEditingPO] = useState(true);
   const [importingPO, setImportingPO] = useState(false);
+  
+  // Import preview modal state
+  const [showImportPreview, setShowImportPreview] = useState(false);
+  const [previewRows, setPreviewRows] = useState<CSVRow[]>([]);
+  const [skuMismatchSet, setSkuMismatchSet] = useState<Set<string>>(new Set());
+  const [checkingSkus, setCheckingSkus] = useState(false);
   const statusFlow: Record<string, string[]> = {
     draft: ["posted"],
     "pending supplier confirmation": ["posted"],
     posted: ["in-transit"],
     "in-transit": ["received"],
     received: [],
+  };
+
+  const normalizeSku = (value: string) => (value ?? "").trim().toLowerCase();
+
+  const checkSkuMismatches = async (rows: CSVRow[]) => {
+    const uniqueSkus = Array.from(
+      new Set(rows.map((r) => normalizeSku(String(r.sku || ""))).filter(Boolean)),
+    );
+
+    if (uniqueSkus.length === 0) {
+      setSkuMismatchSet(new Set());
+      return;
+    }
+
+    setCheckingSkus(true);
+    const { data, error } = await supabase
+      .from("products")
+      .select("sku")
+      .in("sku", uniqueSkus);
+
+    setCheckingSkus(false);
+
+    if (error) {
+      toast.error("Failed to validate SKUs", { description: error.message });
+      return;
+    }
+
+    const existing = new Set((data ?? []).map((row) => normalizeSku(row.sku || "")));
+    const mismatches = new Set(
+      uniqueSkus.filter((sku) => !existing.has(sku)),
+    );
+    setSkuMismatchSet(mismatches);
+  };
+
+  const openImportPreview = async (rows: CSVRow[]) => {
+    setPreviewRows(rows);
+    setShowImportPreview(true);
+    await checkSkuMismatches(rows);
   };
 
   const fetchSupplierScorecard = async (supplier: string) => {
@@ -602,6 +647,7 @@ export function InboundProcurement() {
         toast.success("PO imported", {
           description: "Bulk items inserted via RPC.",
         });
+        setShowImportPreview(false);
         await fetchPurchaseOrders();
 
         // Attempt to select the newly created PO using returned UUID if present
@@ -1285,7 +1331,7 @@ export function InboundProcurement() {
                   )}
                 </div>
                 <CSVUploader
-                  onParsed={(rows) => void handleImportPO(rows)}
+                  onParsed={(rows) => void openImportPreview(rows)}
                   onError={(msg) =>
                     toast.error("CSV parse failed", {
                       description: msg,
@@ -1681,6 +1727,85 @@ export function InboundProcurement() {
               Add Quote
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Preview Modal */}
+      <Dialog open={showImportPreview} onOpenChange={setShowImportPreview}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-[#111827]">
+              Import Preview
+            </DialogTitle>
+            <DialogDescription className="text-[#6B7280]">
+              Review parsed rows before submitting. Mismatched SKUs are highlighted in red.
+            </DialogDescription>
+          </DialogHeader>
+
+          {checkingSkus ? (
+            <p className="text-sm text-[#6B7280]">Checking SKUs...</p>
+          ) : (
+            <div className="space-y-3">
+              {skuMismatchSet.size > 0 && (
+                <div className="text-xs text-[#991B1B] bg-[#FEF2F2] border border-[#FECACA] rounded-md px-3 py-2">
+                  {skuMismatchSet.size} mismatch(es) found. Fix them before submitting.
+                </div>
+              )}
+
+              <div className="overflow-x-auto border border-[#E5E7EB] rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="bg-[#F8FAFC] border-b border-[#E5E7EB]">
+                    <tr>
+                      <th className="text-left px-4 py-2 font-semibold text-[#6B7280]">SKU</th>
+                      <th className="text-left px-4 py-2 font-semibold text-[#6B7280]">Qty</th>
+                      <th className="text-left px-4 py-2 font-semibold text-[#6B7280]">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewRows.map((row, i) => {
+                      const sku = normalizeSku(String(row.sku || ""));
+                      const isMismatch = sku && skuMismatchSet.has(sku);
+                      return (
+                        <tr
+                          key={`${sku}-${i}`}
+                          className={`border-b ${isMismatch ? "bg-[#FEF2F2]" : ""}`}
+                        >
+                          <td className={`px-4 py-2 ${isMismatch ? "text-[#991B1B] font-medium" : "text-[#111827]"}`}>
+                            {row.sku || "—"}
+                          </td>
+                          <td className="px-4 py-2 text-[#111827]">{row.qty ?? "—"}</td>
+                          <td className="px-4 py-2">
+                            {isMismatch ? (
+                              <span className="text-xs font-semibold text-[#991B1B]">Mismatch</span>
+                            ) : (
+                              <span className="text-xs font-semibold text-[#166534]">OK</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowImportPreview(false)}
+                  className="border-[#111827]/20 text-[#111827]"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => void handleImportPO(previewRows)}
+                  disabled={skuMismatchSet.size > 0 || importingPO}
+                  className="bg-[#00A3AD] hover:bg-[#0891B2] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {importingPO ? "Importing..." : "Submit Import"}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

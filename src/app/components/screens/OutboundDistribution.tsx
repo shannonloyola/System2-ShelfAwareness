@@ -32,6 +32,7 @@ type RetailOrder = {
   due_date: string | null;
   notes: string | null;
   created_at: string;
+  priority_level: string | null;
   retail_order_lines: RetailOrderLine[];
 };
 
@@ -71,6 +72,10 @@ const retailerPerformance = [
 ];
 
 export function OutboundDistribution() {
+  // Role guard placeholder - replace with real role source
+  const userRole = "Manager"; // TODO: Replace with actual user role from auth context
+  const canEditPriority = userRole === "Manager";
+
   const [showLogForm, setShowLogForm] = useState(false);
   const [totalInventoryValue, setTotalInventoryValue] = useState<number | null>(null);
   const [inventoryValueByCategory, setInventoryValueByCategory] = useState<
@@ -89,10 +94,12 @@ export function OutboundDistribution() {
   const [submitting, setSubmitting] = useState(false);
   const [newOrder, setNewOrder] = useState({
     retailerName: "",
+    branchSuffix: "",
     paymentTerms: "",
     orderChannel: "",
     dueDate: "",
     notes: "",
+    priorityLevel: "",
     lines: [{ sku: "", qty: 1, unitPrice: 0 }],
   });
   const [availableProducts, setAvailableProducts] = useState<
@@ -186,6 +193,7 @@ export function OutboundDistribution() {
         due_date,
         notes,
         created_at,
+        priority_level,
         retail_order_lines (
           line_uuid,
           sku,
@@ -196,7 +204,8 @@ export function OutboundDistribution() {
           qty_backordered
         )
       `)
-      .order("created_at", { ascending: false });
+      .order("priority_rank", { ascending: true })
+      .order("created_at", { ascending: true });
 
     if (error) {
       toast.error("Failed to load orders", { description: error.message });
@@ -436,11 +445,19 @@ export function OutboundDistribution() {
 
   const logOrder = async () => {
     if (!newOrder.retailerName.trim()) {
-      toast.error("Retailer name is required.");
+      toast.error("Company name is required.");
       return;
     }
     if (newOrder.lines.some((line) => !line.sku.trim())) {
       toast.error("All line items must have a SKU.");
+      return;
+    }
+    if (newOrder.lines.some((line) => !line.qty || line.qty <= 0)) {
+      toast.error("All line items must have quantity greater than 0.");
+      return;
+    }
+    if (newOrder.lines.some((line) => line.unitPrice < 0)) {
+      toast.error("Unit price cannot be negative.");
       return;
     }
 
@@ -450,10 +467,12 @@ export function OutboundDistribution() {
       .from("retail_orders")
       .insert({
         retailer_name: newOrder.retailerName,
+        branch_suffix: newOrder.branchSuffix || null,
         payment_terms: newOrder.paymentTerms || null,
         due_date: newOrder.dueDate || null,
         notes: newOrder.notes || newOrder.orderChannel || null,
         status: "placed",
+        priority_level: newOrder.priorityLevel || null,
       })
       .select("order_uuid")
       .single();
@@ -522,10 +541,12 @@ export function OutboundDistribution() {
 
     setNewOrder({
       retailerName: "",
+      branchSuffix: "",
       paymentTerms: "",
       orderChannel: "",
       dueDate: "",
       notes: "",
+      priorityLevel: "",
       lines: [{ sku: "", qty: 1, unitPrice: 0 }],
     });
     setShowLogForm(false);
@@ -637,6 +658,18 @@ export function OutboundDistribution() {
               />
             </div>
             <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">Branch Suffix</label>
+              <input
+                type="text"
+                placeholder="e.g. Branch 1"
+                value={newOrder.branchSuffix}
+                onChange={(event) =>
+                  setNewOrder((prev) => ({ ...prev, branchSuffix: event.target.value }))
+                }
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+              />
+            </div>
+            <div className="space-y-1">
               <label className="text-sm font-medium text-gray-700">Order Channel</label>
               <select
                 value={newOrder.orderChannel}
@@ -679,6 +712,23 @@ export function OutboundDistribution() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
               />
             </div>
+            {canEditPriority && (
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-gray-700">Priority Level</label>
+                <select
+                  value={newOrder.priorityLevel}
+                  onChange={(event) =>
+                    setNewOrder((prev) => ({ ...prev, priorityLevel: event.target.value }))
+                  }
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                >
+                  <option value="">Select priority...</option>
+                  <option value="High">High</option>
+                  <option value="Medium">Medium</option>
+                  <option value="Low">Low</option>
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -804,11 +854,18 @@ export function OutboundDistribution() {
                   filteredOrders.map((order) => (
                     <div key={order.order_uuid} className="border rounded-xl p-4 space-y-3 bg-white shadow-sm">
                       <div className="flex items-start justify-between">
-                        <div>
-                          <p className="font-semibold text-gray-800">{order.retailer_name}</p>
-                          <p className="text-xs text-gray-400">
-                            {order.order_no} · {new Date(order.created_at).toLocaleString()}
-                          </p>
+                        <div className="flex items-center gap-2">
+                          <div>
+                            <p className="font-semibold text-gray-800">{order.retailer_name}</p>
+                            <p className="text-xs text-gray-400">
+                              {order.order_no} · {new Date(order.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                          {order.priority_level === "Urgent" && (
+                            <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-100 text-red-700 border border-red-300">
+                              Urgent
+                            </span>
+                          )}
                         </div>
                         <span className={`text-xs font-medium px-2 py-1 rounded-full ${statusColor[order.status] || "bg-gray-100 text-gray-500"}`}>
                           {order.status.replace("_", " ")}
