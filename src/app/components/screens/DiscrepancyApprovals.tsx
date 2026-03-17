@@ -3,6 +3,7 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
+  Download,
   FileText,
   Package,
   Search,
@@ -35,6 +36,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import * as XLSX from "xlsx";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 type ShipmentDiscrepancy = {
   id: string;
@@ -57,7 +61,9 @@ type ShipmentDiscrepancy = {
 
 type QcInspectionRow = Record<string, unknown>;
 
-const normalizeStatus = (rawStatus: string | null | undefined) => {
+const normalizeStatus = (
+  rawStatus: string | null | undefined,
+) => {
   const s = (rawStatus ?? "").trim().toLowerCase();
   if (!s) return "pending";
   return s;
@@ -73,11 +79,14 @@ const extractImageUrls = (
   row: ShipmentDiscrepancy | null,
 ): string[] => {
   if (!row) return [];
-  const raw = row.image_urls ?? row["image_url"] ?? row["images"];
+  const raw =
+    row.image_urls ?? row["image_url"] ?? row["images"];
   if (!raw) return [];
 
   if (Array.isArray(raw)) {
-    return raw.filter((item) => typeof item === "string" && item.trim());
+    return raw.filter(
+      (item) => typeof item === "string" && item.trim(),
+    );
   }
 
   if (typeof raw === "string") {
@@ -113,7 +122,7 @@ export function DiscrepancyApprovals() {
     fail: 0,
   });
   const [supplierDefects, setSupplierDefects] = useState<
-    Array<{ name: string; defects: number }>
+    Array<{ name: string; defects: number; id: string }>
   >([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isReportsLoading, setIsReportsLoading] =
@@ -123,10 +132,13 @@ export function DiscrepancyApprovals() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDetail, setSelectedDetail] =
     useState<ShipmentDiscrepancy | null>(null);
-  const [isUpdatingId, setIsUpdatingId] = useState<string | null>(
-    null,
-  );
+  const [isUpdatingId, setIsUpdatingId] = useState<
+    string | null
+  >(null);
   const [reportsOpen, setReportsOpen] = useState(true);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isExportingExcel, setIsExportingExcel] =
+    useState(false);
 
   const fetchDiscrepancies = async () => {
     setIsLoading(true);
@@ -167,7 +179,9 @@ export function DiscrepancyApprovals() {
     patch: Partial<ShipmentDiscrepancy>,
   ) => {
     setDiscrepancies((prev) =>
-      prev.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+      prev.map((row) =>
+        row.id === id ? { ...row, ...patch } : row,
+      ),
     );
     setSelectedDetail((prev) =>
       prev && prev.id === id ? { ...prev, ...patch } : prev,
@@ -233,22 +247,24 @@ export function DiscrepancyApprovals() {
       const qcTotals = { pass: 0, fail: 0 };
 
       qcRows.forEach((row) => {
-        const raw =
-          (row.result ??
-            row.status ??
-            row.outcome ??
-            row.qc_status ??
-            row.decision ??
-            "") as string;
+        const raw = (row.result ??
+          row.status ??
+          row.outcome ??
+          row.qc_status ??
+          row.decision ??
+          "") as string;
         const value = String(raw).toLowerCase();
         if (value.includes("pass")) qcTotals.pass += 1;
-        if (value.includes("fail") || value.includes("reject")) {
+        if (
+          value.includes("fail") ||
+          value.includes("reject")
+        ) {
           qcTotals.fail += 1;
         }
       });
 
-      const discrepancyRows =
-        (discrepanciesRes.data ?? []) as ShipmentDiscrepancy[];
+      const discrepancyRows = (discrepanciesRes.data ??
+        []) as ShipmentDiscrepancy[];
       const supplierMap = new Map<string, number>();
 
       discrepancyRows.forEach((row) => {
@@ -266,7 +282,11 @@ export function DiscrepancyApprovals() {
       const supplierData = Array.from(supplierMap.entries())
         .map(([name, defects]) => ({ name, defects }))
         .sort((a, b) => b.defects - a.defects)
-        .slice(0, 6);
+        .slice(0, 6)
+        .map((item, index) => ({ 
+          ...item, 
+          id: `${item.name}-${index}` 
+        }));
 
       setQcSummary(qcTotals);
       setSupplierDefects(supplierData);
@@ -362,6 +382,245 @@ export function DiscrepancyApprovals() {
     [qcSummary],
   );
 
+  const exportTimestamp = useMemo(() => {
+    const now = new Date();
+    const pad = (value: number) =>
+      String(value).padStart(2, "0");
+    return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  }, []);
+
+  const handleExportPdf = async () => {
+    setIsExportingPdf(true);
+    try {
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "pt",
+        format: "a4",
+      });
+
+      doc.setFontSize(20);
+      doc.text("Discrepancies Dashboard Report", 40, 40);
+      doc.setFontSize(10);
+      doc.setTextColor(107, 114, 128);
+      doc.text(
+        `Generated ${new Date().toLocaleString()}`,
+        40,
+        60,
+      );
+
+      autoTable(doc, {
+        startY: 80,
+        head: [["Metric", "Value"]],
+        body: [
+          ["Pending", String(statusCounts.pending ?? 0)],
+          ["In Review", String(statusCounts.in_review ?? 0)],
+          ["Rejected", String(statusCounts.rejected ?? 0)],
+          ["QC Pass", String(qcSummary.pass)],
+          ["QC Fail", String(qcSummary.fail)],
+        ],
+        theme: "grid",
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [0, 163, 173] },
+      });
+
+      autoTable(doc, {
+        startY: (
+          doc as jsPDF & { lastAutoTable?: { finalY: number } }
+        ).lastAutoTable?.finalY
+          ? ((
+              doc as jsPDF & {
+                lastAutoTable?: { finalY: number };
+              }
+            ).lastAutoTable?.finalY ?? 0) + 18
+          : 210,
+        head: [["Supplier", "Defects"]],
+        body: supplierDefects.length
+          ? supplierDefects.map((row) => [
+              row.name,
+              String(row.defects),
+            ])
+          : [["No supplier data", "0"]],
+        theme: "grid",
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [249, 115, 22] },
+      });
+
+      autoTable(doc, {
+        startY: (
+          doc as jsPDF & { lastAutoTable?: { finalY: number } }
+        ).lastAutoTable?.finalY
+          ? ((
+              doc as jsPDF & {
+                lastAutoTable?: { finalY: number };
+              }
+            ).lastAutoTable?.finalY ?? 0) + 18
+          : 320,
+        head: [
+          [
+            "Discrepancy ID",
+            "Shipment / PO",
+            "Item",
+            "Status",
+            "Disposition",
+            "Variance",
+            "Reported",
+          ],
+        ],
+        body: filteredDiscrepancies.length
+          ? filteredDiscrepancies.map((row) => {
+              const expected = Number(row.expected_qty);
+              const received = Number(row.received_qty);
+              const variance =
+                Number.isFinite(expected) &&
+                Number.isFinite(received)
+                  ? received - expected
+                  : null;
+
+              return [
+                row.id ?? "",
+                row.shipment_reference ??
+                  row.shipment_id ??
+                  row.po_number ??
+                  "",
+                row.product_name ?? row.sku ?? "",
+                normalizeStatus(row.status).replace(/_/g, " "),
+                row.disposition ?? "unassigned",
+                variance === null ? "-" : String(variance),
+                row.reported_by ?? "",
+              ];
+            })
+          : [
+              [
+                "No discrepancies found",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+              ],
+            ],
+        theme: "striped",
+        styles: { fontSize: 9, cellPadding: 4 },
+        headStyles: { fillColor: [17, 24, 39] },
+      });
+
+      doc.save(`discrepancies-report-${exportTimestamp}.pdf`);
+
+      toast.success("PDF exported", {
+        description:
+          "The discrepancies dashboard report has been downloaded.",
+      });
+    } catch (err) {
+      toast.error("PDF export failed", {
+        description:
+          err instanceof Error
+            ? err.message
+            : "Unknown export error",
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  const handleExportExcel = () => {
+    setIsExportingExcel(true);
+    try {
+      const overviewRows = [
+        { metric: "Pending", value: statusCounts.pending ?? 0 },
+        {
+          metric: "In Review",
+          value: statusCounts.in_review ?? 0,
+        },
+        {
+          metric: "Rejected",
+          value: statusCounts.rejected ?? 0,
+        },
+        { metric: "QC Pass", value: qcSummary.pass },
+        { metric: "QC Fail", value: qcSummary.fail },
+      ];
+
+      const discrepancyRows = filteredDiscrepancies.map(
+        (row) => {
+          const expected = Number(row.expected_qty);
+          const received = Number(row.received_qty);
+          const variance =
+            Number.isFinite(expected) &&
+            Number.isFinite(received)
+              ? received - expected
+              : null;
+
+          return {
+            discrepancy_id: row.id,
+            shipment_reference:
+              row.shipment_reference ??
+              row.shipment_id ??
+              row.po_number ??
+              "",
+            po_number: row.po_number ?? "",
+            sku: row.sku ?? "",
+            product_name: row.product_name ?? "",
+            expected_qty: Number.isFinite(expected)
+              ? expected
+              : "",
+            received_qty: Number.isFinite(received)
+              ? received
+              : "",
+            variance: variance ?? "",
+            status: normalizeStatus(row.status),
+            disposition: row.disposition ?? "",
+            discrepancy_reason: row.discrepancy_reason ?? "",
+            notes: row.notes ?? "",
+            reported_by: row.reported_by ?? "",
+            created_at: row.created_at ?? "",
+            image_urls: extractImageUrls(row).join(", "),
+          };
+        },
+      );
+
+      const supplierRows = supplierDefects.map((row) => ({
+        supplier_name: row.name,
+        defects: row.defects,
+      }));
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(overviewRows),
+        "Overview",
+      );
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(discrepancyRows),
+        "Discrepancies",
+      );
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(supplierRows),
+        "Supplier Defects",
+      );
+
+      XLSX.writeFile(
+        workbook,
+        `discrepancies-report-${exportTimestamp}.xlsx`,
+      );
+
+      toast.success("Excel exported", {
+        description:
+          "The discrepancies workbook has been downloaded.",
+      });
+    } catch (err) {
+      toast.error("Excel export failed", {
+        description:
+          err instanceof Error
+            ? err.message
+            : "Unknown export error",
+      });
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   return (
     <div className="p-4 lg:p-8 space-y-6 bg-[#F8FAFC]">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -374,6 +633,26 @@ export function DiscrepancyApprovals() {
           </p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3">
+          <Button
+            variant="outline"
+            className="border-[#111827]/20 text-[#111827]"
+            onClick={() => void handleExportPdf()}
+            disabled={isExportingPdf}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            {isExportingPdf ? "Exporting PDF..." : "Export PDF"}
+          </Button>
+          <Button
+            variant="outline"
+            className="border-[#111827]/20 text-[#111827]"
+            onClick={handleExportExcel}
+            disabled={isExportingExcel}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            {isExportingExcel
+              ? "Exporting Excel..."
+              : "Export Excel"}
+          </Button>
           <div className="relative">
             <Search className="w-4 h-4 text-[#9CA3AF] absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
@@ -383,7 +662,10 @@ export function DiscrepancyApprovals() {
               className="pl-9 w-64 border-[#111827]/10"
             />
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <Select
+            value={statusFilter}
+            onValueChange={setStatusFilter}
+          >
             <SelectTrigger className="w-[180px] border-[#111827]/10">
               <SelectValue placeholder="Filter by status" />
             </SelectTrigger>
@@ -462,13 +744,20 @@ export function DiscrepancyApprovals() {
                     Inspection outcomes across inbound shipments
                   </p>
                   <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer
+                      width="100%"
+                      height="100%"
+                    >
                       <BarChart data={qcChartData}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="name" />
                         <YAxis allowDecimals={false} />
                         <Tooltip />
-                        <Bar dataKey="count" fill="#00A3AD" radius={4} />
+                        <Bar
+                          dataKey="count"
+                          fill="#00A3AD"
+                          radius={4}
+                        />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -482,7 +771,10 @@ export function DiscrepancyApprovals() {
                     Discrepancy counts by supplier
                   </p>
                   <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer
+                      width="100%"
+                      height="100%"
+                    >
                       <BarChart data={supplierDefects}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis
@@ -492,7 +784,11 @@ export function DiscrepancyApprovals() {
                         />
                         <YAxis allowDecimals={false} />
                         <Tooltip />
-                        <Bar dataKey="defects" fill="#F97316" radius={4} />
+                        <Bar
+                          dataKey="defects"
+                          fill="#F97316"
+                          radius={4}
+                        />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -619,14 +915,20 @@ export function DiscrepancyApprovals() {
                   </thead>
                   <tbody>
                     {filteredDiscrepancies.map((row) => {
-                      const expectedQty = Number(row.expected_qty);
-                      const receivedQty = Number(row.received_qty);
+                      const expectedQty = Number(
+                        row.expected_qty,
+                      );
+                      const receivedQty = Number(
+                        row.received_qty,
+                      );
                       const variance =
                         Number.isFinite(expectedQty) &&
                         Number.isFinite(receivedQty)
                           ? receivedQty - expectedQty
                           : null;
-                      const status = normalizeStatus(row.status);
+                      const status = normalizeStatus(
+                        row.status,
+                      );
 
                       return (
                         <tr
@@ -658,14 +960,20 @@ export function DiscrepancyApprovals() {
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right text-[#111827]">
-                            {formatMaybeNumber(row.expected_qty)}
+                            {formatMaybeNumber(
+                              row.expected_qty,
+                            )}
                           </td>
                           <td className="py-3 px-4 text-right text-[#111827]">
-                            {formatMaybeNumber(row.received_qty)}
+                            {formatMaybeNumber(
+                              row.received_qty,
+                            )}
                           </td>
                           <td className="py-3 px-4 text-right">
                             {variance === null ? (
-                              <span className="text-[#9CA3AF]">-</span>
+                              <span className="text-[#9CA3AF]">
+                                -
+                              </span>
                             ) : (
                               <span
                                 className={
@@ -699,7 +1007,9 @@ export function DiscrepancyApprovals() {
                             <div>{row.reported_by || "-"}</div>
                             <div className="text-xs">
                               {row.created_at
-                                ? new Date(row.created_at).toLocaleString()
+                                ? new Date(
+                                    row.created_at,
+                                  ).toLocaleString()
                                 : "-"}
                             </div>
                           </td>
@@ -708,7 +1018,9 @@ export function DiscrepancyApprovals() {
                               size="sm"
                               variant="outline"
                               className="border-[#111827]/20 text-[#111827]"
-                              onClick={() => setSelectedDetail(row)}
+                              onClick={() =>
+                                setSelectedDetail(row)
+                              }
                             >
                               View
                             </Button>
@@ -747,12 +1059,13 @@ export function DiscrepancyApprovals() {
                     </p>
                   </div>
                   <div className="rounded-md border border-[#E5E7EB] p-3">
-                    <p className="text-xs text-[#6B7280]">Status</p>
+                    <p className="text-xs text-[#6B7280]">
+                      Status
+                    </p>
                     <p className="font-semibold text-[#111827] capitalize">
-                      {normalizeStatus(selectedDetail.status).replace(
-                        /_/g,
-                        " ",
-                      )}
+                      {normalizeStatus(
+                        selectedDetail.status,
+                      ).replace(/_/g, " ")}
                     </p>
                   </div>
                   <div className="rounded-md border border-[#E5E7EB] p-3">
@@ -771,7 +1084,9 @@ export function DiscrepancyApprovals() {
                 </div>
 
                 <div className="rounded-md border border-[#E5E7EB] p-3 space-y-1">
-                  <p className="text-xs text-[#6B7280]">Shipment</p>
+                  <p className="text-xs text-[#6B7280]">
+                    Shipment
+                  </p>
                   <p className="font-semibold text-[#111827]">
                     {selectedDetail.shipment_reference ||
                       selectedDetail.shipment_id ||
@@ -796,24 +1111,41 @@ export function DiscrepancyApprovals() {
 
                 <div className="grid grid-cols-3 gap-3 rounded-md border border-[#E5E7EB] bg-[#F8FAFC] p-3">
                   <div>
-                    <p className="text-xs text-[#6B7280]">Expected</p>
+                    <p className="text-xs text-[#6B7280]">
+                      Expected
+                    </p>
                     <p className="text-lg font-semibold text-[#111827]">
-                      {formatMaybeNumber(selectedDetail.expected_qty)}
+                      {formatMaybeNumber(
+                        selectedDetail.expected_qty,
+                      )}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-[#6B7280]">Received</p>
+                    <p className="text-xs text-[#6B7280]">
+                      Received
+                    </p>
                     <p className="text-lg font-semibold text-[#111827]">
-                      {formatMaybeNumber(selectedDetail.received_qty)}
+                      {formatMaybeNumber(
+                        selectedDetail.received_qty,
+                      )}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-[#6B7280]">Variance</p>
+                    <p className="text-xs text-[#6B7280]">
+                      Variance
+                    </p>
                     <p className="text-lg font-semibold text-[#111827]">
                       {(() => {
-                        const expected = Number(selectedDetail.expected_qty);
-                        const received = Number(selectedDetail.received_qty);
-                        if (!Number.isFinite(expected) || !Number.isFinite(received)) {
+                        const expected = Number(
+                          selectedDetail.expected_qty,
+                        );
+                        const received = Number(
+                          selectedDetail.received_qty,
+                        );
+                        if (
+                          !Number.isFinite(expected) ||
+                          !Number.isFinite(received)
+                        ) {
                           return "-";
                         }
                         const variance = received - expected;
@@ -824,33 +1156,44 @@ export function DiscrepancyApprovals() {
                 </div>
 
                 <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
-                  <p className="text-xs text-[#6B7280]">Reason</p>
+                  <p className="text-xs text-[#6B7280]">
+                    Reason
+                  </p>
                   <p className="text-sm text-[#111827]">
-                    {selectedDetail.discrepancy_reason || "No reason provided"}
+                    {selectedDetail.discrepancy_reason ||
+                      "No reason provided"}
                   </p>
                 </div>
 
                 <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
-                  <p className="text-xs text-[#6B7280]">Notes</p>
+                  <p className="text-xs text-[#6B7280]">
+                    Notes
+                  </p>
                   <p className="text-sm text-[#111827]">
                     {selectedDetail.notes || "No notes"}
                   </p>
                 </div>
 
                 <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
-                  <p className="text-xs text-[#6B7280]">Reported By</p>
+                  <p className="text-xs text-[#6B7280]">
+                    Reported By
+                  </p>
                   <p className="text-sm text-[#111827]">
                     {selectedDetail.reported_by || "-"}
                   </p>
                   <p className="text-xs text-[#6B7280]">
                     {selectedDetail.created_at
-                      ? new Date(selectedDetail.created_at).toLocaleString()
+                      ? new Date(
+                          selectedDetail.created_at,
+                        ).toLocaleString()
                       : "-"}
                   </p>
                 </div>
 
                 <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
-                  <p className="text-xs text-[#6B7280]">Image URLs</p>
+                  <p className="text-xs text-[#6B7280]">
+                    Image URLs
+                  </p>
                   {selectedImages.length === 0 ? (
                     <p className="text-sm text-[#9CA3AF]">
                       No images attached
@@ -912,27 +1255,42 @@ export function DiscrepancyApprovals() {
                     <Button
                       className="bg-[#10B981] hover:bg-[#059669] text-white"
                       onClick={() =>
-                        updateDisposition(selectedDetail, "released")
+                        updateDisposition(
+                          selectedDetail,
+                          "released",
+                        )
                       }
-                      disabled={isUpdatingId === selectedDetail.id}
+                      disabled={
+                        isUpdatingId === selectedDetail.id
+                      }
                     >
                       Release
                     </Button>
                     <Button
                       className="bg-[#F59E0B] hover:bg-[#D97706] text-white"
                       onClick={() =>
-                        updateDisposition(selectedDetail, "returned")
+                        updateDisposition(
+                          selectedDetail,
+                          "returned",
+                        )
                       }
-                      disabled={isUpdatingId === selectedDetail.id}
+                      disabled={
+                        isUpdatingId === selectedDetail.id
+                      }
                     >
                       Return
                     </Button>
                     <Button
                       className="bg-[#DC2626] hover:bg-[#B91C1C] text-white"
                       onClick={() =>
-                        updateDisposition(selectedDetail, "scrapped")
+                        updateDisposition(
+                          selectedDetail,
+                          "scrapped",
+                        )
                       }
-                      disabled={isUpdatingId === selectedDetail.id}
+                      disabled={
+                        isUpdatingId === selectedDetail.id
+                      }
                     >
                       Scrap
                     </Button>
