@@ -132,6 +132,8 @@ export function DiscrepancyApprovals() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDetail, setSelectedDetail] =
     useState<ShipmentDiscrepancy | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] =
+    useState(false);
   const [isUpdatingId, setIsUpdatingId] = useState<
     string | null
   >(null);
@@ -283,9 +285,9 @@ export function DiscrepancyApprovals() {
         .map(([name, defects]) => ({ name, defects }))
         .sort((a, b) => b.defects - a.defects)
         .slice(0, 6)
-        .map((item, index) => ({ 
-          ...item, 
-          id: `${item.name}-${index}` 
+        .map((item, index) => ({
+          ...item,
+          id: `${item.name}-${index}`,
         }));
 
       setQcSummary(qcTotals);
@@ -352,6 +354,15 @@ export function DiscrepancyApprovals() {
     () => extractImageUrls(selectedDetail),
     [selectedDetail],
   );
+
+  const openDetailModal = (row: ShipmentDiscrepancy) => {
+    setSelectedDetail(row);
+    setIsDetailModalOpen(true);
+  };
+
+  const closeDetailModal = () => {
+    setIsDetailModalOpen(false);
+  };
 
   const getStatusStyle = (status: string) => {
     switch (status) {
@@ -679,183 +690,153 @@ export function DiscrepancyApprovals() {
               ))}
             </SelectContent>
           </Select>
-          <Button
-            variant="outline"
-            className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
-            onClick={fetchDiscrepancies}
-            disabled={isLoading}
-          >
-            Refresh
-          </Button>
         </div>
       </div>
 
-      <Card className="bg-white border-[#111827]/10 shadow-sm">
-        <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <CardTitle className="text-[#111827] font-semibold">
-              View Reports
-            </CardTitle>
-            <p className="text-sm text-[#6B7280]">
-              Quality analytics for inbound shipments
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
-              onClick={loadReports}
-              disabled={isReportsLoading}
-            >
-              Refresh Reports
-            </Button>
-            <Button
-              variant="outline"
-              className="border-[#111827]/20 text-[#111827]"
-              onClick={() => setReportsOpen((prev) => !prev)}
-            >
-              {reportsOpen ? (
-                <>
-                  <ChevronUp className="w-4 h-4 mr-2" />
-                  Collapse
-                </>
-              ) : (
-                <>
-                  <ChevronDown className="w-4 h-4 mr-2" />
-                  Expand
-                </>
-              )}
-            </Button>
-          </div>
-        </CardHeader>
-        {reportsOpen && (
-          <CardContent className="space-y-4">
-            {isReportsLoading ? (
-              <div className="text-center py-8 text-[#6B7280]">
-                Loading analytics...
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="rounded-lg border border-[#E5E7EB] p-4">
-                  <p className="text-sm font-semibold text-[#111827] mb-1">
-                    Pass/Fail QC Ratio
-                  </p>
-                  <p className="text-xs text-[#6B7280] mb-4">
-                    Inspection outcomes across inbound shipments
-                  </p>
-                  <div className="h-64">
-                    <ResponsiveContainer
-                      width="100%"
-                      height="100%"
-                    >
-                      <BarChart data={qcChartData}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" />
-                        <YAxis allowDecimals={false} />
-                        <Tooltip />
-                        <Bar
-                          dataKey="count"
-                          fill="#00A3AD"
-                          radius={4}
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
+      <div className="flex flex-col xl:flex-row gap-4">
+        <div className="flex-1 space-y-4">
+          <Card className="bg-white border-[#111827]/10">
+            <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <CardTitle className="text-[#111827] font-semibold flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-[#F97316]" />
+                Quality Control Summary
+              </CardTitle>
+              <Button
+                variant="ghost"
+                className="text-[#6B7280]"
+                onClick={() => setReportsOpen((prev) => !prev)}
+              >
+                {reportsOpen ? (
+                  <>
+                    Hide Summary
+                    <ChevronUp className="w-4 h-4 ml-1" />
+                  </>
+                ) : (
+                  <>
+                    Show Summary
+                    <ChevronDown className="w-4 h-4 ml-1" />
+                  </>
+                )}
+              </Button>
+            </CardHeader>
+            {reportsOpen && (
+              <CardContent>
+                {isReportsLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <p className="text-[#6B7280]">
+                      Loading reports...
+                    </p>
                   </div>
-                </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="rounded-xl border border-[#E5E7EB] p-4">
+                      <div className="text-sm text-[#6B7280] mb-3">
+                        QC Pass vs Fail
+                      </div>
+                      <div className="h-40">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={qcChartData} barSize={32}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="name" />
+                            <YAxis allowDecimals={false} />
+                            <Tooltip />
+                            <Bar dataKey="count" fill="#00A3AD" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
 
-                <div className="rounded-lg border border-[#E5E7EB] p-4">
-                  <p className="text-sm font-semibold text-[#111827] mb-1">
-                    Supplier Defect Volume
-                  </p>
-                  <p className="text-xs text-[#6B7280] mb-4">
-                    Discrepancy counts by supplier
-                  </p>
-                  <div className="h-64">
-                    <ResponsiveContainer
-                      width="100%"
-                      height="100%"
-                    >
-                      <BarChart data={supplierDefects}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis
-                          dataKey="name"
-                          interval={0}
-                          tick={{ fontSize: 10 }}
-                        />
-                        <YAxis allowDecimals={false} />
-                        <Tooltip />
-                        <Bar
-                          dataKey="defects"
-                          fill="#F97316"
-                          radius={4}
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
+                    <div className="rounded-xl border border-[#E5E7EB] p-4">
+                      <div className="text-sm text-[#6B7280] mb-3">
+                        Top Supplier Defects
+                      </div>
+                      {supplierDefects.length === 0 ? (
+                        <p className="text-sm text-[#9CA3AF]">
+                          No supplier defects data
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {supplierDefects.map((supplier) => (
+                            <div
+                              key={supplier.id}
+                              className="flex items-center justify-between text-sm"
+                            >
+                              <span className="text-[#111827] font-medium">
+                                {supplier.name}
+                              </span>
+                              <span className="text-[#F97316] font-semibold">
+                                {supplier.defects}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </div>
+                )}
+              </CardContent>
             )}
-          </CardContent>
-        )}
-      </Card>
+          </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="bg-white border-[#111827]/10">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-lg bg-[#F97316]/10 flex items-center justify-center">
-                <AlertCircle className="w-6 h-6 text-[#F97316]" />
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-[#111827]">
-                  {statusCounts.pending ?? 0}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card className="bg-white border-[#111827]/10">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-lg bg-[#F97316]/10 flex items-center justify-center">
+                    <AlertCircle className="w-6 h-6 text-[#F97316]" />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-[#111827]">
+                      {statusCounts.pending ?? 0}
+                    </div>
+                    <div className="text-sm text-[#6B7280]">
+                      Pending
+                    </div>
+                  </div>
                 </div>
-                <div className="text-sm text-[#6B7280]">
-                  Pending
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        <Card className="bg-white border-[#111827]/10">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-lg bg-[#2563EB]/10 flex items-center justify-center">
-                <FileText className="w-6 h-6 text-[#2563EB]" />
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-[#111827]">
-                  {statusCounts.in_review ?? 0}
+            <Card className="bg-white border-[#111827]/10">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-lg bg-[#2563EB]/10 flex items-center justify-center">
+                    <AlertCircle className="w-6 h-6 text-[#2563EB]" />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-[#111827]">
+                      {statusCounts.in_review ?? 0}
+                    </div>
+                    <div className="text-sm text-[#6B7280]">
+                      In Review
+                    </div>
+                  </div>
                 </div>
-                <div className="text-sm text-[#6B7280]">
-                  In Review
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        <Card className="bg-white border-[#111827]/10">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-lg bg-[#DC2626]/10 flex items-center justify-center">
-                <XCircle className="w-6 h-6 text-[#DC2626]" />
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-[#111827]">
-                  {statusCounts.rejected ?? 0}
+            <Card className="bg-white border-[#111827]/10">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-lg bg-[#DC2626]/10 flex items-center justify-center">
+                    <XCircle className="w-6 h-6 text-[#DC2626]" />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-[#111827]">
+                      {statusCounts.rejected ?? 0}
+                    </div>
+                    <div className="text-sm text-[#6B7280]">
+                      Rejected
+                    </div>
+                  </div>
                 </div>
-                <div className="text-sm text-[#6B7280]">
-                  Rejected
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
+      <div className="grid grid-cols-1 gap-4">
         <Card className="bg-white border-[#111827]/10 shadow-sm">
           <CardHeader>
             <CardTitle className="text-[#111827] font-semibold">
@@ -1019,7 +1000,7 @@ export function DiscrepancyApprovals() {
                               variant="outline"
                               className="border-[#111827]/20 text-[#111827]"
                               onClick={() =>
-                                setSelectedDetail(row)
+                                openDetailModal(row)
                               }
                             >
                               View
@@ -1034,59 +1015,70 @@ export function DiscrepancyApprovals() {
             )}
           </CardContent>
         </Card>
+      </div>
 
-        <Card className="bg-white border-[#111827]/10 shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-[#111827] font-semibold flex items-center gap-2">
-              <FileText className="w-5 h-5 text-[#00A3AD]" />
-              Detail Panel
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {!selectedDetail ? (
-              <div className="text-center py-8 text-[#9CA3AF]">
-                Select a discrepancy to view details.
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-1 gap-3">
-                  <div className="rounded-md border border-[#E5E7EB] p-3">
-                    <p className="text-xs text-[#6B7280]">
-                      Discrepancy ID
-                    </p>
-                    <p className="font-semibold text-[#111827]">
-                      {selectedDetail.id}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-[#E5E7EB] p-3">
-                    <p className="text-xs text-[#6B7280]">
-                      Status
-                    </p>
-                    <p className="font-semibold text-[#111827] capitalize">
-                      {normalizeStatus(
-                        selectedDetail.status,
-                      ).replace(/_/g, " ")}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-[#E5E7EB] p-3">
-                    <p className="text-xs text-[#6B7280]">
-                      Disposition
-                    </p>
-                    <p className="font-semibold text-[#111827] capitalize">
-                      {selectedDetail.disposition
-                        ? selectedDetail.disposition.replace(
-                            /_/g,
-                            " ",
-                          )
-                        : "Unassigned"}
-                    </p>
-                  </div>
+      {isDetailModalOpen && selectedDetail && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-4 border-b border-[#E5E7EB] px-6 py-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-[#00A3AD]/10 flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-[#00A3AD]" />
                 </div>
-
-                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-1">
-                  <p className="text-xs text-[#6B7280]">
-                    Shipment
+                <div>
+                  <h2 className="text-lg font-semibold text-[#111827]">
+                    Discrepancy Detail
+                  </h2>
+                  <p className="text-sm text-[#6B7280]">
+                    Full review for ID {selectedDetail.id}
                   </p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                className="border-[#111827]/20 text-[#111827]"
+                onClick={closeDetailModal}
+              >
+                Close
+              </Button>
+            </div>
+
+            <div className="px-6 py-5 space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="rounded-md border border-[#E5E7EB] p-3">
+                  <p className="text-xs text-[#6B7280]">
+                    Discrepancy ID
+                  </p>
+                  <p className="font-semibold text-[#111827]">
+                    {selectedDetail.id}
+                  </p>
+                </div>
+                <div className="rounded-md border border-[#E5E7EB] p-3">
+                  <p className="text-xs text-[#6B7280]">Status</p>
+                  <p className="font-semibold text-[#111827] capitalize">
+                    {normalizeStatus(
+                      selectedDetail.status,
+                    ).replace(/_/g, " ")}
+                  </p>
+                </div>
+                <div className="rounded-md border border-[#E5E7EB] p-3">
+                  <p className="text-xs text-[#6B7280]">
+                    Disposition
+                  </p>
+                  <p className="font-semibold text-[#111827] capitalize">
+                    {selectedDetail.disposition
+                      ? selectedDetail.disposition.replace(
+                          /_/g,
+                          " ",
+                        )
+                      : "Unassigned"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-1">
+                  <p className="text-xs text-[#6B7280]">Shipment</p>
                   <p className="font-semibold text-[#111827]">
                     {selectedDetail.shipment_reference ||
                       selectedDetail.shipment_id ||
@@ -1108,57 +1100,51 @@ export function DiscrepancyApprovals() {
                     SKU: {selectedDetail.sku || "-"}
                   </p>
                 </div>
+              </div>
 
-                <div className="grid grid-cols-3 gap-3 rounded-md border border-[#E5E7EB] bg-[#F8FAFC] p-3">
-                  <div>
-                    <p className="text-xs text-[#6B7280]">
-                      Expected
-                    </p>
-                    <p className="text-lg font-semibold text-[#111827]">
-                      {formatMaybeNumber(
-                        selectedDetail.expected_qty,
-                      )}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-[#6B7280]">
-                      Received
-                    </p>
-                    <p className="text-lg font-semibold text-[#111827]">
-                      {formatMaybeNumber(
-                        selectedDetail.received_qty,
-                      )}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-[#6B7280]">
-                      Variance
-                    </p>
-                    <p className="text-lg font-semibold text-[#111827]">
-                      {(() => {
-                        const expected = Number(
-                          selectedDetail.expected_qty,
-                        );
-                        const received = Number(
-                          selectedDetail.received_qty,
-                        );
-                        if (
-                          !Number.isFinite(expected) ||
-                          !Number.isFinite(received)
-                        ) {
-                          return "-";
-                        }
-                        const variance = received - expected;
-                        return `${variance > 0 ? "+" : ""}${variance.toLocaleString()}`;
-                      })()}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
-                  <p className="text-xs text-[#6B7280]">
-                    Reason
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 rounded-md border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                <div>
+                  <p className="text-xs text-[#6B7280]">Expected</p>
+                  <p className="text-lg font-semibold text-[#111827]">
+                    {formatMaybeNumber(
+                      selectedDetail.expected_qty,
+                    )}
                   </p>
+                </div>
+                <div>
+                  <p className="text-xs text-[#6B7280]">Received</p>
+                  <p className="text-lg font-semibold text-[#111827]">
+                    {formatMaybeNumber(
+                      selectedDetail.received_qty,
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-[#6B7280]">Variance</p>
+                  <p className="text-lg font-semibold text-[#111827]">
+                    {(() => {
+                      const expected = Number(
+                        selectedDetail.expected_qty,
+                      );
+                      const received = Number(
+                        selectedDetail.received_qty,
+                      );
+                      if (
+                        !Number.isFinite(expected) ||
+                        !Number.isFinite(received)
+                      ) {
+                        return "-";
+                      }
+                      const variance = received - expected;
+                      return `${variance > 0 ? "+" : ""}${variance.toLocaleString()}`;
+                    })()}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
+                  <p className="text-xs text-[#6B7280]">Reason</p>
                   <p className="text-sm text-[#111827]">
                     {selectedDetail.discrepancy_reason ||
                       "No reason provided"}
@@ -1166,14 +1152,14 @@ export function DiscrepancyApprovals() {
                 </div>
 
                 <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
-                  <p className="text-xs text-[#6B7280]">
-                    Notes
-                  </p>
+                  <p className="text-xs text-[#6B7280]">Notes</p>
                   <p className="text-sm text-[#111827]">
                     {selectedDetail.notes || "No notes"}
                   </p>
                 </div>
+              </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="rounded-md border border-[#E5E7EB] p-3 space-y-2">
                   <p className="text-xs text-[#6B7280]">
                     Reported By
@@ -1214,93 +1200,93 @@ export function DiscrepancyApprovals() {
                     </div>
                   )}
                 </div>
+              </div>
 
-                <div className="rounded-md border border-[#E5E7EB] p-3 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-[#6B7280]">
-                        Quarantined Stock
-                      </p>
-                      <p className="text-sm text-[#111827]">
-                        Variance placed on hold for disposition
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-[#6B7280]">
-                        Quarantined Qty
-                      </p>
-                      <p className="text-lg font-semibold text-[#111827]">
-                        {(() => {
-                          const expected = Number(
-                            selectedDetail.expected_qty,
-                          );
-                          const received = Number(
-                            selectedDetail.received_qty,
-                          );
-                          if (
-                            !Number.isFinite(expected) ||
-                            !Number.isFinite(received)
-                          ) {
-                            return "-";
-                          }
-                          return Math.abs(
-                            received - expected,
-                          ).toLocaleString();
-                        })()}
-                      </p>
-                    </div>
+              <div className="rounded-md border border-[#E5E7EB] p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-[#6B7280]">
+                      Quarantined Stock
+                    </p>
+                    <p className="text-sm text-[#111827]">
+                      Variance placed on hold for disposition
+                    </p>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <Button
-                      className="bg-[#10B981] hover:bg-[#059669] text-white"
-                      onClick={() =>
-                        updateDisposition(
-                          selectedDetail,
-                          "released",
-                        )
-                      }
-                      disabled={
-                        isUpdatingId === selectedDetail.id
-                      }
-                    >
-                      Release
-                    </Button>
-                    <Button
-                      className="bg-[#F59E0B] hover:bg-[#D97706] text-white"
-                      onClick={() =>
-                        updateDisposition(
-                          selectedDetail,
-                          "returned",
-                        )
-                      }
-                      disabled={
-                        isUpdatingId === selectedDetail.id
-                      }
-                    >
-                      Return
-                    </Button>
-                    <Button
-                      className="bg-[#DC2626] hover:bg-[#B91C1C] text-white"
-                      onClick={() =>
-                        updateDisposition(
-                          selectedDetail,
-                          "scrapped",
-                        )
-                      }
-                      disabled={
-                        isUpdatingId === selectedDetail.id
-                      }
-                    >
-                      Scrap
-                    </Button>
+                  <div className="text-right">
+                    <p className="text-xs text-[#6B7280]">
+                      Quarantined Qty
+                    </p>
+                    <p className="text-lg font-semibold text-[#111827]">
+                      {(() => {
+                        const expected = Number(
+                          selectedDetail.expected_qty,
+                        );
+                        const received = Number(
+                          selectedDetail.received_qty,
+                        );
+                        if (
+                          !Number.isFinite(expected) ||
+                          !Number.isFinite(received)
+                        ) {
+                          return "-";
+                        }
+                        return Math.abs(
+                          received - expected,
+                        ).toLocaleString();
+                      })()}
+                    </p>
                   </div>
                 </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <Button
+                    className="bg-[#10B981] hover:bg-[#059669] text-white"
+                    onClick={() =>
+                      updateDisposition(
+                        selectedDetail,
+                        "released",
+                      )
+                    }
+                    disabled={
+                      isUpdatingId === selectedDetail.id
+                    }
+                  >
+                    Release
+                  </Button>
+                  <Button
+                    className="bg-[#F59E0B] hover:bg-[#D97706] text-white"
+                    onClick={() =>
+                      updateDisposition(
+                        selectedDetail,
+                        "returned",
+                      )
+                    }
+                    disabled={
+                      isUpdatingId === selectedDetail.id
+                    }
+                  >
+                    Return
+                  </Button>
+                  <Button
+                    className="bg-[#DC2626] hover:bg-[#B91C1C] text-white"
+                    onClick={() =>
+                      updateDisposition(
+                        selectedDetail,
+                        "scrapped",
+                      )
+                    }
+                    disabled={
+                      isUpdatingId === selectedDetail.id
+                    }
+                  >
+                    Scrap
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
