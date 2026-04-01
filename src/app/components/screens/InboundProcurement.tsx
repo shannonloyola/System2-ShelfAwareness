@@ -1693,33 +1693,75 @@ export function InboundProcurement() {
 
           <div className="mt-6 space-y-3 rounded-lg border border-[#E5E7EB] p-4 bg-[#F8FAFC]">
             <div className="font-semibold text-[#111827]">Add New Quote</div>
-            <Input 
-              placeholder="Logistics Provider" 
-              value={newQuote.provider} 
-              onChange={(e) => setNewQuote({ ...newQuote, provider: e.target.value })} 
-            />
-            <Select 
-              value={newQuote.freightType} 
-              onValueChange={(value) => setNewQuote({ ...newQuote, freightType: value })}
-            >
-              <SelectTrigger><SelectValue placeholder="Freight Type" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Sea">Sea</SelectItem>
-                <SelectItem value="Air">Air</SelectItem>
-              </SelectContent>
-            </Select>
-            <Input 
-              type="number" 
-              placeholder="Quoted Cost" 
-              value={newQuote.cost} 
-              onChange={(e) => setNewQuote({ ...newQuote, cost: e.target.value })} 
-            />
-            <Input 
-              type="number" 
-              placeholder="Estimated Days" 
-              value={newQuote.days} 
-              onChange={(e) => setNewQuote({ ...newQuote, days: e.target.value })} 
-            />
+            
+            <div>
+              <label className="text-xs font-semibold text-[#6B7280] mb-1 block">
+                Logistics Provider
+              </label>
+              <Input 
+                placeholder="Enter provider name" 
+                value={newQuote.provider} 
+                onChange={(e) => setNewQuote({ ...newQuote, provider: e.target.value })} 
+                className="w-full border border-[#CBD5E1] rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#00A3AD]"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-[#6B7280] mb-1 block">
+                Freight Type
+              </label>
+              <Select 
+                value={newQuote.freightType} 
+                onValueChange={(value) => setNewQuote({ ...newQuote, freightType: value })}
+              >
+                <SelectTrigger className="w-full border border-[#CBD5E1] rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#00A3AD]">
+                  <SelectValue placeholder="Select freight type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Sea">Sea</SelectItem>
+                  <SelectItem value="Air">Air</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-[#6B7280] mb-1 block">
+                Quoted Cost
+              </label>
+              <Input 
+                type="number" 
+                min={0}
+                step="0.01"
+                placeholder="0.00" 
+                value={newQuote.cost} 
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  if (val < 0) return;
+                  setNewQuote({ ...newQuote, cost: e.target.value });
+                }} 
+                className="w-full border border-[#CBD5E1] rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#00A3AD]"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-[#6B7280] mb-1 block">
+                Estimated Days
+              </label>
+              <Input 
+                type="number" 
+                min={0}
+                step="1"
+                placeholder="0" 
+                value={newQuote.days} 
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  if (val < 0) return;
+                  setNewQuote({ ...newQuote, days: e.target.value });
+                }} 
+                className="w-full border border-[#CBD5E1] rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#00A3AD]"
+              />
+            </div>
+
             <Button 
               onClick={addQuote} 
               className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
