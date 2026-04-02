@@ -72,6 +72,7 @@ interface PurchaseOrder {
   approval_status: string;
   approved_by: string | null;
   approved_at: string | null;
+  is_late: boolean;
   items: POItem[];
 }
 
@@ -409,7 +410,7 @@ export function PODetailPage() {
       supabase
         .from("purchase_orders")
         .select(
-          "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, approval_status, approved_by, approved_at",
+          "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, approval_status, approved_by, approved_at, is_late",
         )
         .eq("po_id", poId)
         .maybeSingle(),
@@ -453,6 +454,7 @@ export function PODetailPage() {
       approval_status: poData.approval_status ?? "Pending",
       approved_by: poData.approved_by ?? null,
       approved_at: poData.approved_at ?? null,
+      is_late: poData.is_late,
       items: (itemData ?? []).map((it) => ({
         po_item_id: it.po_item_id,
         item_name: it.item_name ?? "Unnamed item",
@@ -1197,7 +1199,7 @@ export function POList() {
       supabase
         .from("purchase_orders")
         .select(
-          "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, approval_status, approved_by, approved_at",
+          "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, approval_status, approved_by, approved_at, is_late",
         )
         .order("created_at", { ascending: false }),
       supabase
@@ -1241,6 +1243,7 @@ export function POList() {
         approval_status: po.approval_status ?? "Pending",
         approved_by: po.approved_by ?? null,
         approved_at: po.approved_at ?? null,
+        is_late: po.is_late,
         items: map.get(po.po_id) ?? [],
       })),
     );
@@ -1597,22 +1600,20 @@ export function POList() {
                   </tr>
                 ) : (
                   pagedPOs.map((po, i) => {
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
-                    const eta = po.expected_delivery_date ? new Date(`${po.expected_delivery_date}T00:00:00`) : null;
-                    if (eta) eta.setHours(0, 0, 0, 0);
                     const isReceived = normalizeStatus(po.status) === "received";
-                    const isDelayed = eta && eta < today && !isReceived;
                     
-                    let badgeText = "On Track";
-                    let badgeClass = "bg-[#FEF3C7] text-[#92400E]";
+                    let badgeText: string | undefined = undefined;
+                    let badgeClass = "";
                     
                     if (isReceived) {
                       badgeText = "Received";
                       badgeClass = "bg-[#DCFCE7] text-[#166534]";
-                    } else if (isDelayed) {
+                    } else if (po.is_late === true) {
                       badgeText = "Delayed";
                       badgeClass = "bg-[#FEE2E2] text-[#991B1B]";
+                    } else if (po.is_late === false) {
+                      badgeText = "On Track";
+                      badgeClass = "bg-[#FEF3C7] text-[#92400E]";
                     }
                     
                     return (
@@ -1632,9 +1633,11 @@ export function POList() {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <span className="text-[#6B7280]">{po.status}</span>
-                            <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${badgeClass}`}>
-                              {badgeText}
-                            </span>
+                            {badgeText && (
+                              <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${badgeClass}`}>
+                                {badgeText}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">

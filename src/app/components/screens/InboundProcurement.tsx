@@ -15,6 +15,7 @@ import {
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Skeleton } from "../ui/skeleton";
 import {
   Tabs,
   TabsContent,
@@ -22,6 +23,7 @@ import {
   TabsTrigger,
 } from "../ui/tabs";
 import { useNavigate } from "react-router";
+import { useSearchParams } from "react-router";
 import {
   Select,
   SelectContent,
@@ -92,6 +94,44 @@ interface SupplierScorecardRow {
   reliability_score: number;
   on_time_delivery_pct?: number | null;
   defect_rate?: number | null;
+}
+
+interface SupplierRecord {
+  id: string;
+  supplier_name: string;
+  lead_time_days: number | null;
+  status: string | null;
+  currency_code?: string | null;
+}
+
+interface SupplierComparisonRow {
+  supplier_id: string;
+  supplier_name: string;
+  rank: number;
+  score: number;
+  on_time_delivery: number | null;
+  defect_rate: number | null;
+  lead_time_days: number | null;
+  status: string | null;
+  risk_level: string | null;
+  reliability_score: number | null;
+  clean_receipt_rate: number | null;
+  total_pos: number;
+  total_receipts: number;
+  last_audit_date: string | null;
+}
+
+type SupplierLifecycleState =
+  | "Registered"
+  | "Scored"
+  | "Suspended";
+
+interface MockSupplierLifecycleResponse {
+  supplier_name: string;
+  lifecycle_state: SupplierLifecycleState;
+  locked: boolean;
+  message: string;
+  source: "mock";
 }
 
 interface LineItemForm {
@@ -179,6 +219,50 @@ const formatPercent = (value: number | null | undefined) => {
   return Number(value).toFixed(1);
 };
 
+const formatMetricValue = (
+  value: string | number | null | undefined,
+  suffix = "",
+) => {
+  if (value == null || value === "") return "N/A";
+  if (typeof value === "number") {
+    return `${Number.isInteger(value) ? value : value.toFixed(1)}${suffix}`;
+  }
+  return `${value}${suffix}`;
+};
+
+const SUPPLIER_LIFECYCLE_SEQUENCE: SupplierLifecycleState[] = [
+  "Registered",
+  "Scored",
+  "Suspended",
+];
+
+const MOCK_SUPPLIER_LIFECYCLE_RESPONSES: Record<
+  SupplierLifecycleState,
+  Omit<MockSupplierLifecycleResponse, "supplier_name">
+> = {
+  Registered: {
+    lifecycle_state: "Registered",
+    locked: false,
+    message:
+      "Supplier is registered in the frontend lifecycle test and can proceed to scoring.",
+    source: "mock",
+  },
+  Scored: {
+    lifecycle_state: "Scored",
+    locked: false,
+    message:
+      "Supplier has been scored in the frontend lifecycle test and remains available for procurement actions.",
+    source: "mock",
+  },
+  Suspended: {
+    lifecycle_state: "Suspended",
+    locked: true,
+    message:
+      "Supplier is suspended in the frontend lifecycle test. Supplier-dependent procurement actions are locked.",
+    source: "mock",
+  },
+};
+
 const getOnTimeDeliveryPct = (
   scorecard: SupplierScorecardRow | null,
 ) => {
@@ -208,6 +292,8 @@ const getDefectRate = (
 export function InboundProcurement() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabFilter>("all");
+  const [supplierPanelTab, setSupplierPanelTab] =
+    useState("supplier-overview");
 
   const [poList, setPoList] = useState<PurchaseOrderRow[]>([]);
   const [selectedPO, setSelectedPO] =
@@ -217,16 +303,143 @@ export function InboundProcurement() {
   >([]);
   const [products, setProducts] = useState<ProductRow[]>([]);
 
+  interface NewSupplierForm {
+    supplier_name: string;
+    contact_person: string;
+    email: string;
+    phone: string;
+    address: string;
+    currency_code: string;
+    lead_time_days: string;
+  }
+
   const [poNo, setPoNo] = useState("");
   const [supplierName, setSupplierName] = useState("");
+  const [activeSupplierName, setActiveSupplierName] = useState("");
+
+  const [newSupplierForm, setNewSupplierForm] = useState<NewSupplierForm>({
+    supplier_name: "",
+    contact_person: "",
+    email: "",
+    phone: "",
+    address: "",
+    currency_code: "",
+    lead_time_days: "",
+  });
+  const [creatingSupplier, setCreatingSupplier] = useState(false);
+  const [supplierRecords, setSupplierRecords] = useState<
+    SupplierRecord[]
+  >([]);
+  const [loadingSuppliers, setLoadingSuppliers] = useState(false);
+  const [
+    selectedComparisonSupplierIds,
+    setSelectedComparisonSupplierIds,
+  ] = useState<string[]>([]);
+  const [comparingSuppliers, setComparingSuppliers] = useState(false);
+  const [
+    supplierComparisonResults,
+    setSupplierComparisonResults,
+  ] = useState<SupplierComparisonRow[]>([]);
+  const [
+    supplierComparisonError,
+    setSupplierComparisonError,
+  ] = useState<string | null>(null);
+  const [
+    supplierComparisonSuccess,
+    setSupplierComparisonSuccess,
+  ] = useState<string | null>(null);
+
   const [supplierScorecard, setSupplierScorecard] =
     useState<SupplierScorecardRow | null>(null);
+  const [scorecardError, setScorecardError] = useState<string | null>(null);
   const [
     loadingSupplierScorecard,
     setLoadingSupplierScorecard,
   ] = useState(false);
+
+  interface RiskAssessmentForm {
+    supplier_name: string;
+    audit_date: string;
+    compliance_status: string;
+    findings: string;
+    assessor_name: string;
+    risk_notes: string;
+  }
+
+  const [riskForm, setRiskForm] = useState<RiskAssessmentForm>({
+    supplier_name: "",
+    audit_date: "",
+    compliance_status: "",
+    findings: "",
+    assessor_name: "",
+    risk_notes: "",
+  });
+  const [submittingRisk, setSubmittingRisk] = useState(false);
+  const [supplierHighRisk, setSupplierHighRisk] = useState(false);
+
+  const [supplierStatus, setSupplierStatus] = useState<string>("Active");
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [
+    supplierLifecycleResponse,
+    setSupplierLifecycleResponse,
+  ] = useState<MockSupplierLifecycleResponse | null>(null);
+  const [
+    mockLifecycleIndexBySupplier,
+    setMockLifecycleIndexBySupplier,
+  ] = useState<Record<string, number>>({});
+  const [loadingSupplierLifecycle, setLoadingSupplierLifecycle] =
+    useState(false);
+
+  const [paymentHistory, setPaymentHistory] = useState<any[]>([]);
+  const [paymentPagination, setPaymentPagination] = useState<any>(null);
+  const [loadingPayments, setLoadingPayments] = useState(false);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentPage = parseInt(searchParams.get("page") || "1");
   const [expectedDeliveryDate, setExpectedDeliveryDate] =
     useState("");
+
+  const baseUrl = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, "");
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  function assertSupabaseEnv() {
+    if (!baseUrl || !anonKey) {
+      throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY");
+    }
+  }
+
+  const functionHeaders = () => {
+    assertSupabaseEnv();
+    return {
+      "Content-Type": "application/json",
+      apikey: anonKey,
+      Authorization: `Bearer ${anonKey}`,
+    };
+  };
+
+  async function parseFunctionResponse(response: Response) {
+    const raw = await response.text();
+    let data: any = null;
+
+    if (raw && raw.trim().length > 0) {
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new Error(`Invalid JSON response: ${raw.slice(0, 200)}`);
+      }
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        data?.error ||
+        data?.message ||
+        `Request failed (${response.status})${raw ? `: ${raw.slice(0, 120)}` : " with empty response"}`
+      );
+    }
+
+    return data;
+  }
+
   const [preferredCommunication, setPreferredCommunication] =
     useState("");
 
@@ -260,6 +473,12 @@ export function InboundProcurement() {
   const [previewRows, setPreviewRows] = useState<CSVRow[]>([]);
   const [skuMismatchSet, setSkuMismatchSet] = useState<Set<string>>(new Set());
   const [checkingSkus, setCheckingSkus] = useState(false);
+
+  const activeSupplierKey = activeSupplierName.trim().toLowerCase();
+  const supplierLifecycle =
+    supplierLifecycleResponse?.lifecycle_state ?? "Registered";
+  const isSupplierLocked =
+    supplierLifecycleResponse?.locked ?? false;
   const statusFlow: Record<string, string[]> = {
     draft: ["posted"],
     "pending supplier confirmation": ["posted"],
@@ -306,29 +525,58 @@ export function InboundProcurement() {
     await checkSkuMismatches(rows);
   };
 
-  const fetchSupplierScorecard = async (supplier: string) => {
+  const fetchSupplierScorecard = useCallback(async (supplier: string) => {
     if (!supplier) {
       setSupplierScorecard(null);
+      setScorecardError(null);
+      setLoadingSupplierScorecard(false);
       return;
     }
 
+    setScorecardError(null);
     setLoadingSupplierScorecard(true);
 
-    const { data, error } = await supabase
-      .from("supplier_scorecards_view")
-      .select("*")
-      .ilike("supplier_name", supplier)
-      .maybeSingle();
+    try {
+      const { data, error } = await supabase
+        .from("supplier_scorecards_view")
+        .select("*")
+        .ilike("supplier_name", supplier)
+        .maybeSingle();
 
-    setLoadingSupplierScorecard(false);
+      if (error) {
+        throw error;
+      }
+
+      setSupplierScorecard(data ?? null);
+    } catch (error) {
+      console.error("Scorecard fetch error", error);
+      setScorecardError(toErrorMessage(error));
+      setSupplierScorecard(null);
+    } finally {
+      setLoadingSupplierScorecard(false);
+    }
+  }, []);
+
+  const fetchSuppliers = useCallback(async () => {
+    setLoadingSuppliers(true);
+
+    const { data, error } = await supabase
+      .from("suppliers")
+      .select("id, supplier_name, lead_time_days, status, currency_code")
+      .order("supplier_name", { ascending: true });
+
+    setLoadingSuppliers(false);
 
     if (error) {
-      console.error("Scorecard fetch error", error);
+      toast.error("Failed to load suppliers", {
+        description: toErrorMessage(error),
+      });
+      setSupplierRecords([]);
       return;
     }
 
-    setSupplierScorecard(data ?? null);
-  };
+    setSupplierRecords((data ?? []) as SupplierRecord[]);
+  }, []);
 
   const fetchPurchaseOrders = useCallback(async () => {
     setLoadingPOs(true);
@@ -350,6 +598,210 @@ export function InboundProcurement() {
     setPoList(data ?? []);
   }, []);
 
+  const createSupplier = useCallback(async () => {
+    setCreatingSupplier(true);
+
+    const supplier_name = newSupplierForm.supplier_name.trim();
+    const contact_person = newSupplierForm.contact_person.trim();
+    const email = newSupplierForm.email.trim();
+    const phone = newSupplierForm.phone.trim();
+    const address = newSupplierForm.address.trim();
+    const currency_code = newSupplierForm.currency_code
+      .trim()
+      .toUpperCase();
+
+    const lead_time_days = Number(newSupplierForm.lead_time_days);
+
+    if (!supplier_name) {
+      toast.error("Supplier name is required");
+      setCreatingSupplier(false);
+      return;
+    }
+    if (!currency_code.match(/^[A-Z]{3}$/)) {
+      toast.error("Currency code must be 3 uppercase letters, e.g. USD");
+      setCreatingSupplier(false);
+      return;
+    }
+    if (!Number.isInteger(lead_time_days) || lead_time_days <= 0) {
+      toast.error("Lead time days must be a positive integer");
+      setCreatingSupplier(false);
+      return;
+    }
+
+    const payload = {
+      supplier_name,
+      contact_person: contact_person || null,
+      email: email || null,
+      phone: phone || null,
+      address: address || null,
+      currency_code,
+      lead_time_days,
+    };
+
+    try {
+      const { data, error } = await supabase
+        .from("suppliers")
+        .insert([payload])
+        .select("*")
+        .single();
+
+      if (error || !data) {
+        throw error ?? new Error("Insert failed");
+      }
+
+      toast.success("Supplier created successfully", {
+        description: `${data.supplier_name} was added`,
+      });
+
+      void fetchSuppliers();
+
+      setNewSupplierForm({
+        supplier_name: "",
+        contact_person: "",
+        email: "",
+        phone: "",
+        address: "",
+        currency_code: "",
+        lead_time_days: "",
+      });
+    } catch (error) {
+      toast.error("Failed to create supplier", {
+        description: toErrorMessage(error),
+      });
+    } finally {
+      setCreatingSupplier(false);
+    }
+  }, [fetchSuppliers, newSupplierForm]);
+
+  const submitRiskAssessment = useCallback(async () => {
+    if (isSupplierLocked) {
+      toast.error("Supplier is suspended", {
+        description:
+          "Risk assessment submission is locked while this supplier lifecycle test is in the Suspended state.",
+      });
+      return;
+    }
+
+    setSubmittingRisk(true);
+
+    const payload = {
+      supplier_name: riskForm.supplier_name.trim(),
+      audit_date: riskForm.audit_date,
+      compliance_status: riskForm.compliance_status,
+      findings: riskForm.findings.trim() || null,
+      assessor_name: riskForm.assessor_name.trim(),
+      risk_notes: riskForm.risk_notes.trim() || null,
+    };
+
+    if (!payload.supplier_name || !payload.audit_date || !payload.compliance_status || !payload.assessor_name) {
+      toast.error("Please fill in all required fields");
+      setSubmittingRisk(false);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.functions.invoke("risk-assessments", {
+        body: payload,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      toast.success("Risk assessment submitted", {
+        description: `Assessment for ${payload.supplier_name} logged.`,
+      });
+
+      // Update high risk state if applicable
+      if (data.is_high_risk) {
+        setSupplierHighRisk(true);
+      }
+
+      setRiskForm({
+        supplier_name: "",
+        audit_date: "",
+        compliance_status: "",
+        findings: "",
+        assessor_name: "",
+        risk_notes: "",
+      });
+    } catch (error) {
+      toast.error("Failed to submit risk assessment", {
+        description: toErrorMessage(error),
+      });
+    } finally {
+      setSubmittingRisk(false);
+    }
+  }, [isSupplierLocked, riskForm]);
+
+  const updateSupplierStatus = useCallback(async (status: "Active" | "Suspended") => {
+    if (!activeSupplierName.trim()) return;
+
+    try {
+      setUpdatingStatus(true);
+      assertSupabaseEnv();
+
+      const url = `${baseUrl}/functions/v1/suppliers/${encodeURIComponent(activeSupplierName.trim())}/status`;
+
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: functionHeaders(),
+        body: JSON.stringify({ status }),
+      });
+
+      const data = await parseFunctionResponse(response);
+
+      setSupplierStatus(data?.supplier?.status ?? status);
+
+      toast.success("Status updated", {
+        description: `${activeSupplierName} is now ${status}.`,
+      });
+    } catch (error) {
+      toast.error("Failed to update status", {
+        description: error instanceof Error ? String(error.message) : String(error),
+      });
+    } finally {
+      setUpdatingStatus(false);
+    }
+  }, [activeSupplierName]);
+
+  const fetchPaymentHistory = useCallback(async (supplier: string, page: number) => {
+    if (!supplier.trim()) return;
+
+    try {
+      setLoadingPayments(true);
+      assertSupabaseEnv();
+
+      const url = `${baseUrl}/functions/v1/suppliers/${encodeURIComponent(supplier.trim())}/payments?page=${page}`;
+
+      const response = await fetch(url, {
+        method: "GET",
+        headers: functionHeaders(),
+      });
+
+      const data = await parseFunctionResponse(response);
+
+      setPaymentHistory(data?.payments ?? []);
+      setPaymentPagination(
+        data?.pagination ?? {
+          page,
+          pageSize: 20,
+          total: 0,
+          totalPages: 1,
+          hasNext: false,
+          hasPrev: page > 1,
+        }
+      );
+    } catch (error) {
+      toast.error("Failed to load payment history", {
+        description: error instanceof Error ? String(error.message) : String(error),
+      });
+      setPaymentHistory([]);
+    } finally {
+      setLoadingPayments(false);
+    }
+  }, []);
+
   const fetchProducts = useCallback(async () => {
     const { data, error } = await supabase
       .from("products")
@@ -365,6 +817,168 @@ export function InboundProcurement() {
     }
     setProducts(data ?? []);
   }, []);
+
+  const buildMockLifecycleResponse = useCallback(
+    (
+      supplier: string,
+      state: SupplierLifecycleState,
+    ): MockSupplierLifecycleResponse => ({
+      supplier_name: supplier,
+      ...MOCK_SUPPLIER_LIFECYCLE_RESPONSES[state],
+    }),
+    [],
+  );
+
+  const loadMockSupplierLifecycle = useCallback(
+    async (supplier: string) => {
+      const trimmedSupplier = supplier.trim();
+      if (!trimmedSupplier) {
+        setSupplierLifecycleResponse(null);
+        return;
+      }
+
+      setLoadingSupplierLifecycle(true);
+      const supplierKey = trimmedSupplier.toLowerCase();
+      const stateIndex =
+        mockLifecycleIndexBySupplier[supplierKey] ?? 0;
+      const state =
+        SUPPLIER_LIFECYCLE_SEQUENCE[stateIndex] ?? "Registered";
+
+      await Promise.resolve();
+      setSupplierLifecycleResponse(
+        buildMockLifecycleResponse(trimmedSupplier, state),
+      );
+      setLoadingSupplierLifecycle(false);
+    },
+    [buildMockLifecycleResponse, mockLifecycleIndexBySupplier],
+  );
+
+  const setMockSupplierLifecycleState = useCallback(
+    async (state: SupplierLifecycleState) => {
+      const supplier = activeSupplierName.trim();
+      if (!supplier) {
+        toast.error("Select a supplier first", {
+          description:
+            "Type a supplier name and press Enter before testing lifecycle transitions.",
+        });
+        return;
+      }
+
+      const supplierKey = supplier.toLowerCase();
+      const nextIndex =
+        SUPPLIER_LIFECYCLE_SEQUENCE.indexOf(state);
+
+      setMockLifecycleIndexBySupplier((prev) => ({
+        ...prev,
+        [supplierKey]: nextIndex,
+      }));
+      setLoadingSupplierLifecycle(true);
+      await Promise.resolve();
+      setSupplierLifecycleResponse(
+        buildMockLifecycleResponse(supplier, state),
+      );
+      setLoadingSupplierLifecycle(false);
+    },
+    [activeSupplierName, buildMockLifecycleResponse],
+  );
+
+  const advanceMockSupplierLifecycle = useCallback(async () => {
+    const supplier = activeSupplierName.trim();
+    if (!supplier) {
+      toast.error("Select a supplier first", {
+        description:
+          "Type a supplier name and press Enter before advancing the lifecycle test.",
+      });
+      return;
+    }
+
+    const supplierKey = supplier.toLowerCase();
+    const currentIndex =
+      mockLifecycleIndexBySupplier[supplierKey] ?? 0;
+    const nextIndex = Math.min(
+      currentIndex + 1,
+      SUPPLIER_LIFECYCLE_SEQUENCE.length - 1,
+    );
+    const nextState =
+      SUPPLIER_LIFECYCLE_SEQUENCE[nextIndex];
+
+    setMockLifecycleIndexBySupplier((prev) => ({
+      ...prev,
+      [supplierKey]: nextIndex,
+    }));
+    setLoadingSupplierLifecycle(true);
+    await Promise.resolve();
+    setSupplierLifecycleResponse(
+      buildMockLifecycleResponse(supplier, nextState),
+    );
+    setLoadingSupplierLifecycle(false);
+  }, [
+    activeSupplierName,
+    buildMockLifecycleResponse,
+    mockLifecycleIndexBySupplier,
+  ]);
+
+  const toggleComparisonSupplier = useCallback(
+    (supplierId: string, checked: boolean) => {
+      setSelectedComparisonSupplierIds((prev) => {
+        if (checked) {
+          return prev.includes(supplierId)
+            ? prev
+            : [...prev, supplierId];
+        }
+        return prev.filter((id) => id !== supplierId);
+      });
+    },
+    [],
+  );
+
+  const compareSelectedSuppliers = useCallback(async () => {
+    if (selectedComparisonSupplierIds.length < 2) {
+      setSupplierComparisonError(
+        "Select at least two suppliers to compare.",
+      );
+      setSupplierComparisonSuccess(null);
+      setSupplierComparisonResults([]);
+      return;
+    }
+
+    try {
+      setComparingSuppliers(true);
+      setSupplierComparisonError(null);
+      setSupplierComparisonSuccess(null);
+      assertSupabaseEnv();
+
+      const payload = {
+        supplier_ids: selectedComparisonSupplierIds,
+      };
+
+      const url = `${baseUrl}/functions/v1/suppliers/compare`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: functionHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      const data = await parseFunctionResponse(response);
+      const ranked = Array.isArray(data?.ranked)
+        ? (data.ranked as SupplierComparisonRow[])
+        : [];
+
+      setSupplierComparisonResults(ranked);
+      setSupplierComparisonSuccess(
+        ranked.length > 0
+          ? `Compared ${ranked.length} suppliers using live supplier, scorecard, and risk data.`
+          : null,
+      );
+    } catch (error) {
+      setSupplierComparisonResults([]);
+      setSupplierComparisonError(
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      setComparingSuppliers(false);
+    }
+  }, [baseUrl, selectedComparisonSupplierIds]);
 
   const fetchPOItems = useCallback(async (poId: string) => {
     setLoadingItems(true);
@@ -441,6 +1055,14 @@ export function InboundProcurement() {
   );
 
   const saveToDraft = useCallback(async () => {
+    if (isSupplierLocked) {
+      toast.error("Supplier is suspended", {
+        description:
+          "Save to Drafts is locked while this supplier lifecycle test is in the Suspended state.",
+      });
+      return;
+    }
+
     if (!supplierName.trim()) {
       toast.error("Cannot save draft", {
         description: "Supplier is required",
@@ -508,10 +1130,19 @@ export function InboundProcurement() {
     preferredCommunication,
     selectedPO?.po_id,
     supplierName,
+    isSupplierLocked,
     updatePOHeader,
   ]);
 
   const sendToSupplier = useCallback(async () => {
+    if (isSupplierLocked) {
+      toast.error("Supplier is suspended", {
+        description:
+          "Send to Supplier is locked while this supplier lifecycle test is in the Suspended state.",
+      });
+      return;
+    }
+
     if (!supplierName.trim()) {
       toast.error("Cannot send purchase order", {
         description: "Supplier is required",
@@ -589,11 +1220,20 @@ export function InboundProcurement() {
     preferredCommunication,
     selectedPO?.po_id,
     supplierName,
+    isSupplierLocked,
     updatePOHeader,
   ]);
 
   const handleImportPO = useCallback(
     async (rows: CSVRow[]) => {
+      if (isSupplierLocked) {
+        toast.error("Supplier is suspended", {
+          description:
+            "Bulk import is locked while this supplier lifecycle test is in the Suspended state.",
+        });
+        return;
+      }
+
       if (!rows || rows.length === 0) {
         toast.error("CSV has no rows to import");
         return;
@@ -695,6 +1335,7 @@ export function InboundProcurement() {
       poNo,
       preferredCommunication,
       supplierName,
+      isSupplierLocked,
     ],
   );
 
@@ -827,7 +1468,8 @@ export function InboundProcurement() {
   useEffect(() => {
     void fetchPurchaseOrders();
     void fetchProducts();
-  }, [fetchPurchaseOrders, fetchProducts]);
+    void fetchSuppliers();
+  }, [fetchPurchaseOrders, fetchProducts, fetchSuppliers]);
 
   useEffect(() => {
     if (!selectedPO?.po_id) {
@@ -837,12 +1479,51 @@ export function InboundProcurement() {
     void fetchPOItems(selectedPO.po_id);
   }, [fetchPOItems, selectedPO?.po_id]);
 
+  useEffect(() => {
+    const supplier = supplierName.trim();
+    if (!supplier) {
+      setSupplierScorecard(null);
+      setScorecardError(null);
+      setLoadingSupplierScorecard(false);
+      return;
+    }
+
+    void fetchSupplierScorecard(supplier);
+  }, [supplierName, fetchSupplierScorecard]);
+
+  useEffect(() => {
+    const supplier = activeSupplierName.trim();
+    if (supplier) {
+      void fetchPaymentHistory(supplier, currentPage);
+    } else {
+      setPaymentHistory([]);
+      setPaymentPagination(null);
+    }
+  }, [activeSupplierName, currentPage, fetchPaymentHistory]);
+
+  useEffect(() => {
+    const supplier = activeSupplierName.trim();
+    if (supplier) {
+      void loadMockSupplierLifecycle(supplier);
+    } else {
+      setSupplierLifecycleResponse(null);
+      setLoadingSupplierLifecycle(false);
+    }
+  }, [activeSupplierName, loadMockSupplierLifecycle]);
+
+  useEffect(() => {
+    if (activeSupplierName.trim()) {
+      setSearchParams({ page: "1" });
+    }
+  }, [activeSupplierName, setSearchParams]);
+
   const openBuilder = async () => {
     setSelectedPO(null);
     setIsEditingPO(true);
     setSelectedPOItems([]);
     setLineItemForms([]);
     setSupplierName("");
+    setActiveSupplierName("");
     setPoNo("");
     setExpectedDeliveryDate("");
     setPreferredCommunication("");
@@ -861,6 +1542,7 @@ export function InboundProcurement() {
     setLineItemForms([]);
     setPoNo(po.po_no ?? "");
     setSupplierName(po.supplier_name ?? "");
+    setActiveSupplierName(po.supplier_name ?? "");
     setExpectedDeliveryDate(po.expected_delivery_date ?? "");
     setPreferredCommunication(po.preferred_communication ?? "");
   };
@@ -950,6 +1632,7 @@ export function InboundProcurement() {
     if (!template) return;
 
     setSupplierName(template.supplier_name);
+    setActiveSupplierName(template.supplier_name);
     setExpectedDeliveryDate(template.expected_delivery_date);
     setPreferredCommunication(template.preferred_communication);
     
@@ -1193,13 +1876,38 @@ export function InboundProcurement() {
                 <Input
                   value={supplierName}
                   onChange={(e) => {
-                    const value = e.target.value;
-                    setSupplierName(value);
-                    fetchSupplierScorecard(value);
+                    setSupplierName(e.target.value);
+                  }}
+                  onBlur={() => {
+                    setActiveSupplierName(supplierName.trim());
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      setActiveSupplierName(supplierName.trim());
+                    }
                   }}
                   placeholder="Enter supplier name..."
                   className="mt-2 border-[#111827]/10 rounded-lg"
                 />
+
+                <Tabs
+                  value={supplierPanelTab}
+                  onValueChange={setSupplierPanelTab}
+                  className="mt-4 w-full"
+                >
+                  <TabsList className="grid w-full grid-cols-2 mb-4">
+                    <TabsTrigger value="supplier-overview">
+                      Supplier Overview
+                    </TabsTrigger>
+                    <TabsTrigger value="supplier-comparison">
+                      Supplier Comparison
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent
+                    value="supplier-overview"
+                    className="space-y-3"
+                  >
 
                 {false && supplierScorecard && (
                   <div
@@ -1214,39 +1922,540 @@ export function InboundProcurement() {
                   </div>
                 )}
 
-                {supplierScorecard && (
-                  <div
-                    className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
-                      getOnTimeDeliveryPct(supplierScorecard) <
-                        85 ||
-                      getDefectRate(supplierScorecard) > 10
-                        ? "border-[#FECACA] bg-[#FEF2F2] text-[#991B1B]"
-                        : "border-[#BBF7D0] bg-[#F0FDF4] text-[#166534]"
-                    }`}
-                  >
-                    <div className="font-semibold">
-                      {getOnTimeDeliveryPct(supplierScorecard) <
-                        85 ||
-                      getDefectRate(supplierScorecard) > 10
-                        ? "Warning"
-                        : "Supplier looks healthy"}
-                      :{" "}
-                      {formatPercent(
-                        getOnTimeDeliveryPct(supplierScorecard),
-                      )}
-                      % On-Time Delivery |{" "}
-                      {formatPercent(
-                        getDefectRate(supplierScorecard),
-                      )}
-                      % Defect Rate
+                <div className="mt-3">
+                  {loadingSupplierScorecard ? (
+                    <div className="space-y-2 rounded-lg border p-4 bg-white">
+                      <Skeleton className="h-5 w-40" />
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-4 w-4/5" />
                     </div>
-                    <div className="mt-1 text-xs opacity-80">
-                      Based on historical PO, GRN, and
-                      discrepancy data for{" "}
-                      {supplierScorecard.supplier_name}.
+                  ) : scorecardError ? (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      {scorecardError}
+                    </div>
+                  ) : supplierScorecard ? (
+                    <div
+                      className={`rounded-lg border px-4 py-3 text-sm ${
+                        getOnTimeDeliveryPct(supplierScorecard) < 85 ||
+                        getDefectRate(supplierScorecard) > 10
+                          ? "border-[#FECACA] bg-[#FEF2F2] text-[#991B1B]"
+                          : "border-[#BBF7D0] bg-[#F0FDF4] text-[#166534]"
+                      }`}
+                    >
+                      <div className="font-semibold">
+                        {getOnTimeDeliveryPct(supplierScorecard) < 85 ||
+                        getDefectRate(supplierScorecard) > 10
+                          ? "Warning"
+                          : "Supplier looks healthy"}
+                        : {formatPercent(
+                          getOnTimeDeliveryPct(supplierScorecard),
+                        )}
+                        % On-Time Delivery | {formatPercent(
+                          getDefectRate(supplierScorecard),
+                        )}
+                        % Defect Rate
+                      </div>
+                      <div className="mt-1 text-xs opacity-80">
+                        Based on historical PO, GRN, and
+                        discrepancy data for {supplierScorecard.supplier_name}.
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3 text-sm text-[#6B7280]">
+                      Enter supplier name to load the scorecard.
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <Label className="text-[#111827] font-semibold">
+                        Supplier Lifecycle
+                      </Label>
+                      <p className="mt-1 text-sm text-[#6B7280]">
+                        Frontend-only mock API response test for Registered, Scored, and Suspended.
+                      </p>
+                    </div>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        supplierLifecycle === "Suspended"
+                          ? "bg-[#FEF2F2] text-[#991B1B]"
+                          : supplierLifecycle === "Scored"
+                            ? "bg-[#EFF6FF] text-[#1D4ED8]"
+                            : "bg-[#F3F4F6] text-[#374151]"
+                      }`}
+                    >
+                      {loadingSupplierLifecycle
+                        ? "Loading..."
+                        : supplierLifecycle}
+                    </span>
+                  </div>
+
+                  <div className="text-sm text-[#6B7280]">
+                    {supplierLifecycleResponse?.message ??
+                      "Type a supplier name and press Enter to load the mock lifecycle response."}
+                  </div>
+
+                  <div className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-xs text-[#6B7280]">
+                    Mock response:
+                    <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs text-[#111827]">
+{JSON.stringify(
+  supplierLifecycleResponse ?? {
+    supplier_name: activeSupplierName.trim() || null,
+    lifecycle_state: "Registered",
+    locked: false,
+    message:
+      "Type a supplier name and press Enter to initialize the mock lifecycle response.",
+    source: "mock",
+  },
+  null,
+  2,
+)}
+                    </pre>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {SUPPLIER_LIFECYCLE_SEQUENCE.map((state) => (
+                      <Button
+                        key={state}
+                        type="button"
+                        variant="outline"
+                        onClick={() =>
+                          void setMockSupplierLifecycleState(state)
+                        }
+                        className={`border-[#111827]/20 text-[#111827] ${
+                          supplierLifecycle === state
+                            ? "border-[#00A3AD] bg-[#00A3AD]/10 text-[#00A3AD]"
+                            : ""
+                        }`}
+                      >
+                        Mock {state}
+                      </Button>
+                    ))}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() =>
+                        void advanceMockSupplierLifecycle()
+                      }
+                      className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10"
+                    >
+                      Advance Lifecycle
+                    </Button>
+                  </div>
+                </div>
+
+                {supplierHighRisk && (
+                  <div className="rounded-lg border border-red-500 bg-red-50 px-4 py-3 text-sm text-red-700 font-semibold">
+                    ⚠️ High Risk Supplier: This supplier has been flagged as high risk based on recent compliance assessment. Proceed with caution.
+                  </div>
+                )}
+
+                {isSupplierLocked && (
+                  <div className="rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] px-4 py-3 text-sm text-[#991B1B]">
+                    <div className="font-semibold">
+                      Supplier interactions are locked
+                    </div>
+                    <div className="mt-1">
+                      This supplier is currently in the mock Suspended lifecycle state. Supplier-dependent procurement actions are disabled until the lifecycle moves back to Registered or Scored.
                     </div>
                   </div>
                 )}
+
+                <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC] space-y-3">
+                  <Label className="text-[#111827] font-semibold">Supplier Risk Assessment</Label>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <Label>Supplier Name</Label>
+                      <Input
+                        value={riskForm.supplier_name}
+                        onChange={(e) =>
+                          setRiskForm((prev) => ({
+                            ...prev,
+                            supplier_name: e.target.value,
+                          }))
+                        }
+                        placeholder="Supplier name"
+                        className="mt-2"
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Audit Date</Label>
+                      <Input
+                        type="date"
+                        value={riskForm.audit_date}
+                        onChange={(e) =>
+                          setRiskForm((prev) => ({
+                            ...prev,
+                            audit_date: e.target.value,
+                          }))
+                        }
+                        className="mt-2"
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Compliance Status</Label>
+                      <Select
+                        value={riskForm.compliance_status}
+                        onValueChange={(value) =>
+                          setRiskForm((prev) => ({
+                            ...prev,
+                            compliance_status: value,
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="mt-2">
+                          <SelectValue placeholder="Select status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Compliant">Compliant</SelectItem>
+                          <SelectItem value="Non-Compliant">Non-Compliant</SelectItem>
+                          <SelectItem value="Under Review">Under Review</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label>Assessor Name</Label>
+                      <Input
+                        value={riskForm.assessor_name}
+                        onChange={(e) =>
+                          setRiskForm((prev) => ({
+                            ...prev,
+                            assessor_name: e.target.value,
+                          }))
+                        }
+                        placeholder="Assessor name"
+                        className="mt-2"
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <Label>Findings</Label>
+                      <Input
+                        value={riskForm.findings}
+                        onChange={(e) =>
+                          setRiskForm((prev) => ({
+                            ...prev,
+                            findings: e.target.value,
+                          }))
+                        }
+                        placeholder="Audit findings"
+                        className="mt-2"
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <Label>Risk Notes (Optional)</Label>
+                      <Input
+                        value={riskForm.risk_notes}
+                        onChange={(e) =>
+                          setRiskForm((prev) => ({
+                            ...prev,
+                            risk_notes: e.target.value,
+                          }))
+                        }
+                        placeholder="Additional risk notes"
+                        className="mt-2"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end mt-3">
+                    <Button
+                      onClick={() => void submitRiskAssessment()}
+                      disabled={submittingRisk || isSupplierLocked}
+                      className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+                    >
+                      {submittingRisk ? "Submitting..." : "Submit Assessment"}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC] space-y-3">
+                  <Label className="text-[#111827] font-semibold">Supplier Status</Label>
+                  <div className="flex items-center gap-4">
+                    <span className="text-sm text-[#6B7280]">Status:</span>
+                    <Select
+                      value={supplierStatus}
+                      onValueChange={(value) => void updateSupplierStatus(value)}
+                      disabled={updatingStatus || isSupplierLocked}
+                    >
+                      <SelectTrigger className="w-32">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Active">Active</SelectItem>
+                        <SelectItem value="Suspended">Suspended</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {updatingStatus && <span className="text-sm text-[#00A3AD]">Updating...</span>}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC] space-y-3">
+                  <Label className="text-[#111827] font-semibold">Payment History</Label>
+                  {loadingPayments ? (
+                    <div className="space-y-2">
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <Skeleton key={i} className="h-12 w-full" />
+                      ))}
+                    </div>
+                  ) : paymentHistory.length === 0 ? (
+                    <div className="text-sm text-[#6B7280]">No payment history found.</div>
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        {paymentHistory.map((payment) => (
+                          <div key={payment.id} className="flex justify-between items-center p-2 border rounded">
+                            <div>
+                              <div className="font-semibold">{payment.amount} {payment.currency}</div>
+                              <div className="text-sm text-[#6B7280]">{formatDateOnly(payment.payment_date)}</div>
+                            </div>
+                            <div className="text-sm text-[#6B7280]">{payment.payment_method}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex justify-between items-center mt-4">
+                        <Button
+                          variant="outline"
+                          onClick={() => setSearchParams({ page: String(currentPage - 1) })}
+                          disabled={!paymentPagination?.hasPrev}
+                        >
+                          Prev
+                        </Button>
+                        <span className="text-sm text-[#6B7280]">
+                          Page {currentPage} of {paymentPagination?.totalPages || 1}
+                        </span>
+                        <Button
+                          variant="outline"
+                          onClick={() => setSearchParams({ page: String(currentPage + 1) })}
+                          disabled={!paymentPagination?.hasNext}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </div>
+                  </TabsContent>
+
+                  <TabsContent
+                    value="supplier-comparison"
+                    className="space-y-4"
+                  >
+                    <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-4 space-y-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <Label className="text-[#111827] font-semibold">
+                            Supplier Comparison
+                          </Label>
+                          <p className="mt-1 text-sm text-[#6B7280]">
+                            Select live supplier records, then compare them side by side using ranked scorecard and risk data.
+                          </p>
+                        </div>
+                        <Button
+                          onClick={() => void compareSelectedSuppliers()}
+                          disabled={
+                            comparingSuppliers ||
+                            loadingSuppliers ||
+                            selectedComparisonSupplierIds.length < 2
+                          }
+                          className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+                        >
+                          {comparingSuppliers ? "Comparing..." : "Compare Suppliers"}
+                        </Button>
+                      </div>
+
+                      {loadingSuppliers ? (
+                        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                          {Array.from({ length: 4 }).map((_, index) => (
+                            <Skeleton key={index} className="h-16 w-full" />
+                          ))}
+                        </div>
+                      ) : supplierRecords.length === 0 ? (
+                        <div className="rounded-lg border border-[#E5E7EB] bg-white px-4 py-3 text-sm text-[#6B7280]">
+                          No suppliers available for comparison.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          {supplierRecords.map((supplier) => {
+                            const checked =
+                              selectedComparisonSupplierIds.includes(
+                                supplier.id,
+                              );
+
+                            return (
+                              <label
+                                key={supplier.id}
+                                className={`flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 transition-colors ${
+                                  checked
+                                    ? "border-[#00A3AD] bg-[#00A3AD]/5"
+                                    : "border-[#E5E7EB] bg-white hover:border-[#00A3AD]/50"
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) =>
+                                    toggleComparisonSupplier(
+                                      supplier.id,
+                                      e.target.checked,
+                                    )
+                                  }
+                                  className="mt-1 h-4 w-4 rounded border-[#CBD5E1] text-[#00A3AD] focus:ring-[#00A3AD]"
+                                />
+                                <div className="min-w-0">
+                                  <div className="font-semibold text-[#111827]">
+                                    {supplier.supplier_name}
+                                  </div>
+                                  <div className="mt-1 text-xs text-[#6B7280]">
+                                    ID: {supplier.id}
+                                  </div>
+                                  <div className="mt-1 text-xs text-[#6B7280]">
+                                    Lead Time: {formatMetricValue(supplier.lead_time_days, " days")} | Status: {supplier.status ?? "N/A"}
+                                  </div>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <div className="text-xs text-[#6B7280]">
+                        Selected suppliers: {selectedComparisonSupplierIds.length}
+                      </div>
+
+                      {supplierComparisonError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                          {supplierComparisonError}
+                        </div>
+                      )}
+
+                      {supplierComparisonSuccess && (
+                        <div className="rounded-lg border border-[#BBF7D0] bg-[#F0FDF4] px-4 py-3 text-sm text-[#166534]">
+                          {supplierComparisonSuccess}
+                        </div>
+                      )}
+                    </div>
+
+                    {comparingSuppliers ? (
+                      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+                        {Array.from({
+                          length: Math.max(
+                            selectedComparisonSupplierIds.length,
+                            2,
+                          ),
+                        }).map((_, index) => (
+                          <Skeleton
+                            key={index}
+                            className="h-64 w-full rounded-lg"
+                          />
+                        ))}
+                      </div>
+                    ) : supplierComparisonResults.length > 0 ? (
+                      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+                        {supplierComparisonResults.map((supplier) => (
+                          <div
+                            key={supplier.supplier_id}
+                            className={`rounded-lg border p-4 shadow-sm ${
+                              supplier.rank === 1
+                                ? "border-[#00A3AD] bg-[#00A3AD]/5"
+                                : "border-[#E5E7EB] bg-white"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
+                                  Rank #{supplier.rank}
+                                </div>
+                                <div className="mt-1 text-lg font-semibold text-[#111827]">
+                                  {supplier.supplier_name}
+                                </div>
+                                <div className="mt-1 text-xs text-[#6B7280]">
+                                  Supplier ID: {supplier.supplier_id}
+                                </div>
+                              </div>
+                              <div className="rounded-full bg-[#111827] px-3 py-1 text-sm font-semibold text-white">
+                                Score {formatMetricValue(supplier.score)}
+                              </div>
+                            </div>
+
+                            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                                <div className="text-xs text-[#6B7280]">On-Time Delivery</div>
+                                <div className="mt-1 font-semibold text-[#111827]">
+                                  {formatMetricValue(supplier.on_time_delivery, "%")}
+                                </div>
+                              </div>
+                              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                                <div className="text-xs text-[#6B7280]">Defect Rate</div>
+                                <div className="mt-1 font-semibold text-[#111827]">
+                                  {formatMetricValue(supplier.defect_rate, "%")}
+                                </div>
+                              </div>
+                              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                                <div className="text-xs text-[#6B7280]">Lead Time</div>
+                                <div className="mt-1 font-semibold text-[#111827]">
+                                  {formatMetricValue(supplier.lead_time_days, " days")}
+                                </div>
+                              </div>
+                              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                                <div className="text-xs text-[#6B7280]">Risk Level</div>
+                                <div className="mt-1 font-semibold text-[#111827]">
+                                  {formatMetricValue(supplier.risk_level)}
+                                </div>
+                              </div>
+                              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                                <div className="text-xs text-[#6B7280]">Reliability</div>
+                                <div className="mt-1 font-semibold text-[#111827]">
+                                  {formatMetricValue(supplier.reliability_score, "%")}
+                                </div>
+                              </div>
+                              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                                <div className="text-xs text-[#6B7280]">Status</div>
+                                <div className="mt-1 font-semibold text-[#111827]">
+                                  {formatMetricValue(supplier.status)}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="mt-4 space-y-2 rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3 text-sm">
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-[#6B7280]">Clean Receipt Rate</span>
+                                <span className="font-semibold text-[#111827]">
+                                  {formatMetricValue(supplier.clean_receipt_rate, "%")}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-[#6B7280]">Total POs</span>
+                                <span className="font-semibold text-[#111827]">
+                                  {formatMetricValue(supplier.total_pos)}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-[#6B7280]">Total Receipts</span>
+                                <span className="font-semibold text-[#111827]">
+                                  {formatMetricValue(supplier.total_receipts)}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-[#6B7280]">Latest Audit</span>
+                                <span className="font-semibold text-[#111827]">
+                                  {formatDateOnly(supplier.last_audit_date)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </TabsContent>
+                </Tabs>
               </div>
 
               <div>
@@ -1294,6 +2503,128 @@ export function InboundProcurement() {
                     </SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC] space-y-3">
+                <Label className="text-[#111827] font-semibold">Create New Supplier</Label>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <Label>Supplier Name</Label>
+                    <Input
+                      value={newSupplierForm.supplier_name}
+                      onChange={(e) =>
+                        setNewSupplierForm((prev) => ({
+                          ...prev,
+                          supplier_name: e.target.value,
+                        }))
+                      }
+                      placeholder="Supplier name"
+                      className="mt-2"
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Contact Person</Label>
+                    <Input
+                      value={newSupplierForm.contact_person}
+                      onChange={(e) =>
+                        setNewSupplierForm((prev) => ({
+                          ...prev,
+                          contact_person: e.target.value,
+                        }))
+                      }
+                      placeholder="Contact person"
+                      className="mt-2"
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Email</Label>
+                    <Input
+                      value={newSupplierForm.email}
+                      onChange={(e) =>
+                        setNewSupplierForm((prev) => ({
+                          ...prev,
+                          email: e.target.value,
+                        }))
+                      }
+                      placeholder="Email"
+                      className="mt-2"
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Phone</Label>
+                    <Input
+                      value={newSupplierForm.phone}
+                      onChange={(e) =>
+                        setNewSupplierForm((prev) => ({
+                          ...prev,
+                          phone: e.target.value,
+                        }))
+                      }
+                      placeholder="Phone"
+                      className="mt-2"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <Label>Address</Label>
+                    <Input
+                      value={newSupplierForm.address}
+                      onChange={(e) =>
+                        setNewSupplierForm((prev) => ({
+                          ...prev,
+                          address: e.target.value,
+                        }))
+                      }
+                      placeholder="Address"
+                      className="mt-2"
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Currency Code</Label>
+                    <Input
+                      value={newSupplierForm.currency_code}
+                      onChange={(e) =>
+                        setNewSupplierForm((prev) => ({
+                          ...prev,
+                          currency_code: e.target.value.toUpperCase(),
+                        }))
+                      }
+                      placeholder="USD"
+                      className="mt-2"
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Lead Time Days</Label>
+                    <Input
+                      value={newSupplierForm.lead_time_days}
+                      onChange={(e) =>
+                        setNewSupplierForm((prev) => ({
+                          ...prev,
+                          lead_time_days: e.target.value,
+                        }))
+                      }
+                      placeholder="10"
+                      type="number"
+                      className="mt-2"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end mt-3">
+                  <Button
+                    onClick={() => void createSupplier()}
+                    disabled={creatingSupplier}
+                    className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+                  >
+                    {creatingSupplier ? "Creating..." : "Create Supplier"}
+                  </Button>
+                </div>
               </div>
 
               <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC] space-y-3">
@@ -1383,14 +2714,18 @@ export function InboundProcurement() {
                         variant="outline"
                         onClick={() => setIsEditingPO(true)}
                         className="border-[#111827]/20 text-[#111827] hover:bg-[#F8FAFC] rounded-lg font-bold"
-                        disabled={savingDraft || sendingPO}
+                        disabled={
+                          savingDraft || sendingPO || isSupplierLocked
+                        }
                       >
                         Edit Purchase Order
                       </Button>
                       <Button
                         onClick={() => void sendToSupplier()}
                         className="w-full bg-[#00A3AD] hover:bg-[#0891B2] text-white rounded-lg font-bold"
-                        disabled={savingDraft || sendingPO}
+                        disabled={
+                          savingDraft || sendingPO || isSupplierLocked
+                        }
                       >
                         <Send className="w-4 h-4 mr-2" />
                         {sendingPO
@@ -1630,7 +2965,9 @@ export function InboundProcurement() {
                       variant="outline"
                       onClick={() => void saveToDraft()}
                       className="border-[#111827]/20 text-[#111827] hover:bg-[#F8FAFC] rounded-lg font-bold"
-                      disabled={savingDraft || sendingPO}
+                      disabled={
+                        savingDraft || sendingPO || isSupplierLocked
+                      }
                     >
                       {savingDraft
                         ? "Saving..."
@@ -1639,7 +2976,9 @@ export function InboundProcurement() {
                     <Button
                       onClick={() => void sendToSupplier()}
                       className="w-full bg-[#00A3AD] hover:bg-[#0891B2] text-white rounded-lg font-bold"
-                      disabled={savingDraft || sendingPO}
+                      disabled={
+                        savingDraft || sendingPO || isSupplierLocked
+                      }
                     >
                       <Send className="w-4 h-4 mr-2" />
                       {sendingPO
