@@ -7,7 +7,8 @@
     "build": "vite build",
     "dev": "vite",
     "dev:supplier": "npm --prefix services/supplier-service run dev",
-    "start:supplier": "npm --prefix services/supplier-service start"
+    "start:supplier": "npm --prefix services/supplier-service start",
+    "loadtest:gateway": "node scripts/load-test-gateway.mjs"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
