@@ -104,6 +104,178 @@
       }
     },
     {
+      "description": "a request to fetch the supplier scorecard for Test Supplier",
+      "providerStates": [
+        {
+          "name": "a supplier scorecard exists for Test Supplier"
+        }
+      ],
+      "request": {
+        "headers": {
+          "Accept": "application/vnd.pgrst.object+json",
+          "Content-Type": "application/json",
+          "apikey": "test-api-key"
+        },
+        "method": "GET",
+        "path": "/rest/v1/supplier_scorecards_view",
+        "query": {
+          "select": [
+            "*"
+          ],
+          "supplier_name": [
+            "ilike.%Test Supplier%"
+          ]
+        }
+      },
+      "response": {
+        "body": {
+          "approved_discrepancies": 1,
+          "approved_pos": 10,
+          "avg_discrepancy_units": 3.5,
+          "clean_receipt_rate": 80,
+          "clean_receipts": 8,
+          "defect_rate": 9.5,
+          "on_time_delivery_pct": 82,
+          "po_approval_rate": 83.3,
+          "rejected_discrepancies": 1,
+          "reliability_score": 78.5,
+          "supplier_key": "supplier-test-001",
+          "supplier_name": "Test Supplier",
+          "total_discrepancies": 2,
+          "total_pos": 12,
+          "total_receipts": 10
+        },
+        "headers": {
+          "Content-Type": "application/vnd.pgrst.object+json; charset=utf-8"
+        },
+        "matchingRules": {
+          "body": {
+            "$.approved_discrepancies": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.approved_pos": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.avg_discrepancy_units": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "decimal"
+                }
+              ]
+            },
+            "$.clean_receipt_rate": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "decimal"
+                }
+              ]
+            },
+            "$.clean_receipts": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.defect_rate": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "decimal"
+                }
+              ]
+            },
+            "$.on_time_delivery_pct": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "decimal"
+                }
+              ]
+            },
+            "$.po_approval_rate": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "decimal"
+                }
+              ]
+            },
+            "$.rejected_discrepancies": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.reliability_score": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "decimal"
+                }
+              ]
+            },
+            "$.supplier_key": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.supplier_name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.total_discrepancies": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.total_pos": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.total_receipts": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      }
+    },
+    {
       "description": "a request to search purchase orders by supplier name",
       "providerStates": [
         {
