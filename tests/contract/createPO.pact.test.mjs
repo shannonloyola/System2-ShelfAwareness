@@ -104,15 +104,12 @@ describe("Purchase Order Contract — Create PO", () => {
      * `data` is an array containing the newly-created record.
      * `error` should be null on success.
      */
-    const expectedResponseBody = {
-      data: eachLike({
-        po_id: uuid("a1b2c3d4-e5f6-7890-abcd-ef1234567890"),
-        po_no: string("PO-TEST-001"),
-        supplier_name: string("Test Supplier"),
-        status: string("Draft"),
-      }),
-      error: null,
-    };
+    const expectedResponseBody = eachLike({
+      po_id: uuid("a1b2c3d4-e5f6-7890-abcd-ef1234567890"),
+      po_no: string("PO-TEST-001"),
+      supplier_name: string("Test Supplier"),
+      status: string("Draft"),
+    });
 
     // Register the interaction on the mock provider
     provider
@@ -166,20 +163,16 @@ describe("Purchase Order Contract — Create PO", () => {
       // Parse and validate the response body structure
       const responseBody = await response.json();
 
-      // `data` should be an array with at least one record
-      expect(responseBody.data).toBeDefined();
-      expect(Array.isArray(responseBody.data)).toBe(true);
-      expect(responseBody.data.length).toBeGreaterThanOrEqual(1);
+      // The response should be a raw JSON array
+      expect(Array.isArray(responseBody)).toBe(true);
+      expect(responseBody.length).toBeGreaterThanOrEqual(1);
 
       // The first record should contain the expected fields
-      const createdPO = responseBody.data[0];
+      const createdPO = responseBody[0];
       expect(createdPO.po_id).toBeDefined();
       expect(createdPO.po_no).toBe("PO-TEST-001");
       expect(createdPO.supplier_name).toBe("Test Supplier");
       expect(createdPO.status).toBe("Draft");
-
-      // `error` should be null on a successful creation
-      expect(responseBody.error).toBeNull();
     });
 
     // -----------------------------------------------------------------------

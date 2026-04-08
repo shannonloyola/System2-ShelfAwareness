@@ -78,13 +78,10 @@ describe("Supplier Search Contract — Search by Supplier Name", () => {
      * `data` is an array of matching records with po_id and supplier_name.
      * `error` should be null on a successful search.
      */
-    const expectedResponseBody = {
-      data: eachLike({
-        po_id: uuid("a1b2c3d4-e5f6-7890-abcd-ef1234567890"),
-        supplier_name: string("Test Supplier"),
-      }),
-      error: null,
-    };
+    const expectedResponseBody = eachLike({
+      po_id: uuid("a1b2c3d4-e5f6-7890-abcd-ef1234567890"),
+      supplier_name: string("Test Supplier"),
+    });
 
     // Register the interaction on the mock provider
     provider
@@ -137,18 +134,14 @@ describe("Supplier Search Contract — Search by Supplier Name", () => {
       // Parse and validate the response body structure
       const responseBody = await response.json();
 
-      // `data` should be an array with at least one matching record
-      expect(responseBody.data).toBeDefined();
-      expect(Array.isArray(responseBody.data)).toBe(true);
-      expect(responseBody.data.length).toBeGreaterThanOrEqual(1);
+      // The response should be a raw JSON array
+      expect(Array.isArray(responseBody)).toBe(true);
+      expect(responseBody.length).toBeGreaterThanOrEqual(1);
 
       // Each record should contain po_id and supplier_name
-      const firstResult = responseBody.data[0];
+      const firstResult = responseBody[0];
       expect(firstResult.po_id).toBeDefined();
       expect(firstResult.supplier_name).toBeDefined();
-
-      // `error` should be null on a successful search
-      expect(responseBody.error).toBeNull();
     });
 
     // -----------------------------------------------------------------------

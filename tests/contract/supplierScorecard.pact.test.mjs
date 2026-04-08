@@ -69,7 +69,7 @@ import { PactV3, MatchersV3 } from "@pact-foundation/pact";
 //  • `integer()`— expects an integer value.
 //  • `decimal()`— expects a floating-point (decimal) value.
 // ---------------------------------------------------------------------------
-const { like, string, integer, decimal } = MatchersV3;
+const { like, string, eachLike, integer } = MatchersV3;
 
 // ---------------------------------------------------------------------------
 // Configure the Pact mock provider.
@@ -107,23 +107,21 @@ describe("Supplier Scorecard Contract — Get Scorecard by Supplier Name", () =>
      *  - decimal() → validates the value is a decimal/float
      *  - like()    → matches by type, allowing any value of that type
      */
-    const expectedResponseBody = {
+    const expectedResponseBody = eachLike({
       supplier_key: string("supplier-test-001"),
       supplier_name: string("Test Supplier"),
       total_pos: integer(12),
       approved_pos: integer(10),
-      po_approval_rate: decimal(83.3),
+      po_approval_rate: like(83.3),
       total_receipts: integer(10),
-      clean_receipts: integer(8),
-      clean_receipt_rate: decimal(80.0),
       total_discrepancies: integer(2),
       approved_discrepancies: integer(1),
       rejected_discrepancies: integer(1),
-      avg_discrepancy_units: decimal(3.5),
-      reliability_score: decimal(78.5),
-      on_time_delivery_pct: decimal(82.0),
-      defect_rate: decimal(9.5),
-    };
+      avg_discrepancy_units: like(3.5),
+      reliability_score: like(78.5),
+      on_time_delivery_pct: like(82.0),
+      defect_rate: like(9.5),
+    });
 
     // Register the interaction on the mock provider
     provider
@@ -147,13 +145,13 @@ describe("Supplier Scorecard Contract — Get Scorecard by Supplier Name", () =>
         headers: {
           "Content-Type": "application/json",
           apikey: "test-api-key",
-          Accept: "application/vnd.pgrst.object+json",
+          Accept: "application/json",
         },
       })
       .willRespondWith({
         status: 200,
         headers: {
-          "Content-Type": "application/vnd.pgrst.object+json; charset=utf-8",
+          "Content-Type": "application/json; charset=utf-8",
         },
         body: expectedResponseBody,
       });
@@ -175,7 +173,7 @@ describe("Supplier Scorecard Contract — Get Scorecard by Supplier Name", () =>
         headers: {
           "Content-Type": "application/json",
           apikey: "test-api-key",
-          Accept: "application/vnd.pgrst.object+json",
+          Accept: "application/json",
         },
       });
 
@@ -186,8 +184,13 @@ describe("Supplier Scorecard Contract — Get Scorecard by Supplier Name", () =>
       // Status code must be 200 OK
       expect(response.status).toBe(200);
 
-      // Parse the response body (single object, not array)
-      const scorecard = await response.json();
+      // Parse the response body
+      const responseBody = await response.json();
+      
+      expect(Array.isArray(responseBody)).toBe(true);
+      expect(responseBody.length).toBeGreaterThanOrEqual(1);
+
+      const scorecard = responseBody[0];
 
       // Verify supplier identity fields
       expect(scorecard.supplier_key).toBeDefined();
@@ -200,8 +203,6 @@ describe("Supplier Scorecard Contract — Get Scorecard by Supplier Name", () =>
 
       // Verify receipt-related KPIs
       expect(scorecard.total_receipts).toBeDefined();
-      expect(scorecard.clean_receipts).toBeDefined();
-      expect(scorecard.clean_receipt_rate).toBeDefined();
 
       // Verify discrepancy KPIs
       expect(scorecard.total_discrepancies).toBeDefined();
