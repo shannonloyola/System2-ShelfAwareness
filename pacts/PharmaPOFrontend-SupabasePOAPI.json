@@ -102,6 +102,72 @@
         },
         "status": 201
       }
+    },
+    {
+      "description": "a request to search purchase orders by supplier name",
+      "providerStates": [
+        {
+          "name": "purchase orders with matching supplier names exist"
+        }
+      ],
+      "request": {
+        "headers": {
+          "Content-Type": "application/json",
+          "apikey": "test-api-key"
+        },
+        "method": "GET",
+        "path": "/rest/v1/purchase_orders",
+        "query": {
+          "supplier_name": [
+            "ilike.%Test%"
+          ]
+        }
+      },
+      "response": {
+        "body": {
+          "data": [
+            {
+              "po_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+              "supplier_name": "Test Supplier"
+            }
+          ],
+          "error": null
+        },
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "matchingRules": {
+          "body": {
+            "$.data": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.data[*].po_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            },
+            "$.data[*].supplier_name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      }
     }
   ],
   "metadata": {
