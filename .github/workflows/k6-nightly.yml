@@ -1,0 +1,28 @@
+name: k6 Nightly Performance Test
+
+on:
+  schedule:
+    # Runs at 2:00 AM UTC every day.
+    # GitHub Actions schedules are based on the UTC timezone.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # Allows manual triggering of the workflow from the GitHub Actions tab.
+
+jobs:
+  k6_test:
+    name: Run k6 Performance Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run k6 test
+        run: |
+          k6 run \
+            -e BASE_URL=${{ secrets.BASE_URL }} \
+            -e SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }} \
+            tests/performance/k6-endpoints.js
