@@ -27,9 +27,11 @@ export const options = {
     },
   },
   thresholds: {
-    // Some endpoints may remain protected by Supabase RLS under anon-key simulation,
-    // so a slightly higher failure threshold is acceptable for this performance script.
-    http_req_failed: ['rate<0.35'],
+    // These thresholds are used to detect performance regressions.
+    // 95% of requests must complete below 500ms.
+    http_req_duration: ['p(95)<500'],
+    // Less than 1% request failure rate allowed.
+    http_req_failed: ['rate<0.01'],
   },
 };
 
