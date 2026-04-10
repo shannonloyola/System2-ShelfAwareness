@@ -8,7 +8,8 @@
     "dev": "vite",
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
     "test:contract": "NODE_OPTIONS='--experimental-vm-modules' jest tests/contract",
-    "test:provider": "node scripts/filter-pact.mjs && NODE_OPTIONS='--experimental-vm-modules' jest tests/provider"
+    "test:provider": "node scripts/filter-pact.mjs && NODE_OPTIONS='--experimental-vm-modules' jest tests/provider",
+    "test:integration": "NODE_OPTIONS='--experimental-vm-modules' jest tests/integration --runInBand"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
