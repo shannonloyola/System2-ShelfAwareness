@@ -9,8 +9,17 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { supabase } from "@/lib/supabase";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+import {
+  getFulfillmentUiState,
+  triggerPdfDownload,
+} from "./outboundDistribution.helpers";
 
 type RetailOrderLine = {
   line_uuid: string;
@@ -41,7 +50,8 @@ type AvailableProduct = {
   sku: string;
   product_name: string;
   current_stock: number;
-  unit_price: number;
+  selling_price: number;
+  cost_price: number;
 };
 
 type FulfillmentLineResult = {
@@ -62,6 +72,24 @@ type FulfillmentResult = {
   qty_backordered_total?: number;
   lines?: FulfillmentLineResult[];
   error?: string;
+};
+
+type PaymentRecord = {
+  id: string;
+  supplier_name: string;
+  amount: number;
+  payment_date: string;
+  payment_method: string | null;
+  reference_no: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+type InvoiceSummary = {
+  orderTotal: number;
+  amountPaid: number;
+  remainingBalance: number;
+  payments: PaymentRecord[];
 };
 
 const retailerPerformance = [
@@ -86,12 +114,28 @@ export function OutboundDistribution() {
   const [activeTab, setActiveTab] = useState<"All" | "Paid" | "Pending" | "Delayed">("All");
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [selectedPaymentOrder, setSelectedPaymentOrder] =
+    useState<RetailOrder | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [editLines, setEditLines] = useState<any[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
   const [cancellingOrder, setCancellingOrder] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [downloadingInvoiceId, setDownloadingInvoiceId] = useState<string | null>(null);
+  const [loadingInvoiceSummary, setLoadingInvoiceSummary] = useState(false);
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [invoiceSummary, setInvoiceSummary] = useState<InvoiceSummary | null>(
+    null,
+  );
+  const [paymentForm, setPaymentForm] = useState({
+    amount: "",
+    paymentDate: new Date().toISOString().slice(0, 10),
+    paymentMethod: "Check",
+    reference: "",
+    notes: "",
+  });
   const [newOrder, setNewOrder] = useState({
     retailerName: "",
     branchSuffix: "",
@@ -100,7 +144,7 @@ export function OutboundDistribution() {
     dueDate: "",
     notes: "",
     priorityLevel: "",
-    lines: [{ sku: "", qty: 1, unitPrice: 0 }],
+    lines: [{ sku: "", qty: 1 }],
   });
   const [availableProducts, setAvailableProducts] = useState<
     AvailableProduct[]
@@ -117,6 +161,99 @@ export function OutboundDistribution() {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(amount);
+
+  const buildInvoicePaymentNote = (orderNo: string, notes: string) =>
+    [notes.trim(), `[Invoice:${orderNo}]`]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+
+  const retailOrdersBaseUrl =
+    `https://${projectId}.supabase.co/functions/v1/retail-orders`;
+
+  const functionHeaders = {
+    apikey: publicAnonKey,
+    Authorization: `Bearer ${publicAnonKey}`,
+    "Content-Type": "application/json",
+  };
+
+  const loadLockedPricingFallback = async () => {
+    const restHeaders = {
+      apikey: publicAnonKey,
+      Authorization: `Bearer ${publicAnonKey}`,
+      "Content-Type": "application/json",
+    };
+
+    const [productsRes, pricingRes, costRes] = await Promise.all([
+      fetch(
+        `https://${projectId}.supabase.co/rest/v1/products?select=product_id,sku,product_name,unit_price&order=product_name.asc`,
+        {
+          method: "GET",
+          headers: restHeaders,
+        },
+      ),
+      fetch(
+        `https://${projectId}.supabase.co/rest/v1/product_pricing?select=product_id,selling_price,is_active,effective_from,created_at&is_active=eq.true&order=effective_from.desc,created_at.desc`,
+        {
+          method: "GET",
+          headers: restHeaders,
+        },
+      ),
+      fetch(
+        `https://${projectId}.supabase.co/rest/v1/v_latest_product_cost_price?select=product_id,cost_price`,
+        {
+          method: "GET",
+          headers: restHeaders,
+        },
+      ),
+    ]);
+
+    if (!productsRes.ok) {
+      throw new Error(await productsRes.text());
+    }
+
+    if (!pricingRes.ok) {
+      throw new Error(await pricingRes.text());
+    }
+
+    if (!costRes.ok) {
+      throw new Error(await costRes.text());
+    }
+
+    const [products, pricingRows, costRows] = await Promise.all([
+      productsRes.json(),
+      pricingRes.json(),
+      costRes.json(),
+    ]);
+
+    const pricingByProductId = new Map<string, number>();
+    for (const row of Array.isArray(pricingRows) ? pricingRows : []) {
+      const productId = String(row.product_id);
+      if (!pricingByProductId.has(productId)) {
+        pricingByProductId.set(productId, Number(row.selling_price ?? 0));
+      }
+    }
+
+    const costByProductId = new Map<string, number>(
+      (Array.isArray(costRows) ? costRows : []).map((row: any) => [
+        String(row.product_id),
+        Number(row.cost_price ?? 0),
+      ]),
+    );
+
+    return (Array.isArray(products) ? products : []).map((product: any) => {
+      const productId = String(product.product_id);
+      return {
+        product_id: productId,
+        sku: product.sku,
+        product_name: product.product_name,
+        selling_price:
+          pricingByProductId.get(productId) ??
+          Number(product.unit_price ?? 0),
+        cost_price: costByProductId.get(productId) ?? 0,
+      };
+    });
+  };
 
   // Fetch Total Inventory Value
   useEffect(() => {
@@ -215,29 +352,80 @@ export function OutboundDistribution() {
     setLoading(false);
   };
 
+  const fetchInvoiceSummary = async (order: RetailOrder) => {
+    setLoadingInvoiceSummary(true);
+    const { data, error } = await supabase
+      .from("payments")
+      .select(
+        "id, supplier_name, amount, payment_date, payment_method, reference_no, notes, created_at",
+      )
+      .eq("supplier_name", order.retailer_name)
+      .ilike("notes", `%[Invoice:${order.order_no}]%`)
+      .order("payment_date", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    setLoadingInvoiceSummary(false);
+
+    if (error) {
+      toast.error("Failed to load invoice payment data", {
+        description: error.message,
+      });
+      setInvoiceSummary(null);
+      return;
+    }
+
+    const payments = ((data as PaymentRecord[]) || []).map((payment) => ({
+      ...payment,
+      amount: Number(payment.amount ?? 0),
+    }));
+    const amountPaid = payments.reduce(
+      (sum, payment) => sum + Number(payment.amount ?? 0),
+      0,
+    );
+    const orderTotal = Number(order.total_amount ?? 0);
+
+    setInvoiceSummary({
+      orderTotal,
+      amountPaid,
+      remainingBalance: Number((orderTotal - amountPaid).toFixed(2)),
+      payments,
+    });
+  };
+
   const fetchAvailableProducts = async () => {
-    const [productsRes, inventoryRes, pricingRes] =
+    const [pricingRes, inventoryRes] =
       await Promise.all([
-        supabase
-          .from("products")
-          .select("product_id, sku, product_name, unit_price")
-          .order("product_name"),
+        fetch(`${retailOrdersBaseUrl}/pricing`, {
+          method: "GET",
+          headers: functionHeaders,
+        }),
         supabase
           .from("v_products_with_inventory")
           .select("product_id, qty_on_hand"),
-        supabase
-          .from("product_pricing")
-          .select(
-            "product_id, selling_price, is_active, effective_from, created_at",
-          )
-          .eq("is_active", true)
-          .order("effective_from", { ascending: false })
-          .order("created_at", { ascending: false }),
       ]);
 
-    if (productsRes.error) {
-      toast.error("Failed to load products", {
-        description: productsRes.error.message,
+    let serverProducts: any[] = [];
+
+    if (pricingRes.ok) {
+      const pricingPayload = await pricingRes.json();
+      serverProducts = Array.isArray(pricingPayload?.products)
+        ? pricingPayload.products
+        : [];
+    } else if (pricingRes.status === 404) {
+      try {
+        serverProducts = await loadLockedPricingFallback();
+      } catch (fallbackError) {
+        toast.error("Failed to load locked pricing", {
+          description:
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : "Retail pricing endpoint is unavailable.",
+        });
+        return;
+      }
+    } else {
+      toast.error("Failed to load locked pricing", {
+        description: await pricingRes.text(),
       });
       return;
     }
@@ -249,19 +437,8 @@ export function OutboundDistribution() {
       ]),
     );
 
-    const pricingByProductId = new Map<string, number>();
-    for (const row of (pricingRes.data as any[]) || []) {
-      const productId = String(row.product_id);
-      if (!pricingByProductId.has(productId)) {
-        pricingByProductId.set(
-          productId,
-          Number(row.selling_price ?? 0),
-        );
-      }
-    }
-
     setAvailableProducts(
-      (((productsRes.data as any[]) || []).map((product) => {
+      (serverProducts.map((product: any) => {
         const productId = String(product.product_id);
         return {
           product_id: productId,
@@ -269,9 +446,8 @@ export function OutboundDistribution() {
           product_name: product.product_name,
           current_stock:
             inventoryByProductId.get(productId) ?? 0,
-          unit_price:
-            pricingByProductId.get(productId) ??
-            Number(product.unit_price ?? 0),
+          selling_price: Number(product.selling_price ?? 0),
+          cost_price: Number(product.cost_price ?? 0),
         };
       }) as AvailableProduct[]).sort((a, b) =>
         a.product_name.localeCompare(b.product_name),
@@ -304,6 +480,21 @@ export function OutboundDistribution() {
   const shortageCount = useMemo(
     () => lineAvailability.filter((line) => line.isShort).length,
     [lineAvailability],
+  );
+
+  const estimatedOrderTotal = useMemo(
+    () =>
+      newOrder.lines.reduce((sum, line) => {
+        const product = availableProducts.find(
+          (entry) => entry.sku === line.sku,
+        );
+        return (
+          sum +
+          Number(product?.selling_price ?? 0) *
+            Number(line.qty ?? 0)
+        );
+      }, 0),
+    [availableProducts, newOrder.lines],
   );
 
   const filteredOrders = orders.filter((order) => {
@@ -360,6 +551,19 @@ export function OutboundDistribution() {
     setIsCancelModalOpen(true);
   };
 
+  const openPaymentModal = async (order: RetailOrder) => {
+    setSelectedPaymentOrder(order);
+    setPaymentForm({
+      amount: "",
+      paymentDate: new Date().toISOString().slice(0, 10),
+      paymentMethod: "Check",
+      reference: order.order_no ?? "",
+      notes: "",
+    });
+    setIsPaymentModalOpen(true);
+    await fetchInvoiceSummary(order);
+  };
+
   const confirmCancel = async () => {
     if (!cancelReason.trim()) {
       toast.error("Cancellation reason is required.");
@@ -393,41 +597,102 @@ export function OutboundDistribution() {
   const addLine = () =>
     setNewOrder((prev) => ({
       ...prev,
-      lines: [...prev.lines, { sku: "", qty: 1, unitPrice: 0 }],
+      lines: [...prev.lines, { sku: "", qty: 1 }],
     }));
 
-  const generateInvoice = (order: RetailOrder) => {
-    const doc = new jsPDF();
-    const lines = order.retail_order_lines ?? [];
-    doc.setFontSize(16);
-    doc.text("Enterprise Invoice", 14, 18);
-    doc.setFontSize(10);
-    const metaStart = 26;
-    doc.text(`Invoice #: ${order.order_no ?? "N/A"}`, 14, metaStart);
-    doc.text(`Retailer: ${order.retailer_name}`, 14, metaStart + 6);
-    doc.text(`Status: ${order.status}`, 14, metaStart + 12);
-    doc.text(`Created: ${new Date(order.created_at).toLocaleDateString()}`, 14, metaStart + 18);
-    doc.text(`Due Date: ${order.due_date ? new Date(order.due_date).toLocaleDateString() : "N/A"}`, 14, metaStart + 24);
-    doc.text(`Payment Terms: ${order.payment_terms ?? "N/A"}`, 14, metaStart + 30);
+  const generateInvoice = async (order: RetailOrder) => {
+    setDownloadingInvoiceId(order.order_uuid);
 
-    autoTable(doc, {
-      startY: metaStart + 40,
-      head: [["SKU", "Qty", "Unit Price", "Line Total"]],
-      body: lines.map((line) => [
-        line.sku,
-        String(line.qty),
-        formatPHP(Number(line.unit_price ?? 0)),
-        formatPHP(Number(line.line_total ?? 0)),
-      ]),
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [0, 163, 173] },
+    try {
+      const response = await fetch(
+        `${retailOrdersBaseUrl}/orders/${order.order_uuid}/invoice`,
+        {
+          method: "GET",
+          headers: {
+            apikey: publicAnonKey,
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+        },
+      );
+
+      if (!response.ok) {
+        const text = await response.text();
+        toast.error("Failed to download invoice", {
+          description: text || "Request failed",
+        });
+        return;
+      }
+
+      const blob = await response.blob();
+      triggerPdfDownload({
+        blob,
+        filename: `${order.order_no ?? "invoice"}.pdf`,
+        documentRef: document,
+        urlRef: URL,
+      });
+    } catch (error) {
+      toast.error("Failed to download invoice", {
+        description:
+          error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setDownloadingInvoiceId(null);
+    }
+  };
+
+  const submitPayment = async () => {
+    if (!selectedPaymentOrder) return;
+
+    const amount = Number(paymentForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Payment amount must be greater than 0.");
+      return;
+    }
+
+    if (!paymentForm.paymentDate) {
+      toast.error("Payment date is required.");
+      return;
+    }
+
+    if (!paymentForm.reference.trim()) {
+      toast.error("Reference / check number is required.");
+      return;
+    }
+
+    setSavingPayment(true);
+
+    const { error } = await supabase.from("payments").insert({
+      supplier_name: selectedPaymentOrder.retailer_name,
+      amount,
+      payment_date: paymentForm.paymentDate,
+      payment_method: paymentForm.paymentMethod || "Check",
+      reference_no: paymentForm.reference.trim(),
+      notes: buildInvoicePaymentNote(
+        selectedPaymentOrder.order_no ?? "invoice",
+        paymentForm.notes,
+      ),
     });
 
-    const endY = (doc as any).lastAutoTable?.finalY ?? metaStart + 40;
-    doc.setFontSize(12);
-    doc.text(`Total: ${formatPHP(Number(order.total_amount ?? 0))}`, 14, endY + 10);
+    setSavingPayment(false);
 
-    doc.save(`${order.order_no ?? "invoice"}.pdf`);
+    if (error) {
+      toast.error("Failed to log payment", {
+        description: error.message,
+      });
+      return;
+    }
+
+    toast.success("Payment logged", {
+      description: "Invoice balance has been refreshed.",
+    });
+
+    setPaymentForm((prev) => ({
+      ...prev,
+      amount: "",
+      notes: "",
+    }));
+
+    await fetchInvoiceSummary(selectedPaymentOrder);
   };
 
   const removeLine = (idx: number) =>
@@ -456,64 +721,40 @@ export function OutboundDistribution() {
       toast.error("All line items must have quantity greater than 0.");
       return;
     }
-    if (newOrder.lines.some((line) => line.unitPrice < 0)) {
-      toast.error("Unit price cannot be negative.");
-      return;
-    }
 
     setSubmitting(true);
 
-    const { data: order, error: orderError } = await supabase
-      .from("retail_orders")
-      .insert({
+    const response = await fetch(`${retailOrdersBaseUrl}/orders`, {
+      method: "POST",
+      headers: functionHeaders,
+      body: JSON.stringify({
         retailer_name: newOrder.retailerName,
         branch_suffix: newOrder.branchSuffix || null,
         payment_terms: newOrder.paymentTerms || null,
         due_date: newOrder.dueDate || null,
         notes: newOrder.notes || newOrder.orderChannel || null,
-        status: "placed",
         priority_level: newOrder.priorityLevel || null,
-      })
-      .select("order_uuid")
-      .single();
+        lines: newOrder.lines.map((line) => ({
+          sku: line.sku.trim(),
+          qty: Number(line.qty),
+        })),
+      }),
+    });
 
-    if (orderError || !order) {
-      toast.error("Failed to create order", { description: orderError?.message });
-      setSubmitting(false);
-      return;
-    }
+    const payload = await response.json().catch(() => null);
 
-    const lines = newOrder.lines.map((line) => ({
-      order_uuid: order.order_uuid,
-      sku: line.sku.trim(),
-      qty: Number(line.qty),
-      unit_price: Number(line.unitPrice),
-    }));
-
-    const { error: linesError } = await supabase
-      .from("retail_order_lines")
-      .insert(lines);
-
-    if (linesError) {
-      toast.error("Order created but line items failed", { description: linesError.message });
-      setSubmitting(false);
-      return;
-    }
-
-    const { data: fulfillmentData, error: fulfillmentError } =
-      await supabase.rpc("fulfill_retail_order", {
-        p_order_uuid: order.order_uuid,
-      });
-
-    if (fulfillmentError) {
-      toast.error("Order saved but fulfillment failed", {
-        description: fulfillmentError.message,
+    if (!response.ok) {
+      toast.error("Failed to create order", {
+        description:
+          response.status === 404
+            ? "The retail-orders edge function is not deployed in this Supabase project."
+            : payload?.error || payload?.message || "Request failed",
       });
       setSubmitting(false);
       return;
     }
 
-    const fulfillment = (fulfillmentData ||
+    const fulfillment = (payload?.fulfillment ||
       {}) as FulfillmentResult;
 
     if (fulfillment.error) {
@@ -524,18 +765,11 @@ export function OutboundDistribution() {
       return;
     }
 
-    const backorderedQty = Number(
-      fulfillment.qty_backordered_total ?? 0,
-    );
+    const fulfillmentUiState = getFulfillmentUiState(fulfillment);
     toast.success(
-      fulfillment.status === "partially_fulfilled"
-        ? "Order partially fulfilled"
-        : "Order fulfilled",
+      fulfillmentUiState.toastTitle,
       {
-        description:
-          backorderedQty > 0
-            ? `${backorderedQty} unit(s) moved to backorder.`
-            : "All ordered quantities were allocated from stock.",
+        description: fulfillmentUiState.toastDescription,
       },
     );
 
@@ -547,7 +781,7 @@ export function OutboundDistribution() {
       dueDate: "",
       notes: "",
       priorityLevel: "",
-      lines: [{ sku: "", qty: 1, unitPrice: 0 }],
+      lines: [{ sku: "", qty: 1 }],
     });
     setShowLogForm(false);
     setSubmitting(false);
@@ -723,9 +957,9 @@ export function OutboundDistribution() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
                 >
                   <option value="">Select priority...</option>
+                  <option value="Normal">Normal</option>
+                  <option value="Urgent">Urgent</option>
                   <option value="High">High</option>
-                  <option value="Medium">Medium</option>
-                  <option value="Low">Low</option>
                 </select>
               </div>
             )}
@@ -751,17 +985,13 @@ export function OutboundDistribution() {
                 <div className="flex items-center gap-2">
                 <select
                   value={line.sku}
-                  onChange={(event) => {
-                    const selected = availableProducts.find((p) => p.sku === event.target.value);
-                    updateLine(idx, "sku", event.target.value);
-                    if (selected) updateLine(idx, "unitPrice", selected.unit_price);
-                  }}
+                  onChange={(event) => updateLine(idx, "sku", event.target.value)}
                   className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
                 >
                   <option value="">Select SKU...</option>
                   {availableProducts.map((product) => (
                     <option key={product.sku} value={product.sku}>
-                      {product.sku} - {product.product_name} (stock: {product.current_stock}, price: {product.unit_price})
+                      {product.sku} - {product.product_name} (stock: {product.current_stock}, locked price: {formatPHP(product.selling_price)})
                     </option>
                   ))}
                 </select>
@@ -774,12 +1004,19 @@ export function OutboundDistribution() {
                   className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-400"
                 />
                 <input
-                  type="number"
-                  min={0}
-                  placeholder="Unit Price"
-                  value={line.unitPrice}
-                  onChange={(event) => updateLine(idx, "unitPrice", Number(event.target.value))}
-                  className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-400"
+                  type="text"
+                  readOnly
+                  placeholder="Locked"
+                  value={
+                    line.sku
+                      ? formatPHP(
+                          availableProducts.find((product) => product.sku === line.sku)
+                            ?.selling_price ?? 0,
+                        )
+                      : ""
+                  }
+                  className="w-28 border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-center text-gray-600 cursor-not-allowed"
+                  title="Locked selling price from the server"
                 />
                 {newOrder.lines.length > 1 && (
                   <button
@@ -809,6 +1046,12 @@ export function OutboundDistribution() {
             <button onClick={addLine} className="text-sm text-teal-600 hover:underline mt-1">
               + Add Line
             </button>
+            <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+              Estimated total from locked server pricing for display only:{" "}
+              <span className="font-semibold text-[#1A2B47]">
+                {formatPHP(estimatedOrderTotal)}
+              </span>
+            </div>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
@@ -929,10 +1172,19 @@ export function OutboundDistribution() {
 
                       <div className="flex items-center gap-2 pt-1">
                         <button
-                          onClick={() => generateInvoice(order)}
-                          className="px-3 py-1.5 rounded border text-sm font-medium transition-colors border-teal-400 text-teal-600 hover:bg-teal-50"
+                          onClick={() => void generateInvoice(order)}
+                          disabled={downloadingInvoiceId === order.order_uuid}
+                          className="px-3 py-1.5 rounded border text-sm font-medium transition-colors border-teal-400 text-teal-600 hover:bg-teal-50 disabled:border-gray-200 disabled:text-gray-400 disabled:bg-gray-50 disabled:cursor-not-allowed"
                         >
-                          Generate Invoice
+                          {downloadingInvoiceId === order.order_uuid
+                            ? "Downloading..."
+                            : "Generate Invoice"}
+                        </button>
+                        <button
+                          onClick={() => void openPaymentModal(order)}
+                          className="px-3 py-1.5 rounded border text-sm font-medium transition-colors border-emerald-400 text-emerald-700 hover:bg-emerald-50"
+                        >
+                          Log Payment
                         </button>
                         <button
                           onClick={() => openEditModal(order)}
@@ -968,6 +1220,215 @@ export function OutboundDistribution() {
           </Tabs>
         </CardContent>
       </Card>
+
+      <Dialog
+        open={isPaymentModalOpen}
+        onOpenChange={(open) => {
+          setIsPaymentModalOpen(open);
+          if (!open) {
+            setSelectedPaymentOrder(null);
+            setInvoiceSummary(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-[#111827]">
+              Log Retailer Payment
+            </DialogTitle>
+            <DialogDescription className="text-[#6B7280]">
+              Record partial or full check payments and refresh the invoice
+              balance immediately.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedPaymentOrder && (
+            <div className="space-y-5">
+              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <div className="text-xs text-[#6B7280]">Retailer</div>
+                    <div className="font-semibold text-[#111827]">
+                      {selectedPaymentOrder.retailer_name}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-[#6B7280]">Invoice</div>
+                    <div className="font-semibold text-[#111827]">
+                      {selectedPaymentOrder.order_no}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-[#6B7280]">Order Total</div>
+                    <div className="font-semibold text-[#111827]">
+                      {formatPHP(invoiceSummary?.orderTotal ?? selectedPaymentOrder.total_amount ?? 0)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-[#6B7280]">Remaining Balance</div>
+                    <div className="font-semibold text-[#F97316]">
+                      {formatPHP(
+                        invoiceSummary?.remainingBalance ??
+                          selectedPaymentOrder.total_amount ??
+                          0,
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {loadingInvoiceSummary && (
+                  <p className="mt-3 text-xs text-[#6B7280]">
+                    Refreshing invoice balance...
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-gray-700">
+                    Amount
+                  </label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={paymentForm.amount}
+                    onChange={(event) =>
+                      setPaymentForm((prev) => ({
+                        ...prev,
+                        amount: event.target.value,
+                      }))
+                    }
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-gray-700">
+                    Payment Date
+                  </label>
+                  <input
+                    type="date"
+                    value={paymentForm.paymentDate}
+                    onChange={(event) =>
+                      setPaymentForm((prev) => ({
+                        ...prev,
+                        paymentDate: event.target.value,
+                      }))
+                    }
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-gray-700">
+                    Payment Method
+                  </label>
+                  <select
+                    value={paymentForm.paymentMethod}
+                    onChange={(event) =>
+                      setPaymentForm((prev) => ({
+                        ...prev,
+                        paymentMethod: event.target.value,
+                      }))
+                    }
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  >
+                    <option value="Check">Check</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="Cash">Cash</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-gray-700">
+                    Reference / Check No.
+                  </label>
+                  <input
+                    type="text"
+                    value={paymentForm.reference}
+                    onChange={(event) =>
+                      setPaymentForm((prev) => ({
+                        ...prev,
+                        reference: event.target.value,
+                      }))
+                    }
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  />
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-sm font-medium text-gray-700">
+                    Notes
+                  </label>
+                  <textarea
+                    value={paymentForm.notes}
+                    onChange={(event) =>
+                      setPaymentForm((prev) => ({
+                        ...prev,
+                        notes: event.target.value,
+                      }))
+                    }
+                    rows={3}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                    placeholder="Optional payment notes"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[#E5E7EB] p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="font-semibold text-[#111827]">
+                    Applied Payments
+                  </div>
+                  <div className="text-sm text-[#6B7280]">
+                    Paid: {formatPHP(invoiceSummary?.amountPaid ?? 0)}
+                  </div>
+                </div>
+
+                {invoiceSummary && invoiceSummary.payments.length > 0 ? (
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {invoiceSummary.payments.map((payment) => (
+                      <div
+                        key={payment.id}
+                        className="flex items-center justify-between rounded-lg bg-[#F8FAFC] px-3 py-2 text-sm"
+                      >
+                        <div>
+                          <div className="font-medium text-[#111827]">
+                            {payment.payment_method ?? "Payment"} |{" "}
+                            {payment.reference_no ?? "No ref"}
+                          </div>
+                          <div className="text-xs text-[#6B7280]">
+                            {new Date(payment.payment_date).toLocaleDateString()}
+                          </div>
+                        </div>
+                        <div className="font-semibold text-emerald-700">
+                          {formatPHP(Number(payment.amount ?? 0))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-[#6B7280]">
+                    No payments logged for this invoice yet.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setIsPaymentModalOpen(false)}
+                  className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => void submitPayment()}
+                  disabled={savingPayment}
+                  className="px-4 py-2 rounded-lg text-sm bg-emerald-600 text-white font-medium hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {savingPayment ? "Saving..." : "Save Payment"}
+                </button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Payment Tracker */}
       <Card className="bg-white border-[#111827]/10 shadow-sm">
