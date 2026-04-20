@@ -8,7 +8,11 @@
     "dev": "vite",
     "dev:supplier": "npm --prefix services/supplier-service run dev",
     "start:supplier": "npm --prefix services/supplier-service start",
-    "loadtest:gateway": "node scripts/load-test-gateway.mjs"
+    "loadtest:gateway": "node scripts/load-test-gateway.mjs",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "test:contract": "NODE_OPTIONS='--experimental-vm-modules' jest tests/contract",
+    "test:provider": "node scripts/filter-pact.mjs && NODE_OPTIONS='--experimental-vm-modules' jest tests/provider",
+    "test:integration": "NODE_OPTIONS='--experimental-vm-modules' jest tests/integration --runInBand"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -76,9 +80,14 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@pact-foundation/pact": "^16.3.0",
     "@tailwindcss/vite": "4.1.12",
+    "@types/jest": "^30.0.0",
     "@vitejs/plugin-react": "4.7.0",
+    "jest": "^30.3.0",
+    "node-fetch": "^3.3.2",
     "tailwindcss": "4.1.12",
+    "ts-jest": "^29.4.9",
     "vite": "6.3.5"
   },
   "peerDependencies": {
