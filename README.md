@@ -1,36 +1,17 @@
 
-## Pharma Distribution Management System
+  # Pharma Distribution Management System
 
-This repository is split into:
+  This is a code bundle for Pharma Distribution Management System. The original project is available at https://www.figma.com/design/Fl4hGmw2RESQoKXa4y76Pt/Pharma-Distribution-Management-System.
 
-- `src/frontend`: Next.js frontend
-- `src/backend`: Nest.js backend
+  ## Running the code
 
-The original UI bundle came from the Figma design at `https://www.figma.com/design/Fl4hGmw2RESQoKXa4y76Pt/Pharma-Distribution-Management-System`.
+  Run `npm i` to install the dependencies.
 
-## Install
+  Run `npm run dev` to start the development server.
 
-```bash
-npm run install:frontend
-npm run install:backend
-```
+  ## Supplier API service
 
-## Run
+  Run `npm run dev:supplier` to start the supplier microservice.
 
-Frontend:
-
-```bash
-npm run dev:frontend
-```
-
-Backend:
-
-```bash
-npm run dev:backend
-```
-
-Frontend-to-backend wiring:
-
-- Frontend calls the Nest API via `NEXT_PUBLIC_API_BASE_URL`
-- Default backend URL is `http://localhost:3001/api`
+  Health check: `http://localhost:4001/health`
   

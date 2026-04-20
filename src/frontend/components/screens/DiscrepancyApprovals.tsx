@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 import { useEffect, useMemo, useState } from "react";
+=======
+import { useEffect, useMemo, useRef, useState } from "react";
+>>>>>>> Stashed changes
 import {
   AlertCircle,
   ChevronDown,
@@ -36,9 +40,14 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+<<<<<<< Updated upstream
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+=======
+import html2pdf from "html2pdf.js";
+import * as XLSX from "xlsx";
+>>>>>>> Stashed changes
 
 type ShipmentDiscrepancy = {
   id: string;
@@ -61,9 +70,13 @@ type ShipmentDiscrepancy = {
 
 type QcInspectionRow = Record<string, unknown>;
 
+<<<<<<< Updated upstream
 const normalizeStatus = (
   rawStatus: string | null | undefined,
 ) => {
+=======
+const normalizeStatus = (rawStatus: string | null | undefined) => {
+>>>>>>> Stashed changes
   const s = (rawStatus ?? "").trim().toLowerCase();
   if (!s) return "pending";
   return s;
@@ -79,6 +92,7 @@ const extractImageUrls = (
   row: ShipmentDiscrepancy | null,
 ): string[] => {
   if (!row) return [];
+<<<<<<< Updated upstream
   const raw =
     row.image_urls ?? row["image_url"] ?? row["images"];
   if (!raw) return [];
@@ -87,6 +101,13 @@ const extractImageUrls = (
     return raw.filter(
       (item) => typeof item === "string" && item.trim(),
     );
+=======
+  const raw = row.image_urls ?? row["image_url"] ?? row["images"];
+  if (!raw) return [];
+
+  if (Array.isArray(raw)) {
+    return raw.filter((item) => typeof item === "string" && item.trim());
+>>>>>>> Stashed changes
   }
 
   if (typeof raw === "string") {
@@ -114,6 +135,10 @@ const extractImageUrls = (
 };
 
 export function DiscrepancyApprovals() {
+<<<<<<< Updated upstream
+=======
+  const dashboardRef = useRef<HTMLDivElement | null>(null);
+>>>>>>> Stashed changes
   const [discrepancies, setDiscrepancies] = useState<
     ShipmentDiscrepancy[]
   >([]);
@@ -122,7 +147,11 @@ export function DiscrepancyApprovals() {
     fail: 0,
   });
   const [supplierDefects, setSupplierDefects] = useState<
+<<<<<<< Updated upstream
     Array<{ name: string; defects: number; id: string }>
+=======
+    Array<{ name: string; defects: number }>
+>>>>>>> Stashed changes
   >([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isReportsLoading, setIsReportsLoading] =
@@ -132,6 +161,7 @@ export function DiscrepancyApprovals() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDetail, setSelectedDetail] =
     useState<ShipmentDiscrepancy | null>(null);
+<<<<<<< Updated upstream
   const [isDetailModalOpen, setIsDetailModalOpen] =
     useState(false);
   const [isUpdatingId, setIsUpdatingId] = useState<
@@ -141,6 +171,12 @@ export function DiscrepancyApprovals() {
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingExcel, setIsExportingExcel] =
     useState(false);
+=======
+  const [isUpdatingId, setIsUpdatingId] = useState<string | null>(
+    null,
+  );
+  const [reportsOpen, setReportsOpen] = useState(true);
+>>>>>>> Stashed changes
 
   const fetchDiscrepancies = async () => {
     setIsLoading(true);
@@ -181,9 +217,13 @@ export function DiscrepancyApprovals() {
     patch: Partial<ShipmentDiscrepancy>,
   ) => {
     setDiscrepancies((prev) =>
+<<<<<<< Updated upstream
       prev.map((row) =>
         row.id === id ? { ...row, ...patch } : row,
       ),
+=======
+      prev.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+>>>>>>> Stashed changes
     );
     setSelectedDetail((prev) =>
       prev && prev.id === id ? { ...prev, ...patch } : prev,
@@ -226,6 +266,8 @@ export function DiscrepancyApprovals() {
       });
     } catch (err) {
       toast.error("Failed to update disposition", {
+<<<<<<< Updated upstream
+=======
         description:
           err instanceof Error ? err.message : "Unknown error",
       });
@@ -234,6 +276,236 @@ export function DiscrepancyApprovals() {
     }
   };
 
+  const loadReports = async () => {
+    setIsReportsLoading(true);
+    try {
+      const [qcRes, discrepanciesRes] = await Promise.all([
+        supabase.from("qc_inspections").select("*"),
+        supabase.from("shipment_discrepancies").select("*"),
+      ]);
+
+      if (qcRes.error) throw qcRes.error;
+      if (discrepanciesRes.error) throw discrepanciesRes.error;
+
+      const qcRows = (qcRes.data ?? []) as QcInspectionRow[];
+      const qcTotals = { pass: 0, fail: 0 };
+
+      qcRows.forEach((row) => {
+        const raw =
+          (row.result ??
+            row.status ??
+            row.outcome ??
+            row.qc_status ??
+            row.decision ??
+            "") as string;
+        const value = String(raw).toLowerCase();
+        if (value.includes("pass")) qcTotals.pass += 1;
+        if (value.includes("fail") || value.includes("reject")) {
+          qcTotals.fail += 1;
+        }
+      });
+
+      const discrepancyRows =
+        (discrepanciesRes.data ?? []) as ShipmentDiscrepancy[];
+      const supplierMap = new Map<string, number>();
+
+      discrepancyRows.forEach((row) => {
+        const name =
+          (row["supplier_name"] as string | undefined) ??
+          (row["vendor_name"] as string | undefined) ??
+          (row["supplier"] as string | undefined) ??
+          (row["vendor"] as string | undefined) ??
+          row.reported_by ??
+          "Unknown Supplier";
+        const key = name || "Unknown Supplier";
+        supplierMap.set(key, (supplierMap.get(key) ?? 0) + 1);
+      });
+
+      const supplierData = Array.from(supplierMap.entries())
+        .map(([name, defects]) => ({ name, defects }))
+        .sort((a, b) => b.defects - a.defects)
+        .slice(0, 6);
+
+      setQcSummary(qcTotals);
+      setSupplierDefects(supplierData);
+    } catch (err) {
+      toast.error("Failed to load quality reports", {
+        description:
+          err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setIsReportsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDiscrepancies();
+    loadReports();
+  }, []);
+
+  const statusOptions = useMemo(() => {
+    const unique = new Set<string>();
+    discrepancies.forEach((row) => {
+      unique.add(normalizeStatus(row.status));
+    });
+    return ["all", ...Array.from(unique).sort()];
+  }, [discrepancies]);
+
+  const filteredDiscrepancies = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+    return discrepancies.filter((row) => {
+      if (
+        statusFilter !== "all" &&
+        normalizeStatus(row.status) !== statusFilter
+      ) {
+        return false;
+      }
+      if (!keyword) return true;
+      const haystack = [
+        row.id,
+        row.shipment_reference,
+        row.shipment_id,
+        row.po_number,
+        row.sku,
+        row.product_name,
+        row.reported_by,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [discrepancies, searchTerm, statusFilter]);
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    discrepancies.forEach((row) => {
+      const status = normalizeStatus(row.status);
+      counts[status] = (counts[status] ?? 0) + 1;
+    });
+    return counts;
+  }, [discrepancies]);
+
+  const selectedImages = useMemo(
+    () => extractImageUrls(selectedDetail),
+    [selectedDetail],
+  );
+
+  const getStatusStyle = (status: string) => {
+    switch (status) {
+      case "pending":
+        return "bg-[#F97316] text-white";
+      case "rejected":
+        return "bg-[#DC2626] text-white";
+      case "in_review":
+        return "bg-[#2563EB] text-white";
+      case "resolved":
+        return "bg-[#10B981] text-white";
+      case "released":
+        return "bg-[#10B981] text-white";
+      case "returned":
+        return "bg-[#F59E0B] text-white";
+      case "scrapped":
+        return "bg-[#DC2626] text-white";
+      default:
+        return "bg-[#E5E7EB] text-[#111827]";
+    }
+  };
+
+  const qcChartData = useMemo(
+    () => [
+      { name: "Pass", count: qcSummary.pass },
+      { name: "Fail", count: qcSummary.fail },
+    ],
+    [qcSummary],
+  );
+
+  const handleExportPdf = async () => {
+    if (!dashboardRef.current) {
+      toast.error("Export failed", {
+        description: "Dashboard is not ready yet.",
+      });
+      return;
+    }
+
+    const filename = `discrepancy-dashboard-${new Date()
+      .toISOString()
+      .slice(0, 10)}.pdf`;
+
+    try {
+      const root = dashboardRef.current;
+      const originalNodes = Array.from(root.querySelectorAll("*"));
+
+      await html2pdf()
+        .from(root)
+        .set({
+          margin: 8,
+          filename,
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            onclone: (clonedDoc) => {
+              const overrideStyle = clonedDoc.createElement("style");
+              overrideStyle.textContent = `
+                * {
+                  color: #111827 !important;
+                  background-color: #ffffff !important;
+                  border-color: #E5E7EB !important;
+                  outline-color: #E5E7EB !important;
+                  box-shadow: none !important;
+                  filter: none !important;
+                }
+                svg, path {
+                  color: inherit !important;
+                  fill: currentColor !important;
+                }
+              `;
+              clonedDoc.head.appendChild(overrideStyle);
+
+              const clonedRoot = clonedDoc.querySelector(
+                "[data-export-root='true']",
+              ) as HTMLElement | null;
+              if (!clonedRoot) return;
+
+              const clonedNodes = Array.from(
+                clonedRoot.querySelectorAll("*"),
+              );
+
+              const count = Math.min(
+                originalNodes.length,
+                clonedNodes.length,
+              );
+
+              for (let i = 0; i < count; i += 1) {
+                const original = originalNodes[i];
+                const cloned = clonedNodes[i] as HTMLElement;
+                const styles = getComputedStyle(original);
+
+                cloned.style.color = styles.color;
+                cloned.style.backgroundColor =
+                  styles.backgroundColor;
+                cloned.style.borderColor = styles.borderColor;
+                cloned.style.outlineColor = styles.outlineColor;
+                cloned.style.boxShadow = styles.boxShadow;
+              }
+            },
+          },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+        })
+        .save();
+    } catch (err) {
+      toast.error("PDF export failed", {
+>>>>>>> Stashed changes
+        description:
+          err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setIsUpdatingId(null);
+    }
+  };
+
+<<<<<<< Updated upstream
   const loadReports = async () => {
     setIsReportsLoading(true);
     try {
@@ -634,6 +906,53 @@ export function DiscrepancyApprovals() {
 
   return (
     <div className="p-4 lg:p-8 space-y-6 bg-[#F8FAFC]">
+=======
+  const handleExportExcel = () => {
+    const rows = filteredDiscrepancies.map((row) => {
+      const expected = Number(row.expected_qty);
+      const received = Number(row.received_qty);
+      const variance =
+        Number.isFinite(expected) && Number.isFinite(received)
+          ? received - expected
+          : null;
+      return {
+        id: row.id,
+        status: row.status ?? "",
+        disposition: row.disposition ?? "",
+        shipment_reference:
+          row.shipment_reference ?? row.shipment_id ?? "",
+        po_number: row.po_number ?? "",
+        product_name: row.product_name ?? "",
+        sku: row.sku ?? "",
+        expected_qty: row.expected_qty ?? "",
+        received_qty: row.received_qty ?? "",
+        variance: variance ?? "",
+        reported_by: row.reported_by ?? "",
+        created_at: row.created_at ?? "",
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      worksheet,
+      "Discrepancies",
+    );
+
+    const filename = `discrepancy-dashboard-${new Date()
+      .toISOString()
+      .slice(0, 10)}.xlsx`;
+    XLSX.writeFile(workbook, filename);
+  };
+
+  return (
+    <div
+      ref={dashboardRef}
+      data-export-root="true"
+      className="p-4 lg:p-8 space-y-6 bg-[#F8FAFC]"
+    >
+>>>>>>> Stashed changes
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl lg:text-4xl font-semibold mb-2 text-[#111827]">
@@ -647,6 +966,7 @@ export function DiscrepancyApprovals() {
           <Button
             variant="outline"
             className="border-[#111827]/20 text-[#111827]"
+<<<<<<< Updated upstream
             onClick={() => void handleExportPdf()}
             disabled={isExportingPdf}
           >
@@ -1290,3 +1610,11 @@ export function DiscrepancyApprovals() {
     </div>
   );
 }
+=======
+            onClick={handleExportPdf}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Export PDF
+          </Button>
+ 
+>>>>>>> Stashed changes

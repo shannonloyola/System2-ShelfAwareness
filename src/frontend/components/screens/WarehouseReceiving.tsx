@@ -15,6 +15,7 @@ import {
   SendHorizonal,
   RefreshCw,
   Download,
+  Truck,
 } from "lucide-react";
 import {
   Card,
@@ -163,6 +164,17 @@ export function WarehouseReceiving() {
   const [backorderAlerts, setBackorderAlerts] = useState<
     BackorderAlertRow[]
   >([]);
+  const [showDeliveryScheduleDialog, setShowDeliveryScheduleDialog] = useState(false);
+  const [schedulingDelivery, setSchedulingDelivery] = useState(false);
+  const [deliveryForm, setDeliveryForm] = useState({
+    delivery_datetime: "",
+    supplier_name: "",
+    expected_items_count: "",
+    warehouse_location: "",
+    contact_person_name: "",
+    contact_phone: "",
+    notes: "",
+  });
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const scanVideoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -1153,6 +1165,58 @@ export function WarehouseReceiving() {
     }
   };
 
+  const handleScheduleDelivery = async () => {
+    // Validation
+    if (!deliveryForm.delivery_datetime || !deliveryForm.supplier_name || 
+        !deliveryForm.expected_items_count || !deliveryForm.warehouse_location) {
+      toast.error("Validation Error", {
+        description: "Please fill in all required fields marked with *",
+      });
+      return;
+    }
+
+    setSchedulingDelivery(true);
+    try {
+      const response = await supabase.functions.invoke("shipments", {
+        body: {
+          delivery_datetime: deliveryForm.delivery_datetime,
+          supplier_name: deliveryForm.supplier_name,
+          expected_items_count: parseInt(deliveryForm.expected_items_count),
+          warehouse_location: deliveryForm.warehouse_location,
+          contact_person_name: deliveryForm.contact_person_name || null,
+          contact_phone: deliveryForm.contact_phone || null,
+          notes: deliveryForm.notes || null,
+        },
+      });
+
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
+
+      toast.success("Delivery scheduled successfully", {
+        description: "The warehouse is now expecting this delivery.",
+      });
+
+      // Reset form and close dialog
+      setDeliveryForm({
+        delivery_datetime: "",
+        supplier_name: "",
+        expected_items_count: "",
+        warehouse_location: "",
+        contact_person_name: "",
+        contact_phone: "",
+        notes: "",
+      });
+      setShowDeliveryScheduleDialog(false);
+    } catch (error) {
+      toast.error("Failed to schedule delivery", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setSchedulingDelivery(false);
+    }
+  };
+
   const loadImage = (src: string): Promise<HTMLImageElement | null> =>
     new Promise((resolve) => {
       const img = new Image();
@@ -1376,6 +1440,126 @@ export function WarehouseReceiving() {
           </CardContent>
         </Card>
       )}
+
+      {/* Delivery Scheduling Dialog */}
+      <Dialog open={showDeliveryScheduleDialog} onOpenChange={setShowDeliveryScheduleDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-[#111827] flex items-center gap-2">
+              <Truck className="w-5 h-5" />
+              Schedule Delivery
+            </DialogTitle>
+            <DialogDescription className="text-[#6B7280]">
+              Schedule a delivery for warehouse receiving. Fill in the details below.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label className="text-[#6B7280]">Delivery Date & Time *</Label>
+              <Input
+                type="datetime-local"
+                value={deliveryForm.delivery_datetime}
+                onChange={(e) => setDeliveryForm({ ...deliveryForm, delivery_datetime: e.target.value })}
+                className="mt-2 border-[#111827]/10"
+                disabled={schedulingDelivery}
+              />
+            </div>
+
+            <div>
+              <Label className="text-[#6B7280]">Supplier Name *</Label>
+              <Input
+                value={deliveryForm.supplier_name}
+                onChange={(e) => setDeliveryForm({ ...deliveryForm, supplier_name: e.target.value })}
+                placeholder="Enter supplier name"
+                className="mt-2 border-[#111827]/10"
+                disabled={schedulingDelivery}
+              />
+            </div>
+
+            <div>
+              <Label className="text-[#6B7280]">Expected Items Count *</Label>
+              <Input
+                type="number"
+                value={deliveryForm.expected_items_count}
+                onChange={(e) => setDeliveryForm({ ...deliveryForm, expected_items_count: e.target.value })}
+                placeholder="Enter expected number of items"
+                className="mt-2 border-[#111827]/10"
+                disabled={schedulingDelivery}
+              />
+            </div>
+
+            <div>
+              <Label className="text-[#6B7280]">Warehouse Location *</Label>
+              <Select
+                value={deliveryForm.warehouse_location}
+                onValueChange={(value) => setDeliveryForm({ ...deliveryForm, warehouse_location: value })}
+                disabled={schedulingDelivery}
+              >
+                <SelectTrigger className="mt-2 border-[#111827]/10">
+                  <SelectValue placeholder="Select warehouse location" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Zone A-01">Zone A-01</SelectItem>
+                  <SelectItem value="Zone B-02">Zone B-02</SelectItem>
+                  <SelectItem value="Zone C-03">Zone C-03</SelectItem>
+                  <SelectItem value="Zone D-04">Zone D-04</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label className="text-[#6B7280]">Contact Person Name</Label>
+              <Input
+                value={deliveryForm.contact_person_name}
+                onChange={(e) => setDeliveryForm({ ...deliveryForm, contact_person_name: e.target.value })}
+                placeholder="Enter contact person name"
+                className="mt-2 border-[#111827]/10"
+                disabled={schedulingDelivery}
+              />
+            </div>
+
+            <div>
+              <Label className="text-[#6B7280]">Contact Phone</Label>
+              <Input
+                value={deliveryForm.contact_phone}
+                onChange={(e) => setDeliveryForm({ ...deliveryForm, contact_phone: e.target.value })}
+                placeholder="Enter contact phone number"
+                className="mt-2 border-[#111827]/10"
+                disabled={schedulingDelivery}
+              />
+            </div>
+
+            <div>
+              <Label className="text-[#6B7280]">Notes</Label>
+              <Input
+                value={deliveryForm.notes}
+                onChange={(e) => setDeliveryForm({ ...deliveryForm, notes: e.target.value })}
+                placeholder="Additional notes (optional)"
+                className="mt-2 border-[#111827]/10"
+                disabled={schedulingDelivery}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                variant="outline"
+                onClick={() => setShowDeliveryScheduleDialog(false)}
+                className="border-[#111827]/20 text-[#111827]"
+                disabled={schedulingDelivery}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleScheduleDelivery}
+                disabled={schedulingDelivery}
+                className="bg-[#059669] hover:bg-[#047857] text-white"
+              >
+                {schedulingDelivery ? "Scheduling..." : "Schedule Delivery"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {showGrnForm && (
         <>
@@ -2005,7 +2189,7 @@ export function WarehouseReceiving() {
                 Posted - {savedGrnNumber}
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 <Button
                   onClick={handleSaveGrn}
                   disabled={isSaving || isPosting}
@@ -2033,6 +2217,15 @@ export function WarehouseReceiving() {
                 >
                   <Download className="w-5 h-5 mr-2" />
                   Download GRN
+                </Button>
+
+                <Button
+                  onClick={() => setShowDeliveryScheduleDialog(true)}
+                  variant="outline"
+                  className="h-14 border-[#F59E0B] text-[#F59E0B] hover:bg-[#F59E0B]/10 font-semibold"
+                >
+                  <Truck className="w-5 h-5 mr-2" />
+                  Schedule Delivery
                 </Button>
               </div>
             )}
