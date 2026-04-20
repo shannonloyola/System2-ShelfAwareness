@@ -31,6 +31,11 @@ import {
 } from "../ui/select";
 import { toast } from "sonner";
 import { supabase } from "../../../lib/supabase";
+import {
+  fetchSupplierByName,
+  fetchSupplierScorecard as fetchSupplierScorecardFromService,
+  fetchSuppliers,
+} from "../../../lib/supplierService";
 import { CSVUploader } from "../CSVUploader";
 import type { CSVRow } from "../../../lib/csvParser";
 import { 
@@ -92,6 +97,8 @@ interface SupplierScorecardRow {
   reliability_score: number;
   on_time_delivery_pct?: number | null;
   defect_rate?: number | null;
+  risk_level?: string | null;
+  risk_summary?: string | null;
 }
 
 interface LineItemForm {
@@ -179,32 +186,6 @@ const formatPercent = (value: number | null | undefined) => {
   return Number(value).toFixed(1);
 };
 
-const getOnTimeDeliveryPct = (
-  scorecard: SupplierScorecardRow | null,
-) => {
-  if (!scorecard) return 0;
-  return Number(
-    scorecard.on_time_delivery_pct ??
-      scorecard.clean_receipt_rate ??
-      0,
-  );
-};
-
-const getDefectRate = (
-  scorecard: SupplierScorecardRow | null,
-) => {
-  if (!scorecard) return 0;
-  if (scorecard.defect_rate != null) {
-    return Number(scorecard.defect_rate);
-  }
-  if (!scorecard.total_pos) return 0;
-  return (
-    (Number(scorecard.total_discrepancies ?? 0) /
-      Number(scorecard.total_pos)) *
-    100
-  );
-};
-
 export function InboundProcurement() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabFilter>("all");
@@ -219,8 +200,12 @@ export function InboundProcurement() {
 
   const [poNo, setPoNo] = useState("");
   const [supplierName, setSupplierName] = useState("");
+  const [selectedSupplierId, setSelectedSupplierId] = useState("");
   const [supplierScorecard, setSupplierScorecard] =
     useState<SupplierScorecardRow | null>(null);
+  const [supplierOptions, setSupplierOptions] = useState<string[]>(
+    [],
+  );
   const [
     loadingSupplierScorecard,
     setLoadingSupplierScorecard,
@@ -314,21 +299,46 @@ export function InboundProcurement() {
 
     setLoadingSupplierScorecard(true);
 
-    const { data, error } = await supabase
-      .from("supplier_scorecards_view")
-      .select("*")
-      .ilike("supplier_name", supplier)
-      .maybeSingle();
-
-    setLoadingSupplierScorecard(false);
-
-    if (error) {
+    try {
+      const data =
+        await fetchSupplierScorecardFromService(supplier);
+      setSupplierScorecard(data ?? null);
+    } catch (error) {
       console.error("Scorecard fetch error", error);
-      return;
+      setSupplierScorecard(null);
+    } finally {
+      setLoadingSupplierScorecard(false);
+    }
+  };
+
+  const resolveSupplierDetails = useCallback(async () => {
+    const normalized = supplierName.trim();
+    if (!normalized) {
+      throw new Error("Supplier is required");
     }
 
-    setSupplierScorecard(data ?? null);
-  };
+    const supplier = await fetchSupplierByName(normalized);
+    if (!supplier) {
+      throw new Error(
+        "Supplier not found in supplier-service",
+      );
+    }
+
+    setSupplierName(supplier.supplier_name);
+    setSelectedSupplierId(supplier.id);
+    return supplier;
+  }, [supplierName]);
+
+  const fetchSupplierOptions = useCallback(async () => {
+    try {
+      const suppliers = await fetchSuppliers();
+      setSupplierOptions(
+        suppliers.map((supplier) => supplier.supplier_name),
+      );
+    } catch (error) {
+      console.error("Supplier list fetch error", error);
+    }
+  }, []);
 
   const fetchPurchaseOrders = useCallback(async () => {
     setLoadingPOs(true);
@@ -411,12 +421,12 @@ export function InboundProcurement() {
   }, []);
 
   const updatePOHeader = useCallback(
-    async (poId: string, status: string) => {
+    async (poId: string, status: string, resolvedSupplierName: string) => {
       const { data, error } = await supabase
         .from("purchase_orders")
         .update({
           po_no: poNo || null,
-          supplier_name: supplierName.trim() || null,
+          supplier_name: resolvedSupplierName || null,
           expected_delivery_date: expectedDeliveryDate || null,
           preferred_communication:
             preferredCommunication || null,
@@ -436,7 +446,6 @@ export function InboundProcurement() {
       expectedDeliveryDate,
       poNo,
       preferredCommunication,
-      supplierName,
     ],
   );
 
@@ -451,10 +460,12 @@ export function InboundProcurement() {
     setSavingDraft(true);
     try {
       let target: PurchaseOrderRow;
+      const supplier = await resolveSupplierDetails();
       if (selectedPO?.po_id) {
         target = await updatePOHeader(
           selectedPO.po_id,
           DEFAULT_PO_STATUS,
+          supplier.supplier_name,
         );
       } else {
         const generatedPoNo =
@@ -466,7 +477,7 @@ export function InboundProcurement() {
           .insert([
             {
               po_no: generatedPoNo,
-              supplier_name: supplierName.trim(),
+              supplier_name: supplier.supplier_name,
               status: DEFAULT_PO_STATUS,
               created_at: nowIso,
               paid_at: nowIso,
@@ -506,8 +517,8 @@ export function InboundProcurement() {
     generateUniquePONumber,
     poNo,
     preferredCommunication,
+    resolveSupplierDetails,
     selectedPO?.po_id,
-    supplierName,
     updatePOHeader,
   ]);
 
@@ -522,6 +533,7 @@ export function InboundProcurement() {
     setSendingPO(true);
     try {
       let targetPoId = selectedPO?.po_id ?? "";
+      const supplier = await resolveSupplierDetails();
       if (!targetPoId) {
         const generatedPoNo =
           poNo || (await generateUniquePONumber());
@@ -532,7 +544,7 @@ export function InboundProcurement() {
           .insert([
             {
               po_no: generatedPoNo,
-              supplier_name: supplierName.trim(),
+              supplier_name: supplier.supplier_name,
               status: DEFAULT_PO_STATUS,
               created_at: nowIso,
               paid_at: nowIso,
@@ -568,6 +580,7 @@ export function InboundProcurement() {
       const updated = await updatePOHeader(
         targetPoId,
         "Posted",
+        supplier.supplier_name,
       );
       setSelectedPO(updated);
       await fetchPurchaseOrders();
@@ -587,8 +600,8 @@ export function InboundProcurement() {
     generateUniquePONumber,
     poNo,
     preferredCommunication,
+    resolveSupplierDetails,
     selectedPO?.po_id,
-    supplierName,
     updatePOHeader,
   ]);
 
@@ -626,7 +639,8 @@ export function InboundProcurement() {
 
         const payload = {
           po_no: poNumber,
-          supplier_name: supplierName.trim() || "From CSV",
+          supplier_name:
+            (await resolveSupplierDetails()).supplier_name,
           expected_delivery_date: expectedDeliveryDate || null,
           preferred_communication:
             preferredCommunication || null,
@@ -694,7 +708,7 @@ export function InboundProcurement() {
       generateUniquePONumber,
       poNo,
       preferredCommunication,
-      supplierName,
+      resolveSupplierDetails,
     ],
   );
 
@@ -827,7 +841,12 @@ export function InboundProcurement() {
   useEffect(() => {
     void fetchPurchaseOrders();
     void fetchProducts();
-  }, [fetchPurchaseOrders, fetchProducts]);
+    void fetchSupplierOptions();
+  }, [
+    fetchPurchaseOrders,
+    fetchProducts,
+    fetchSupplierOptions,
+  ]);
 
   useEffect(() => {
     if (!selectedPO?.po_id) {
@@ -843,6 +862,7 @@ export function InboundProcurement() {
     setSelectedPOItems([]);
     setLineItemForms([]);
     setSupplierName("");
+    setSelectedSupplierId("");
     setPoNo("");
     setExpectedDeliveryDate("");
     setPreferredCommunication("");
@@ -861,6 +881,7 @@ export function InboundProcurement() {
     setLineItemForms([]);
     setPoNo(po.po_no ?? "");
     setSupplierName(po.supplier_name ?? "");
+    setSelectedSupplierId("");
     setExpectedDeliveryDate(po.expected_delivery_date ?? "");
     setPreferredCommunication(po.preferred_communication ?? "");
   };
@@ -1191,15 +1212,22 @@ export function InboundProcurement() {
               <div>
                 <Label>Supplier</Label>
                 <Input
+                  list="supplier-service-options"
                   value={supplierName}
                   onChange={(e) => {
                     const value = e.target.value;
                     setSupplierName(value);
-                    fetchSupplierScorecard(value);
+                    setSelectedSupplierId("");
+                    void fetchSupplierScorecard(value);
                   }}
                   placeholder="Enter supplier name..."
                   className="mt-2 border-[#111827]/10 rounded-lg"
                 />
+                <datalist id="supplier-service-options">
+                  {supplierOptions.map((option) => (
+                    <option key={option} value={option} />
+                  ))}
+                </datalist>
 
                 {false && supplierScorecard && (
                   <div
@@ -1217,26 +1245,23 @@ export function InboundProcurement() {
                 {supplierScorecard && (
                   <div
                     className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
-                      getOnTimeDeliveryPct(supplierScorecard) <
-                        85 ||
-                      getDefectRate(supplierScorecard) > 10
+                      supplierScorecard.risk_level === "high"
                         ? "border-[#FECACA] bg-[#FEF2F2] text-[#991B1B]"
+                        : supplierScorecard.risk_level === "medium"
+                          ? "border-[#FDE68A] bg-[#FFFBEB] text-[#92400E]"
                         : "border-[#BBF7D0] bg-[#F0FDF4] text-[#166534]"
                     }`}
                   >
                     <div className="font-semibold">
-                      {getOnTimeDeliveryPct(supplierScorecard) <
-                        85 ||
-                      getDefectRate(supplierScorecard) > 10
-                        ? "Warning"
-                        : "Supplier looks healthy"}
+                      {supplierScorecard.risk_summary ??
+                        "Supplier looks healthy"}
                       :{" "}
                       {formatPercent(
-                        getOnTimeDeliveryPct(supplierScorecard),
+                        supplierScorecard.on_time_delivery_pct,
                       )}
                       % On-Time Delivery |{" "}
                       {formatPercent(
-                        getDefectRate(supplierScorecard),
+                        supplierScorecard.defect_rate,
                       )}
                       % Defect Rate
                     </div>
@@ -1245,6 +1270,11 @@ export function InboundProcurement() {
                       discrepancy data for{" "}
                       {supplierScorecard.supplier_name}.
                     </div>
+                  </div>
+                )}
+                {selectedSupplierId && (
+                  <div className="mt-2 text-xs text-[#6B7280]">
+                    Supplier service ID: {selectedSupplierId}
                   </div>
                 )}
               </div>

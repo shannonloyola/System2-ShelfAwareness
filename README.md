@@ -8,4 +8,10 @@
   Run `npm i` to install the dependencies.
 
   Run `npm run dev` to start the development server.
+
+  ## Supplier API service
+
+  Run `npm run dev:supplier` to start the supplier microservice.
+
+  Health check: `http://localhost:4001/health`
   
