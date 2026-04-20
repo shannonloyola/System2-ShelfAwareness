@@ -6,7 +6,9 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "test": "node scripts/run-outbound-regression-tests.mjs"
+    "dev:supplier": "npm --prefix services/supplier-service run dev",
+    "start:supplier": "npm --prefix services/supplier-service start",
+    "loadtest:gateway": "node scripts/load-test-gateway.mjs"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -48,6 +50,7 @@
     "cmdk": "1.1.1",
     "date-fns": "3.6.0",
     "embla-carousel-react": "8.6.0",
+    "html2pdf.js": "^0.14.0",
     "input-otp": "1.4.2",
     "jsbarcode": "^3.12.3",
     "jspdf": "^4.2.0",
