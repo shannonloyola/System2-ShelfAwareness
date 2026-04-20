@@ -329,6 +329,9 @@ export function PODetailPage() {
   const [approvalSubmitting, setApprovalSubmitting] = useState<
     "approve" | "reject" | null
   >(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
 
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [documentUrl, setDocumentUrl] = useState<string | null>(
@@ -574,19 +577,20 @@ export function PODetailPage() {
   }, [loadDetail]);
 
   const handleApprovalAction = async (
-    action: "approve" | "reject",
+    action: "approve",
   ) => {
     if (!po) return;
 
     setApprovalSubmitting(action);
-    const nextStatus =
-      action === "approve" ? "Approved" : "Rejected";
+    const nextStatus = "Approved";
 
     const { data, error } = await supabase
       .from("purchase_orders")
       .update({
         approval_status: nextStatus,
         approved_at: new Date().toISOString(),
+        rejection_reason: null,
+        rejected_at: null,
       })
       .eq("po_id", po.po_id)
       .select("approval_status, approved_by, approved_at")
@@ -614,11 +618,53 @@ export function PODetailPage() {
         : current,
     );
 
-    toast.success(
-      action === "approve"
-        ? "Purchase order approved"
-        : "Purchase order rejected",
+    toast.success("Purchase order approved");
+  };
+
+  const handleRejectAction = async () => {
+    if (!po) return;
+    if (!rejectReason.trim()) {
+      toast.error("Rejection reason is required");
+      return;
+    }
+
+    setRejecting(true);
+    const { data, error } = await supabase
+      .from("purchase_orders")
+      .update({
+        approval_status: "Rejected",
+        rejected_at: new Date().toISOString(),
+        rejection_reason: rejectReason.trim(),
+        approved_at: null,
+      })
+      .eq("po_id", po.po_id)
+      .select("approval_status, approved_by, approved_at")
+      .single();
+
+    setRejecting(false);
+
+    if (error || !data) {
+      toast.error("Failed to reject purchase order", {
+        description: toErrorMessage(error),
+      });
+      return;
+    }
+
+    setPo((current) =>
+      current
+        ? {
+            ...current,
+            approval_status: data.approval_status ?? "Rejected",
+            approved_by:
+              data.approved_by ?? current.approved_by,
+            approved_at: data.approved_at ?? null,
+          }
+        : current,
     );
+
+    setShowRejectModal(false);
+    setRejectReason("");
+    toast.success("Purchase order rejected");
   };
 
   const saveEta = async () => {
@@ -836,15 +882,11 @@ export function PODetailPage() {
             <Button
               type="button"
               variant="outline"
-              onClick={() =>
-                void handleApprovalAction("reject")
-              }
+              onClick={() => setShowRejectModal(true)}
               disabled={approvalSubmitting !== null}
               className="border-[#DC2626] text-[#DC2626] hover:bg-[#FEF2F2]"
             >
-              {approvalSubmitting === "reject"
-                ? "Rejecting..."
-                : "Reject"}
+              Reject
             </Button>
             <Button
               type="button"
@@ -1117,17 +1159,51 @@ export function PODetailPage() {
           ))}
         </div>
 
-        <div className="flex justify-end">
-          <Button
-            type="button"
-            onClick={handleSubmit(handlePostLandedCosts)}
-            disabled={landedCostsPosted || postingLandedCosts}
-            className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
-          >
-            {postingLandedCosts ? "Posting..." : "Post Landed Costs"}
-          </Button>
-        </div>
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          onClick={handleSubmit(handlePostLandedCosts)}
+          disabled={landedCostsPosted || postingLandedCosts}
+          className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+        >
+          {postingLandedCosts ? "Posting..." : "Post Landed Costs"}
+        </Button>
       </div>
+    </div>
+
+      {showRejectModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md space-y-4">
+            <h2 className="text-lg font-semibold text-gray-800">
+              Reject Purchase Order
+            </h2>
+            <p className="text-sm text-gray-500">
+              Please provide a reason for rejection.
+            </p>
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Enter rejection reason..."
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none h-24 focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowRejectModal(false)}
+                className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRejectAction}
+                disabled={rejecting || !rejectReason.trim()}
+                className="px-4 py-2 rounded-lg text-sm bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50"
+              >
+                {rejecting ? "Rejecting..." : "Confirm Reject"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Dialog open={editEtaOpen} onOpenChange={setEditEtaOpen}>
         <DialogContent className="max-w-lg">
