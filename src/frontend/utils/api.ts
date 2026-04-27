@@ -4,8 +4,9 @@ const defaultGatewayBaseUrl =
   `https://${projectId}.supabase.co/functions/v1/api-gateway`;
 
 export const apiBaseUrl =
-  import.meta.env.VITE_API_BASE_URL ??
-  import.meta.env.REACT_APP_API_BASE_URL ??
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  process.env.VITE_API_BASE_URL ??
+  process.env.REACT_APP_API_BASE_URL ??
   defaultGatewayBaseUrl;
 
 export function buildGatewayUrl(path: string) {

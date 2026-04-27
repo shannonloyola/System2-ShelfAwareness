@@ -20,6 +20,10 @@ import {
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
+  blockInvalidNumberKeys,
+  sanitizeSignedIntegerInput,
+} from "../../lib/inputSanitizers";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -261,6 +265,7 @@ export function StockManagement() {
   const [modalAction, setModalAction] = useState<
     "approve" | "reject" | null
   >(null);
+  const [requestError, setRequestError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -422,7 +427,13 @@ export function StockManagement() {
 
   // Stock Adjustment handlers
   const f = (k: string) => (e: any) =>
-    setForm((p) => ({ ...p, [k]: e.target.value }));
+    setForm((p) => ({
+      ...p,
+      [k]:
+        k === "qty_change"
+          ? sanitizeSignedIntegerInput(e.target.value)
+          : e.target.value,
+    }));
 
   const handleProductChange = (value: string) => {
     const p = products.find(
@@ -436,9 +447,14 @@ export function StockManagement() {
         product_name: p.product_name,
         qty_before: p.inventory_on_hand,
       }));
+    setRequestError("");
   };
 
   const handleSubmitAdjustment = async () => {
+    const parsedQtyChange = Number.parseInt(
+      String(form.qty_change),
+      10,
+    );
     if (
       !form.product_id ||
       !form.qty_change ||
@@ -446,11 +462,24 @@ export function StockManagement() {
       !form.requested_by
     )
       return;
+    if (!Number.isFinite(parsedQtyChange) || parsedQtyChange === 0) {
+      setRequestError(
+        "Quantity change must be a whole number other than 0.",
+      );
+      return;
+    }
+    if (form.qty_before + parsedQtyChange < 0) {
+      setRequestError(
+        "This adjustment would make stock negative. Reduce the deduction or replenish stock first.",
+      );
+      return;
+    }
+    setRequestError("");
     setSubmitting(true);
     try {
       const result = await submitAdjustment({
         ...form,
-        qty_change: parseInt(form.qty_change as any),
+        qty_change: parsedQtyChange,
       });
       setAdjustments((p) => [result, ...p]);
       setForm(EMPTY_FORM);
@@ -468,6 +497,13 @@ export function StockManagement() {
 
   const handleApprove = async () => {
     if (!modalAdj || !managerName.trim()) return;
+    if (modalAdj.qty_after < 0) {
+      toast.error("Approval Failed", {
+        description:
+          "This adjustment would make stock negative. Update the request before approving it.",
+      });
+      return;
+    }
     setSubmitting(true);
     try {
       await approveAdjustment(modalAdj.id, managerName);
@@ -481,6 +517,16 @@ export function StockManagement() {
                 approved_at: new Date().toISOString(),
               }
             : a,
+        ),
+      );
+      setProducts((prev) =>
+        prev.map((product) =>
+          product.product_id === modalAdj.product_id
+            ? {
+                ...product,
+                inventory_on_hand: modalAdj.qty_after,
+              }
+            : product,
         ),
       );
       closeModal();
@@ -545,7 +591,9 @@ export function StockManagement() {
     form.qty_change &&
     parseInt(form.qty_change as any) !== 0 &&
     form.reason.length >= 10 &&
-    form.requested_by.trim();
+    form.requested_by.trim() &&
+    newQty !== null &&
+    newQty >= 0;
 
   const pendingAdjustments = adjustments.filter(
     (a) => a.status === "pending",
@@ -1548,12 +1596,27 @@ export function StockManagement() {
                       type="number"
                       placeholder="e.g. -5 or +10"
                       value={form.qty_change}
-                      onChange={f("qty_change")}
+                      onChange={(e) => {
+                        setRequestError("");
+                        f("qty_change")(e);
+                      }}
+                      step="1"
+                      inputMode="numeric"
+                      onKeyDown={(e) =>
+                        blockInvalidNumberKeys(e, {
+                          allowNegative: true,
+                        })
+                      }
                       className="border-[#1A2B47]/20"
                     />
                     <p className="text-xs text-[#6B7280]">
                       Negative = remove · Positive = add
                     </p>
+                    {requestError && (
+                      <p className="text-xs text-[#DC2626]">
+                        {requestError}
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label className="text-[#1A2B47] font-medium">

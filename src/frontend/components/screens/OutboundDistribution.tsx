@@ -10,6 +10,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { supabase } from "@/lib/supabase";
 import {
+  blockInvalidNumberKeys,
+  sanitizeDecimalInput,
+  sanitizeIntegerInput,
+} from "@/lib/inputSanitizers";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -144,7 +149,7 @@ export function OutboundDistribution() {
     dueDate: "",
     notes: "",
     priorityLevel: "",
-    lines: [{ sku: "", qty: 1 }],
+    lines: [{ sku: "", qty: "1" }],
   });
   const [availableProducts, setAvailableProducts] = useState<
     AvailableProduct[]
@@ -519,7 +524,10 @@ export function OutboundDistribution() {
   const openEditModal = (order: any) => {
     setSelectedOrder(order);
     setEditLines(
-      (order.retail_order_lines || []).map((line: any) => ({ ...line })),
+      (order.retail_order_lines || []).map((line: any) => ({
+        ...line,
+        qty: String(line.qty ?? ""),
+      })),
     );
     setIsEditModalOpen(true);
   };
@@ -527,9 +535,16 @@ export function OutboundDistribution() {
   const saveEdit = async () => {
     setSavingEdit(true);
     for (const line of editLines) {
+      const parsedQty = Number.parseInt(String(line.qty), 10);
+      if (!Number.isFinite(parsedQty) || parsedQty <= 0) {
+        toast.error("Quantity must be greater than 0.");
+        setSavingEdit(false);
+        return;
+      }
+
       const { error } = await supabase
         .from("retail_order_lines")
-        .update({ qty: line.qty })
+        .update({ qty: parsedQty })
         .eq("order_uuid", selectedOrder.order_uuid)
         .eq("sku", line.sku);
 
@@ -597,7 +612,7 @@ export function OutboundDistribution() {
   const addLine = () =>
     setNewOrder((prev) => ({
       ...prev,
-      lines: [...prev.lines, { sku: "", qty: 1 }],
+      lines: [...prev.lines, { sku: "", qty: "1" }],
     }));
 
   const generateInvoice = async (order: RetailOrder) => {
@@ -717,7 +732,12 @@ export function OutboundDistribution() {
       toast.error("All line items must have a SKU.");
       return;
     }
-    if (newOrder.lines.some((line) => !line.qty || line.qty <= 0)) {
+    if (
+      newOrder.lines.some((line) => {
+        const parsedQty = Number.parseInt(String(line.qty), 10);
+        return !Number.isFinite(parsedQty) || parsedQty <= 0;
+      })
+    ) {
       toast.error("All line items must have quantity greater than 0.");
       return;
     }
@@ -781,7 +801,7 @@ export function OutboundDistribution() {
       dueDate: "",
       notes: "",
       priorityLevel: "",
-      lines: [{ sku: "", qty: 1 }],
+        lines: [{ sku: "", qty: "1" }],
     });
     setShowLogForm(false);
     setSubmitting(false);
@@ -998,9 +1018,21 @@ export function OutboundDistribution() {
                 <input
                   type="number"
                   min={1}
+                  step={1}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   placeholder="Quantity"
                   value={line.qty}
-                  onChange={(event) => updateLine(idx, "qty", Number(event.target.value))}
+                  onChange={(event) =>
+                    updateLine(
+                      idx,
+                      "qty",
+                      sanitizeIntegerInput(event.target.value),
+                    )
+                  }
+                  onKeyDown={(event) =>
+                    blockInvalidNumberKeys(event)
+                  }
                   className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-400"
                 />
                 <input
@@ -1291,12 +1323,21 @@ export function OutboundDistribution() {
                     type="number"
                     min="0.01"
                     step="0.01"
+                    inputMode="decimal"
                     value={paymentForm.amount}
                     onChange={(event) =>
                       setPaymentForm((prev) => ({
                         ...prev,
-                        amount: event.target.value,
+                        amount: sanitizeDecimalInput(
+                          event.target.value,
+                          2,
+                        ),
                       }))
+                    }
+                    onKeyDown={(event) =>
+                      blockInvalidNumberKeys(event, {
+                        allowDecimal: true,
+                      })
                     }
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
                   />
@@ -1560,17 +1601,28 @@ export function OutboundDistribution() {
               {editLines.map((line, idx) => (
                 <div key={line.sku ?? idx} className="flex items-center justify-between gap-4 border rounded-lg px-3 py-2">
                   <span className="text-sm font-medium text-gray-700">{line.sku}</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={line.qty}
-                    onChange={(event) => {
-                      const updated = [...editLines];
-                      updated[idx] = { ...line, qty: Number(event.target.value) };
-                      setEditLines(updated);
-                    }}
-                    className="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
+                   <input
+                     type="number"
+                     min={1}
+                     step={1}
+                     inputMode="numeric"
+                     pattern="[0-9]*"
+                     value={line.qty}
+                     onChange={(event) => {
+                       const updated = [...editLines];
+                       updated[idx] = {
+                         ...line,
+                         qty: sanitizeIntegerInput(
+                           event.target.value,
+                         ),
+                       };
+                       setEditLines(updated);
+                     }}
+                     onKeyDown={(event) =>
+                       blockInvalidNumberKeys(event)
+                     }
+                     className="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+                   />
                 </div>
               ))}
               {editLines.length === 0 && (

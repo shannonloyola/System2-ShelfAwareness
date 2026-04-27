@@ -25,6 +25,11 @@ import {
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import {
+  blockInvalidNumberKeys,
+  sanitizeDecimalInput,
+  sanitizeIntegerInput,
+} from "@/lib/inputSanitizers";
 import { Textarea } from "../ui/textarea";
 import {
   Select,
@@ -2207,13 +2212,24 @@ export function ProductMaster() {
                   <Label>Cost Price</Label>
                   <Input
                     type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
                     placeholder="0.00"
                     className="mt-2 border-[#111827]/10"
                     value={formData.costPrice}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        costPrice: e.target.value,
+                        costPrice: sanitizeDecimalInput(
+                          e.target.value,
+                          2,
+                        ),
+                      })
+                    }
+                    onKeyDown={(e) =>
+                      blockInvalidNumberKeys(e, {
+                        allowDecimal: true,
                       })
                     }
                   />
@@ -2222,13 +2238,24 @@ export function ProductMaster() {
                   <Label>Unit Price</Label>
                   <Input
                     type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
                     placeholder="0.00"
                     className="mt-2 border-[#111827]/10"
                     value={formData.unitPrice}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        unitPrice: e.target.value,
+                        unitPrice: sanitizeDecimalInput(
+                          e.target.value,
+                          2,
+                        ),
+                      })
+                    }
+                    onKeyDown={(e) =>
+                      blockInvalidNumberKeys(e, {
+                        allowDecimal: true,
                       })
                     }
                   />
@@ -2266,14 +2293,22 @@ export function ProductMaster() {
                   <Input
                     type="number"
                     min="0"
+                    step="1"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     placeholder="0"
                     className="mt-2 border-[#111827]/10"
                     value={formData.currentStock}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        currentStock: e.target.value,
+                        currentStock: sanitizeIntegerInput(
+                          e.target.value,
+                        ),
                       })
+                    }
+                    onKeyDown={(e) =>
+                      blockInvalidNumberKeys(e)
                     }
                   />
                 </div>
@@ -3121,12 +3156,22 @@ export function ProductMaster() {
               <Input
                 type="number"
                 min="0"
+                step="0.01"
+                inputMode="decimal"
                 className="mt-2 border-[#111827]/10"
                 value={editFormData.costPrice}
                 onChange={(e) =>
                   setEditFormData({
                     ...editFormData,
-                    costPrice: e.target.value,
+                    costPrice: sanitizeDecimalInput(
+                      e.target.value,
+                      2,
+                    ),
+                  })
+                }
+                onKeyDown={(e) =>
+                  blockInvalidNumberKeys(e, {
+                    allowDecimal: true,
                   })
                 }
               />
@@ -3136,12 +3181,22 @@ export function ProductMaster() {
               <Input
                 type="number"
                 min="0"
+                step="0.01"
+                inputMode="decimal"
                 className="mt-2 border-[#111827]/10"
                 value={editFormData.unitPrice}
                 onChange={(e) =>
                   setEditFormData({
                     ...editFormData,
-                    unitPrice: e.target.value,
+                    unitPrice: sanitizeDecimalInput(
+                      e.target.value,
+                      2,
+                    ),
+                  })
+                }
+                onKeyDown={(e) =>
+                  blockInvalidNumberKeys(e, {
+                    allowDecimal: true,
                   })
                 }
               />
@@ -3174,13 +3229,21 @@ export function ProductMaster() {
               <Input
                 type="number"
                 min="0"
+                step="1"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 className="mt-2 border-[#111827]/10"
                 value={editFormData.currentStock}
                 onChange={(e) =>
                   setEditFormData({
                     ...editFormData,
-                    currentStock: e.target.value,
+                    currentStock: sanitizeIntegerInput(
+                      e.target.value,
+                    ),
                   })
+                }
+                onKeyDown={(e) =>
+                  blockInvalidNumberKeys(e)
                 }
               />
             </div>

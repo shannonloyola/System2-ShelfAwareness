@@ -1,6 +1,8 @@
 import { createHttpError } from "./http.js";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_REGEX = /^[0-9+()\-\s]+$/;
+const CURRENCY_CODE_REGEX = /^[A-Z]{3}$/;
 
 const normalizeString = (value) =>
   typeof value === "string" ? value.trim() : "";
@@ -61,6 +63,76 @@ export const validateSupplierPayload = (payload, { partial = false } = {}) => {
     throw createHttpError(400, "email must be a valid email address");
   }
 
+  if (!partial) {
+    if (!normalized.contact_person) {
+      throw createHttpError(400, "contact_person is required");
+    }
+    if (!normalized.address) {
+      throw createHttpError(400, "address is required");
+    }
+    if (!normalized.email) {
+      throw createHttpError(400, "email is required");
+    }
+    if (!normalized.phone) {
+      throw createHttpError(400, "phone is required");
+    }
+    if (!normalized.currency_code) {
+      throw createHttpError(400, "currency_code is required");
+    }
+    if (normalized.lead_time_days === null) {
+      throw createHttpError(400, "lead_time_days is required");
+    }
+  }
+
+  if (
+    payload.contact_person !== undefined &&
+    !normalized.contact_person
+  ) {
+    throw createHttpError(400, "contact_person cannot be empty");
+  }
+
+  if (
+    payload.address !== undefined &&
+    !normalized.address
+  ) {
+    throw createHttpError(400, "address cannot be empty");
+  }
+
+  if (
+    payload.email !== undefined &&
+    !normalized.email
+  ) {
+    throw createHttpError(400, "email cannot be empty");
+  }
+
+  if (
+    payload.phone !== undefined &&
+    !normalized.phone
+  ) {
+    throw createHttpError(400, "phone cannot be empty");
+  }
+
+  if (
+    payload.currency_code !== undefined &&
+    !normalized.currency_code
+  ) {
+    throw createHttpError(400, "currency_code cannot be empty");
+  }
+
+  if (
+    normalized.phone &&
+    !PHONE_REGEX.test(normalized.phone)
+  ) {
+    throw createHttpError(400, "phone must contain only phone characters");
+  }
+
+  if (
+    normalized.currency_code &&
+    !CURRENCY_CODE_REGEX.test(normalized.currency_code)
+  ) {
+    throw createHttpError(400, "currency_code must be exactly 3 uppercase letters");
+  }
+
   if (
     normalized.status &&
     !["active", "suspended"].includes(normalized.status.toLowerCase())
@@ -84,9 +156,9 @@ export const validateSupplierPayload = (payload, { partial = false } = {}) => {
 
   if (
     normalized.lead_time_days !== null &&
-    normalized.lead_time_days < 0
+    normalized.lead_time_days <= 0
   ) {
-    throw createHttpError(400, "lead_time_days cannot be negative");
+    throw createHttpError(400, "lead_time_days must be greater than 0");
   }
 
   if (partial) {

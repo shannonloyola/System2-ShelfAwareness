@@ -27,6 +27,12 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import {
+  blockInvalidNumberKeys,
+  isPhoneValid,
+  sanitizeIntegerInput,
+  sanitizePhoneInput,
+} from "../../lib/inputSanitizers";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -166,6 +172,10 @@ export function WarehouseReceiving() {
   >([]);
   const [showDeliveryScheduleDialog, setShowDeliveryScheduleDialog] = useState(false);
   const [schedulingDelivery, setSchedulingDelivery] = useState(false);
+  const [deliveryFormErrors, setDeliveryFormErrors] = useState({
+    expected_items_count: "",
+    contact_phone: "",
+  });
   const [deliveryForm, setDeliveryForm] = useState({
     delivery_datetime: "",
     supplier_name: "",
@@ -915,9 +925,15 @@ export function WarehouseReceiving() {
   ) => {
     setSavedGrnId(null);
     setSavedGrnNumber(null);
+    const nextValue =
+      field === "qtyExpected" || field === "qtyReceived"
+        ? sanitizeIntegerInput(value)
+        : value;
     setLines((prev) =>
       prev.map((l) =>
-        l.lineId === lineId ? { ...l, [field]: value } : l,
+        l.lineId === lineId
+          ? { ...l, [field]: nextValue }
+          : l,
       ),
     );
   };
@@ -1175,13 +1191,47 @@ export function WarehouseReceiving() {
       return;
     }
 
+    const expectedItemsCount = Number.parseInt(
+      deliveryForm.expected_items_count,
+      10,
+    );
+    if (
+      !Number.isFinite(expectedItemsCount) ||
+      expectedItemsCount < 1
+    ) {
+      setDeliveryFormErrors((prev) => ({
+        ...prev,
+        expected_items_count:
+          "Expected items count must be 1 or more.",
+      }));
+      toast.error("Validation Error", {
+        description: "Expected items count must be 1 or more.",
+      });
+      return;
+    }
+
+    if (
+      deliveryForm.contact_phone &&
+      !isPhoneValid(deliveryForm.contact_phone)
+    ) {
+      setDeliveryFormErrors((prev) => ({
+        ...prev,
+        contact_phone:
+          "Phone number must be up to 10 digits.",
+      }));
+      toast.error("Validation Error", {
+        description: "Phone number must be up to 10 digits.",
+      });
+      return;
+    }
+
     setSchedulingDelivery(true);
     try {
       const response = await supabase.functions.invoke("shipments", {
         body: {
           delivery_datetime: deliveryForm.delivery_datetime,
           supplier_name: deliveryForm.supplier_name,
-          expected_items_count: parseInt(deliveryForm.expected_items_count),
+          expected_items_count: expectedItemsCount,
           warehouse_location: deliveryForm.warehouse_location,
           contact_person_name: deliveryForm.contact_person_name || null,
           contact_phone: deliveryForm.contact_phone || null,
@@ -1206,6 +1256,10 @@ export function WarehouseReceiving() {
         contact_person_name: "",
         contact_phone: "",
         notes: "",
+      });
+      setDeliveryFormErrors({
+        expected_items_count: "",
+        contact_phone: "",
       });
       setShowDeliveryScheduleDialog(false);
     } catch (error) {
@@ -1480,12 +1534,35 @@ export function WarehouseReceiving() {
               <Label className="text-[#6B7280]">Expected Items Count *</Label>
               <Input
                 type="number"
+                min="1"
+                step="1"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={deliveryForm.expected_items_count}
-                onChange={(e) => setDeliveryForm({ ...deliveryForm, expected_items_count: e.target.value })}
+                onChange={(e) => {
+                  setDeliveryForm({
+                    ...deliveryForm,
+                    expected_items_count: sanitizeIntegerInput(
+                      e.target.value,
+                    ),
+                  });
+                  setDeliveryFormErrors((prev) => ({
+                    ...prev,
+                    expected_items_count: "",
+                  }));
+                }}
+                onKeyDown={(e) =>
+                  blockInvalidNumberKeys(e)
+                }
                 placeholder="Enter expected number of items"
                 className="mt-2 border-[#111827]/10"
                 disabled={schedulingDelivery}
               />
+              {deliveryFormErrors.expected_items_count && (
+                <p className="mt-2 text-xs text-[#DC2626]">
+                  {deliveryFormErrors.expected_items_count}
+                </p>
+              )}
             </div>
 
             <div>
@@ -1522,11 +1599,29 @@ export function WarehouseReceiving() {
               <Label className="text-[#6B7280]">Contact Phone</Label>
               <Input
                 value={deliveryForm.contact_phone}
-                onChange={(e) => setDeliveryForm({ ...deliveryForm, contact_phone: e.target.value })}
+                onChange={(e) => {
+                  setDeliveryForm({
+                    ...deliveryForm,
+                    contact_phone: sanitizePhoneInput(
+                      e.target.value,
+                    ),
+                  });
+                  setDeliveryFormErrors((prev) => ({
+                    ...prev,
+                    contact_phone: "",
+                  }));
+                }}
+                inputMode="numeric"
+                maxLength={10}
                 placeholder="Enter contact phone number"
                 className="mt-2 border-[#111827]/10"
                 disabled={schedulingDelivery}
               />
+              {deliveryFormErrors.contact_phone && (
+                <p className="mt-2 text-xs text-[#DC2626]">
+                  {deliveryFormErrors.contact_phone}
+                </p>
+              )}
             </div>
 
             <div>
@@ -1652,19 +1747,49 @@ export function WarehouseReceiving() {
                       onValueChange={(val) =>
                         setGrnChecks((prev) => ({ ...prev, [check.key]: val }))
                       }
-                      className="flex gap-6"
+                      className="grid grid-cols-1 gap-3 sm:grid-cols-3"
                     >
-                      <div className="flex items-center gap-2">
-                        <RadioGroupItem value="pass" id={`${check.key}-pass`} />
-                        <Label htmlFor={`${check.key}-pass`} className="cursor-pointer font-normal">Pass</Label>
+                      <div className={`rounded-lg border px-3 py-3 transition-colors ${
+                        grnChecks[check.key] === "pass"
+                          ? "border-[#00A3AD] bg-[#ECFEFF] shadow-sm"
+                          : "border-[#CBD5E1] bg-white hover:border-[#00A3AD]/50"
+                      }`}>
+                        <Label htmlFor={`${check.key}-pass`} className="flex cursor-pointer items-center gap-3 font-medium text-[#111827]">
+                          <RadioGroupItem
+                            value="pass"
+                            id={`${check.key}-pass`}
+                            className="size-5 border-[#64748B] text-[#00A3AD]"
+                          />
+                          <span>Pass</span>
+                        </Label>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <RadioGroupItem value="fail" id={`${check.key}-fail`} />
-                        <Label htmlFor={`${check.key}-fail`} className="cursor-pointer font-normal">Fail</Label>
+                      <div className={`rounded-lg border px-3 py-3 transition-colors ${
+                        grnChecks[check.key] === "fail"
+                          ? "border-[#DC2626] bg-[#FEF2F2] shadow-sm"
+                          : "border-[#CBD5E1] bg-white hover:border-[#DC2626]/50"
+                      }`}>
+                        <Label htmlFor={`${check.key}-fail`} className="flex cursor-pointer items-center gap-3 font-medium text-[#111827]">
+                          <RadioGroupItem
+                            value="fail"
+                            id={`${check.key}-fail`}
+                            className="size-5 border-[#64748B] text-[#DC2626]"
+                          />
+                          <span>Fail</span>
+                        </Label>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <RadioGroupItem value="na" id={`${check.key}-na`} />
-                        <Label htmlFor={`${check.key}-na`} className="cursor-pointer font-normal">N/A</Label>
+                      <div className={`rounded-lg border px-3 py-3 transition-colors ${
+                        grnChecks[check.key] === "na"
+                          ? "border-[#475569] bg-[#F8FAFC] shadow-sm"
+                          : "border-[#CBD5E1] bg-white hover:border-[#475569]/50"
+                      }`}>
+                        <Label htmlFor={`${check.key}-na`} className="flex cursor-pointer items-center gap-3 font-medium text-[#111827]">
+                          <RadioGroupItem
+                            value="na"
+                            id={`${check.key}-na`}
+                            className="size-5 border-[#64748B] text-[#475569]"
+                          />
+                          <span>N/A</span>
+                        </Label>
                       </div>
                     </RadioGroup>
 
@@ -1861,6 +1986,9 @@ export function WarehouseReceiving() {
                         <Input
                           type="number"
                           min="0"
+                          step="1"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           value={line.qtyExpected}
                           onChange={(e) =>
                             updateLine(
@@ -1868,6 +1996,9 @@ export function WarehouseReceiving() {
                               "qtyExpected",
                               e.target.value,
                             )
+                          }
+                          onKeyDown={(e) =>
+                            blockInvalidNumberKeys(e)
                           }
                           className="mt-2 border-[#111827]/10 bg-white"
                           placeholder="0"
@@ -1881,6 +2012,9 @@ export function WarehouseReceiving() {
                         <Input
                           type="number"
                           min="1"
+                          step="1"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           value={line.qtyReceived}
                           onChange={(e) =>
                             updateLine(
@@ -1888,6 +2022,9 @@ export function WarehouseReceiving() {
                               "qtyReceived",
                               e.target.value,
                             )
+                          }
+                          onKeyDown={(e) =>
+                            blockInvalidNumberKeys(e)
                           }
                           className="mt-2 border-[#111827]/10 bg-white"
                           placeholder="0"

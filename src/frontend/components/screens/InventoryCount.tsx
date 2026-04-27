@@ -17,6 +17,10 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { CSVUploader } from "../CSVUploader";
 import { CSVRow } from "@/lib/csvParser";
+import {
+  blockInvalidNumberKeys,
+  sanitizeIntegerInput,
+} from "@/lib/inputSanitizers";
 
 interface Product {
   id: number | string;
@@ -447,13 +451,21 @@ export default function InventoryCount() {
                       <Input
                         type="number"
                         min="0"
+                        step="1"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         placeholder="Physical count"
                         value={mobileCountDrafts[key] ?? ""}
                         onChange={(e) =>
                           setMobileCountDrafts((prev) => ({
                             ...prev,
-                            [key]: e.target.value,
+                            [key]: sanitizeIntegerInput(
+                              e.target.value,
+                            ),
                           }))
+                        }
+                        onKeyDown={(e) =>
+                          blockInvalidNumberKeys(e)
                         }
                         className="h-11 border-slate-300"
                       />
@@ -580,9 +592,21 @@ export default function InventoryCount() {
                       id="count"
                       type="number"
                       min="0"
+                      step="1"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                       placeholder="0"
                       value={physicalCount}
-                      onChange={(e) => setPhysicalCount(e.target.value)}
+                      onChange={(e) =>
+                        setPhysicalCount(
+                          sanitizeIntegerInput(
+                            e.target.value,
+                          ),
+                        )
+                      }
+                      onKeyDown={(e) =>
+                        blockInvalidNumberKeys(e)
+                      }
                       className="h-20 text-3xl font-bold text-center border-2 border-slate-300 focus:border-[#00A3AD]"
                       disabled={loading}
                     />

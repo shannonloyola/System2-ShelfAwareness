@@ -32,8 +32,20 @@ export type SupplierScorecard = {
   risk_summary?: string | null;
 };
 
+export type CreateSupplierPayload = {
+  supplier_name: string;
+  contact_person: string;
+  email: string;
+  phone: string;
+  address: string;
+  currency_code: string;
+  lead_time_days: number;
+  status?: string;
+};
+
 const supplierServiceBaseUrl =
-  import.meta.env.VITE_SUPPLIER_SERVICE_URL ||
+  process.env.NEXT_PUBLIC_SUPPLIER_SERVICE_URL ||
+  process.env.VITE_SUPPLIER_SERVICE_URL ||
   "http://localhost:4001";
 
 const parseError = async (response: Response) => {
@@ -123,4 +135,29 @@ export const fetchSupplierByName = async (
   };
 
   return payload.data;
+};
+
+export const createSupplier = async (
+  payload: CreateSupplierPayload,
+) => {
+  const response = await fetch(
+    `${supplierServiceBaseUrl}/suppliers`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  const parsed = (await response.json()) as {
+    data: SupplierRecord;
+  };
+
+  return parsed.data;
 };

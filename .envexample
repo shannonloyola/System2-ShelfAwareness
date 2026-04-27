@@ -1,7 +1,11 @@
 # Frontend
 VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+NEXT_PUBLIC_API_BASE_URL=http://localhost:54321/functions/v1/api-gateway
+NEXT_PUBLIC_BACKEND_API_URL=http://localhost:3001/api
+NEXT_PUBLIC_SUPPLIER_SERVICE_URL=http://localhost:4001
 
 # Supabase Edge Functions
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+

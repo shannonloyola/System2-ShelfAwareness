@@ -21,7 +21,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "../ui/tabs";
-import { useNavigate } from "react-router";
+import { useRouter } from "next/navigation";
 import {
   Select,
   SelectContent,
@@ -30,14 +30,22 @@ import {
   SelectValue,
 } from "../ui/select";
 import { toast } from "sonner";
-import { supabase } from "../../../lib/supabase";
+import { supabase } from "../../lib/supabase";
+import {
+  blockInvalidNumberKeys,
+  isPhoneValid,
+  sanitizeDecimalInput,
+  sanitizeIntegerInput,
+  sanitizePhoneInput,
+} from "../../lib/inputSanitizers";
 import {
   fetchSupplierByName,
+  createSupplier as createSupplierFromService,
   fetchSupplierScorecard as fetchSupplierScorecardFromService,
   fetchSuppliers,
-} from "../../../lib/supplierService";
+} from "../../lib/supplierService";
 import { CSVUploader } from "../CSVUploader";
-import type { CSVRow } from "../../../lib/csvParser";
+import type { CSVRow } from "../../lib/csvParser";
 import { 
   Dialog, 
   DialogContent, 
@@ -105,7 +113,7 @@ interface LineItemForm {
   formId: string;
   editingPoItemId: string | null;
   product: string;
-  qty: number;
+  qty: string;
 }
 
 interface POTemplate {
@@ -114,6 +122,16 @@ interface POTemplate {
   supplier_name: string;
   expected_delivery_date: string;
   preferred_communication: string;
+}
+
+interface SupplierFormState {
+  supplier_name: string;
+  contact_person: string;
+  email: string;
+  phone: string;
+  address: string;
+  currency_code: string;
+  lead_time_days: string;
 }
 
 const DEFAULT_PO_STATUS = "Draft";
@@ -186,8 +204,71 @@ const formatPercent = (value: number | null | undefined) => {
   return Number(value).toFixed(1);
 };
 
+const builderInputClass =
+  "mt-2 rounded-lg border border-[#1A2B47]/25 bg-white shadow-sm focus-visible:border-[#00A3AD] focus-visible:ring-[#00A3AD]/20";
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CURRENCY_CODE_REGEX = /^[A-Z]{3}$/;
+
+const createEmptySupplierForm = (): SupplierFormState => ({
+  supplier_name: "",
+  contact_person: "",
+  email: "",
+  phone: "",
+  address: "",
+  currency_code: "",
+  lead_time_days: "",
+});
+
+const validateSupplierForm = (
+  form: SupplierFormState,
+) => {
+  const errors: Partial<Record<keyof SupplierFormState, string>> =
+    {};
+
+  if (!form.supplier_name.trim()) {
+    errors.supplier_name = "Supplier name is required.";
+  }
+  if (!form.contact_person.trim()) {
+    errors.contact_person = "Contact person is required.";
+  }
+  if (!form.email.trim()) {
+    errors.email = "Email is required.";
+  } else if (!EMAIL_REGEX.test(form.email.trim())) {
+    errors.email = "Enter a valid email address.";
+  }
+  if (!form.phone.trim()) {
+    errors.phone = "Phone is required.";
+  } else if (!isPhoneValid(form.phone.trim())) {
+    errors.phone = "Phone number must be up to 10 digits.";
+  }
+  if (!form.address.trim()) {
+    errors.address = "Address is required.";
+  }
+  if (!form.currency_code.trim()) {
+    errors.currency_code = "Currency code is required.";
+  } else if (
+    !CURRENCY_CODE_REGEX.test(
+      form.currency_code.trim().toUpperCase(),
+    )
+  ) {
+    errors.currency_code = "Use a 3-letter code like USD.";
+  }
+  if (!form.lead_time_days.trim()) {
+    errors.lead_time_days = "Lead time is required.";
+  } else {
+    const parsed = Number.parseInt(form.lead_time_days, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      errors.lead_time_days =
+        "Lead time must be a positive number.";
+    }
+  }
+
+  return errors;
+};
+
 export function InboundProcurement() {
-  const navigate = useNavigate();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabFilter>("all");
 
   const [poList, setPoList] = useState<PurchaseOrderRow[]>([]);
@@ -218,6 +299,15 @@ export function InboundProcurement() {
   const [lineItemForms, setLineItemForms] = useState<
     LineItemForm[]
   >([]);
+  const [showCreateSupplierDialog, setShowCreateSupplierDialog] =
+    useState(false);
+  const [supplierForm, setSupplierForm] = useState<SupplierFormState>(
+    createEmptySupplierForm(),
+  );
+  const [supplierFormErrors, setSupplierFormErrors] = useState<
+    Partial<Record<keyof SupplierFormState, string>>
+  >({});
+  const [savingSupplier, setSavingSupplier] = useState(false);
 
   // Template state
   const [templates, setTemplates] = useState<POTemplate[]>([]);
@@ -731,7 +821,8 @@ export function InboundProcurement() {
         });
         return;
       }
-      if (!Number.isFinite(form.qty) || form.qty <= 0) {
+      const parsedQty = Number.parseInt(form.qty, 10);
+      if (!Number.isFinite(parsedQty) || parsedQty <= 0) {
         toast.error("Cannot save line item", {
           description: "Quantity must be greater than 0",
         });
@@ -744,7 +835,7 @@ export function InboundProcurement() {
       if (form.editingPoItemId) {
         const result = await supabase
           .from("purchase_order_items")
-          .update({ quantity: form.qty })
+          .update({ quantity: parsedQty })
           .eq("po_id", selectedPO.po_id)
           .eq("po_item_id", form.editingPoItemId);
         error = result.error;
@@ -767,7 +858,7 @@ export function InboundProcurement() {
             {
               po_id: selectedPO.po_id,
               item_name: form.product,
-              quantity: form.qty,
+              quantity: parsedQty,
             },
           ]);
         error = result.error;
@@ -1012,6 +1103,69 @@ export function InboundProcurement() {
     loadTemplates();
   }, [loadTemplates]);
 
+  const setSupplierField = <
+    K extends keyof SupplierFormState,
+  >(
+    key: K,
+    value: SupplierFormState[K],
+  ) => {
+    setSupplierForm((prev) => ({
+      ...prev,
+      [key]:
+        key === "currency_code" && typeof value === "string"
+          ? value.toUpperCase()
+          : key === "phone" && typeof value === "string"
+            ? sanitizePhoneInput(value)
+            : key === "lead_time_days" &&
+                typeof value === "string"
+              ? sanitizeIntegerInput(value)
+          : value,
+    }));
+    setSupplierFormErrors((prev) => {
+      if (!prev[key]) return prev;
+      return { ...prev, [key]: undefined };
+    });
+  };
+
+  const handleCreateSupplier = async () => {
+    const errors = validateSupplierForm(supplierForm);
+    setSupplierFormErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
+    setSavingSupplier(true);
+    try {
+      const created = await createSupplierFromService({
+        supplier_name: supplierForm.supplier_name.trim(),
+        contact_person: supplierForm.contact_person.trim(),
+        email: supplierForm.email.trim(),
+        phone: supplierForm.phone.trim(),
+        address: supplierForm.address.trim(),
+        currency_code:
+          supplierForm.currency_code.trim().toUpperCase(),
+        lead_time_days: Number.parseInt(
+          supplierForm.lead_time_days,
+          10,
+        ),
+      });
+      await fetchSupplierOptions();
+      setSupplierName(created.supplier_name);
+      setSelectedSupplierId(created.id);
+      void fetchSupplierScorecard(created.supplier_name);
+      setShowCreateSupplierDialog(false);
+      setSupplierForm(createEmptySupplierForm());
+      setSupplierFormErrors({});
+      toast.success("Supplier created", {
+        description: `${created.supplier_name} is now ready for use in the P.O. builder.`,
+      });
+    } catch (error) {
+      toast.error("Failed to create supplier", {
+        description: toErrorMessage(error),
+      });
+    } finally {
+      setSavingSupplier(false);
+    }
+  };
+
   return (
     <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
       <div className="flex items-center justify-between">
@@ -1056,19 +1210,19 @@ export function InboundProcurement() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-        <Card className="bg-white border-[#111827]/10 shadow-sm h-fit self-start">
+        <Card className="bg-white border-[#111827]/10 shadow-sm h-fit self-start lg:max-h-[calc(100vh-11rem)] lg:flex lg:flex-col lg:overflow-hidden">
           <CardHeader>
             <CardTitle className="text-[#111827] font-semibold">
               Japan P.O. Management
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="min-h-0 lg:flex-1 lg:overflow-hidden">
             <Tabs
               value={activeTab}
               onValueChange={(v) =>
                 setActiveTab(v as TabFilter)
               }
-              className="w-full"
+              className="w-full lg:flex lg:min-h-0 lg:flex-1 lg:flex-col"
             >
               <TabsList className="grid w-full grid-cols-3 mb-4">
                 <TabsTrigger value="all">All</TabsTrigger>
@@ -1095,7 +1249,7 @@ export function InboundProcurement() {
                     <TabsContent
                       key={tab}
                       value={tab}
-                      className="space-y-3"
+                      className="space-y-3 lg:min-h-0 lg:flex-1 lg:overflow-hidden"
                     >
                       {loadingPOs ? (
                         <div className="text-sm text-[#6B7280] p-2">
@@ -1106,8 +1260,9 @@ export function InboundProcurement() {
                           No purchase orders found.
                         </div>
                       ) : (
-                        tabPOs.map((po) => (
-                          <div
+                        <div className="space-y-3 pb-1 lg:max-h-[calc(100vh-18rem)] lg:overflow-y-auto lg:pr-3 lg:pb-3 lg:scroll-smooth [scrollbar-gutter:stable]">
+                          {tabPOs.map((po) => (
+                            <div
                             key={po.po_id}
                             onClick={() => selectPO(po)}
                             className={`p-4 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md ${
@@ -1152,7 +1307,7 @@ export function InboundProcurement() {
                                 className="text-[#00A3AD] hover:text-[#0891B2]"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  navigate(
+                                  router.push(
                                     `/po-list/${po.po_id}`,
                                   );
                                 }}
@@ -1160,8 +1315,9 @@ export function InboundProcurement() {
                                 View details &gt;
                               </Button>
                             </div>
-                          </div>
-                        ))
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </TabsContent>
                   );
@@ -1221,13 +1377,27 @@ export function InboundProcurement() {
                     void fetchSupplierScorecard(value);
                   }}
                   placeholder="Enter supplier name..."
-                  className="mt-2 border-[#111827]/10 rounded-lg"
+                  className={builderInputClass}
                 />
                 <datalist id="supplier-service-options">
                   {supplierOptions.map((option) => (
                     <option key={option} value={option} />
                   ))}
                 </datalist>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-xs text-[#6B7280]">
+                    Need a new supplier? Add it here and keep building the order.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowCreateSupplierDialog(true)}
+                    className="border-[#00A3AD]/40 text-[#00A3AD] hover:bg-[#00A3AD]/10"
+                  >
+                    Add Supplier
+                  </Button>
+                </div>
 
                 {false && supplierScorecard && (
                   <div
@@ -1288,7 +1458,7 @@ export function InboundProcurement() {
                     onChange={(e) =>
                       setExpectedDeliveryDate(e.target.value)
                     }
-                    className="border-[#111827]/10 rounded-lg pr-10 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-10 [&::-webkit-calendar-picker-indicator]:cursor-pointer"
+                    className={`${builderInputClass} pr-10 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-10 [&::-webkit-calendar-picker-indicator]:cursor-pointer`}
                   />
                   <Calendar className="w-4 h-4 text-[#6B7280] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
@@ -1300,7 +1470,7 @@ export function InboundProcurement() {
                   value={preferredCommunication}
                   onValueChange={setPreferredCommunication}
                 >
-                  <SelectTrigger className="mt-2 border-[#111827]/10 rounded-lg">
+                  <SelectTrigger className={builderInputClass}>
                     <SelectValue placeholder="Choose communication method..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -1332,7 +1502,7 @@ export function InboundProcurement() {
                   value={templateName}
                   onChange={(e) => setTemplateName(e.target.value)}
                   placeholder="e.g., Monthly JP Restock"
-                  className="border-[#111827]/10 rounded-lg"
+                  className={builderInputClass.replace("mt-2 ", "")}
                 />
                 <Button
                   variant="outline"
@@ -1511,7 +1681,7 @@ export function InboundProcurement() {
                                   editingPoItemId:
                                     item.po_item_id,
                                   product: item.item_name ?? "",
-                                  qty: item.quantity ?? 1,
+                                  qty: String(item.quantity ?? ""),
                                 },
                               ];
                             });
@@ -1547,7 +1717,7 @@ export function InboundProcurement() {
                             formId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
                             editingPoItemId: null,
                             product: "",
-                            qty: 1,
+                            qty: "",
                           },
                         ])
                       }
@@ -1580,7 +1750,7 @@ export function InboundProcurement() {
                           }
                           disabled={!!form.editingPoItemId}
                         >
-                          <SelectTrigger className="border-[#111827]/10 rounded-lg">
+                          <SelectTrigger className={builderInputClass.replace("mt-2 ", "")}>
                             <SelectValue placeholder="Select product from master..." />
                           </SelectTrigger>
                           <SelectContent>
@@ -1602,7 +1772,10 @@ export function InboundProcurement() {
 
                         <Input
                           type="number"
-                          min={1}
+                          min="1"
+                          step="1"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           value={form.qty}
                           onChange={(e) =>
                             setLineItemForms((prev) =>
@@ -1610,7 +1783,7 @@ export function InboundProcurement() {
                                 f.formId === form.formId
                                   ? {
                                       ...f,
-                                      qty: Number(
+                                      qty: sanitizeIntegerInput(
                                         e.target.value,
                                       ),
                                     }
@@ -1618,7 +1791,10 @@ export function InboundProcurement() {
                               ),
                             )
                           }
-                          className="border-[#111827]/10 rounded-lg"
+                          onKeyDown={(e) =>
+                            blockInvalidNumberKeys(e)
+                          }
+                          className={builderInputClass.replace("mt-2 ", "")}
                           placeholder="Quantity"
                         />
 
@@ -1683,6 +1859,192 @@ export function InboundProcurement() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog
+        open={showCreateSupplierDialog}
+        onOpenChange={(open) => {
+          setShowCreateSupplierDialog(open);
+          if (!open) {
+            setSupplierFormErrors({});
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Create New Supplier</DialogTitle>
+            <DialogDescription>
+              Add supplier details with validation before saving.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="supplier-name">Supplier Name</Label>
+              <Input
+                id="supplier-name"
+                value={supplierForm.supplier_name}
+                onChange={(e) =>
+                  setSupplierField("supplier_name", e.target.value)
+                }
+                className={builderInputClass.replace("mt-2 ", "")}
+                aria-invalid={!!supplierFormErrors.supplier_name}
+              />
+              {supplierFormErrors.supplier_name && (
+                <p className="text-xs text-[#DC2626]">
+                  {supplierFormErrors.supplier_name}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="contact-person">Contact Person</Label>
+              <Input
+                id="contact-person"
+                value={supplierForm.contact_person}
+                onChange={(e) =>
+                  setSupplierField("contact_person", e.target.value)
+                }
+                className={builderInputClass.replace("mt-2 ", "")}
+                aria-invalid={!!supplierFormErrors.contact_person}
+              />
+              {supplierFormErrors.contact_person && (
+                <p className="text-xs text-[#DC2626]">
+                  {supplierFormErrors.contact_person}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="supplier-email">Email</Label>
+              <Input
+                id="supplier-email"
+                type="email"
+                value={supplierForm.email}
+                onChange={(e) =>
+                  setSupplierField("email", e.target.value)
+                }
+                className={builderInputClass.replace("mt-2 ", "")}
+                aria-invalid={!!supplierFormErrors.email}
+              />
+              {supplierFormErrors.email && (
+                <p className="text-xs text-[#DC2626]">
+                  {supplierFormErrors.email}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="supplier-phone">Phone</Label>
+              <Input
+                id="supplier-phone"
+                value={supplierForm.phone}
+                onChange={(e) =>
+                  setSupplierField("phone", e.target.value)
+                }
+                inputMode="numeric"
+                maxLength={10}
+                className={builderInputClass.replace("mt-2 ", "")}
+                aria-invalid={!!supplierFormErrors.phone}
+              />
+              {supplierFormErrors.phone && (
+                <p className="text-xs text-[#DC2626]">
+                  {supplierFormErrors.phone}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="supplier-address">Address</Label>
+              <Input
+                id="supplier-address"
+                value={supplierForm.address}
+                onChange={(e) =>
+                  setSupplierField("address", e.target.value)
+                }
+                className={builderInputClass.replace("mt-2 ", "")}
+                aria-invalid={!!supplierFormErrors.address}
+              />
+              {supplierFormErrors.address && (
+                <p className="text-xs text-[#DC2626]">
+                  {supplierFormErrors.address}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="supplier-currency">Currency Code</Label>
+              <Input
+                id="supplier-currency"
+                value={supplierForm.currency_code}
+                maxLength={3}
+                onChange={(e) =>
+                  setSupplierField(
+                    "currency_code",
+                    e.target.value.replace(/[^a-zA-Z]/g, ""),
+                  )
+                }
+                className={builderInputClass.replace("mt-2 ", "")}
+                aria-invalid={!!supplierFormErrors.currency_code}
+              />
+              {supplierFormErrors.currency_code && (
+                <p className="text-xs text-[#DC2626]">
+                  {supplierFormErrors.currency_code}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="supplier-lead-time">Lead Time Days</Label>
+              <Input
+                id="supplier-lead-time"
+                type="number"
+                min="1"
+                step="1"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={supplierForm.lead_time_days}
+                onChange={(e) =>
+                  setSupplierField(
+                    "lead_time_days",
+                    sanitizeIntegerInput(e.target.value),
+                  )
+                }
+                onKeyDown={(e) =>
+                  blockInvalidNumberKeys(e)
+                }
+                className={builderInputClass.replace("mt-2 ", "")}
+                aria-invalid={!!supplierFormErrors.lead_time_days}
+              />
+              {supplierFormErrors.lead_time_days && (
+                <p className="text-xs text-[#DC2626]">
+                  {supplierFormErrors.lead_time_days}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowCreateSupplierDialog(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleCreateSupplier()}
+              disabled={
+                savingSupplier ||
+                Object.keys(validateSupplierForm(supplierForm)).length > 0
+              }
+              className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+            >
+              {savingSupplier ? "Saving..." : "Create Supplier"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showQuotes} onOpenChange={setShowQuotes}>
         <DialogContent className="max-w-3xl">
@@ -1762,13 +2124,23 @@ export function InboundProcurement() {
                 type="number" 
                 min={0}
                 step="0.01"
+                inputMode="decimal"
                 placeholder="0.00" 
                 value={newQuote.cost} 
                 onChange={(e) => {
-                  const val = Number(e.target.value);
-                  if (val < 0) return;
-                  setNewQuote({ ...newQuote, cost: e.target.value });
+                  setNewQuote({
+                    ...newQuote,
+                    cost: sanitizeDecimalInput(
+                      e.target.value,
+                      2,
+                    ),
+                  });
                 }} 
+                onKeyDown={(e) =>
+                  blockInvalidNumberKeys(e, {
+                    allowDecimal: true,
+                  })
+                }
                 className="w-full border border-[#CBD5E1] rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#00A3AD]"
               />
             </div>
@@ -1781,13 +2153,21 @@ export function InboundProcurement() {
                 type="number" 
                 min={0}
                 step="1"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 placeholder="0" 
                 value={newQuote.days} 
                 onChange={(e) => {
-                  const val = Number(e.target.value);
-                  if (val < 0) return;
-                  setNewQuote({ ...newQuote, days: e.target.value });
+                  setNewQuote({
+                    ...newQuote,
+                    days: sanitizeIntegerInput(
+                      e.target.value,
+                    ),
+                  });
                 }} 
+                onKeyDown={(e) =>
+                  blockInvalidNumberKeys(e)
+                }
                 className="w-full border border-[#CBD5E1] rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#00A3AD]"
               />
             </div>

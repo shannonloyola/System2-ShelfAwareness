@@ -28,6 +28,30 @@ export interface StockAdjustment {
   created_at: string;
 }
 
+const buildSupabaseErrorMessage = (error: {
+  message?: string;
+  details?: string;
+  hint?: string;
+  code?: string;
+}) => {
+  const detailParts = [
+    error.message,
+    error.details,
+    error.hint,
+    error.code ? `Code: ${error.code}` : "",
+  ].filter(Boolean);
+
+  const combined = detailParts.join(" ");
+  if (
+    combined.toLowerCase().includes("nonnegative") ||
+    combined.toLowerCase().includes("negative")
+  ) {
+    return "Approval would make stock negative. Reduce the deduction or replenish stock first.";
+  }
+
+  return combined || "Unexpected Supabase error";
+};
+
 export const REASON_CATEGORIES: ReasonCategory[] = [
   'Damaged Goods', 'Count Correction', 'Theft/Loss',
   'Expiry Write-off', 'System Error', 'Other',
@@ -47,7 +71,7 @@ export async function submitAdjustment(payload: {
       movement_type: 'ADJUSTMENT'
     }])
     .select().single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(buildSupabaseErrorMessage(error));
   return data as StockAdjustment;
 }
 
@@ -55,20 +79,20 @@ export async function approveAdjustment(id: string, managerName: string) {
   const { error } = await supabase.rpc('approve_stock_adjustment', {
     p_adjustment_id: id, p_manager_name: managerName,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(buildSupabaseErrorMessage(error));
 }
 
 export async function rejectAdjustment(id: string, managerName: string, note: string) {
   const { error } = await supabase.rpc('reject_stock_adjustment', {
     p_adjustment_id: id, p_manager_name: managerName, p_rejection_note: note,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(buildSupabaseErrorMessage(error));
 }
 
 export async function fetchAdjustments(status?: AdjustmentStatus) {
   let q = supabase.from('stock_adjustments').select('*').order('created_at', { ascending: false });
   if (status) q = q.eq('status', status);
   const { data, error } = await q;
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(buildSupabaseErrorMessage(error));
   return data as StockAdjustment[];
 }
