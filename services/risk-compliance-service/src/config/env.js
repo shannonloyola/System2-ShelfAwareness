@@ -31,7 +31,7 @@ const parseBoolean = (value, fallback) => {
 
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
-  port: Number(process.env.PORT || 4001),
+  port: Number(process.env.PORT || 4010),
   databaseUrl: process.env.DATABASE_URL || "",
   dbSsl: parseBoolean(process.env.DB_SSL, true),
   supabaseUrl:

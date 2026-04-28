@@ -31,7 +31,7 @@ const parseBoolean = (value, fallback) => {
 
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
-  port: Number(process.env.PORT || 4001),
+  port: Number(process.env.PORT || 4009),
   databaseUrl: process.env.DATABASE_URL || "",
   dbSsl: parseBoolean(process.env.DB_SSL, true),
   supabaseUrl:
@@ -44,5 +44,4 @@ export const env = {
     process.env.VITE_SUPABASE_ANON_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     "",
-  cronTimezone: process.env.CRON_TIMEZONE || "Asia/Manila",
 };

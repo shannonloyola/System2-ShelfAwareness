@@ -6,6 +6,7 @@ Minimal supplier microservice scaffold for Sprint 4.
 
 - `GET /health` - service and database health check
 - `GET /suppliers` - list suppliers
+- `GET /suppliers/lookup?name=...` - find a supplier by exact name
 - `GET /suppliers/:id` - get one supplier
 - `POST /suppliers` - create supplier
 - `PUT /suppliers/:id` - update supplier
@@ -19,9 +20,13 @@ Minimal supplier microservice scaffold for Sprint 4.
 - `DATABASE_URL` - Postgres connection string for Supabase
 - `SUPABASE_URL` - fallback REST base URL for Supabase
 - `SUPABASE_ANON_KEY` - fallback anon key for Supabase REST access
+- `VITE_SUPABASE_ANON_KEY` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` - accepted as fallback anon key sources
 - `DB_SSL` - set to `true` or `false`
 - `NODE_ENV` - runtime mode
 - `CRON_TIMEZONE` - scheduler timezone, defaults to `Asia/Manila`
+
+The service auto-loads env values from the nearest `.env`, so the root project `.env`
+can be reused during local development.
 
 ## Current Schema
 
@@ -57,11 +62,24 @@ npm run migrate
 npm run dev
 ```
 
+If you are using the project root `.env`, you can usually start the service directly
+from the repo root with:
+
+```bash
+npm run dev:supplier
+```
+
 ## Docker Run
 
 ```bash
 docker build -t supplier-service .
 docker run --env-file .env -p 4001:4001 supplier-service
+```
+
+From the project root you can also run:
+
+```bash
+docker compose up --build supplier-service
 ```
 
 ## Migration
