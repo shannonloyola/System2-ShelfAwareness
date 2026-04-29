@@ -18,16 +18,6 @@ export default async function globalTeardown() {
   // Delete test data
   // Delete in reverse order to avoid foreign key constraints
 
-  // Delete products
-  const { error: productDeleteError } = await supabase
-    .from('product_catalog')
-    .delete()
-    .eq('supplier_id', 'test-supplier-1');
-
-  if (productDeleteError) {
-    console.error('Error deleting products:', productDeleteError);
-  }
-
   // Delete suppliers
   const { error: supplierDeleteError } = await supabase
     .from('suppliers')
