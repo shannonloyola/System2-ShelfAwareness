@@ -12,7 +12,7 @@ async function bootstrap() {
     ],
     credentials: true,
   });
-  app.setGlobalPrefix("api");
+  app.setGlobalPrefix("api", { exclude: ["health", "api/health"] });
   await app.listen(process.env.PORT ?? 3001);
 }
 

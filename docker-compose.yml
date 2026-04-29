@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # Infrastructure
   influxdb:
     image: influxdb:1.8
     container_name: influxdb
@@ -10,6 +11,8 @@ services:
       - INFLUXDB_DB=k6
     volumes:
       - influxdb_data:/var/lib/influxdb
+    networks:
+      - pharma-network
 
   grafana:
     image: grafana/grafana:latest
@@ -21,6 +24,222 @@ services:
       - grafana_data:/var/lib/grafana
     depends_on:
       - influxdb
+    networks:
+      - pharma-network
+
+  # Core Services
+  pharma-frontend:
+    build:
+      context: ./src/frontend
+    container_name: pharma-frontend
+    ports:
+      - "5173:5173"
+    env_file: .env
+    environment:
+      - PORT=5173
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  pharma-backend:
+    build:
+      context: ./src/backend
+    container_name: pharma-backend
+    ports:
+      - "3001:3001"
+    env_file: .env
+    environment:
+      - PORT=3001
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  # Specialized Microservices
+  supplier-service:
+    build:
+      context: ./services/supplier-service
+    container_name: supplier-service
+    ports:
+      - "4001:4001"
+    env_file: .env
+    environment:
+      - PORT=4001
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  procurement-service:
+    build:
+      context: ./services/procurement-service
+    container_name: procurement-service
+    ports:
+      - "4002:4002"
+    env_file: .env
+    environment:
+      - PORT=4002
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  product-catalog-service:
+    build:
+      context: ./services/product-catalog-service
+    container_name: product-catalog-service
+    ports:
+      - "4003:4003"
+    env_file: .env
+    environment:
+      - PORT=4003
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  inventory-service:
+    build:
+      context: ./services/inventory-service
+    container_name: inventory-service
+    ports:
+      - "4004:4004"
+    env_file: .env
+    environment:
+      - PORT=4004
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  warehouse-receiving-service:
+    build:
+      context: ./services/warehouse-receiving-service
+    container_name: warehouse-receiving-service
+    ports:
+      - "4005:4005"
+    env_file: .env
+    environment:
+      - PORT=4005
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  distribution-service:
+    build:
+      context: ./services/distribution-service
+    container_name: distribution-service
+    ports:
+      - "4006:4006"
+    env_file: .env
+    environment:
+      - PORT=4006
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  discrepancy-qc-service:
+    build:
+      context: ./services/discrepancy-qc-service
+    container_name: discrepancy-qc-service
+    ports:
+      - "4007:4007"
+    env_file: .env
+    environment:
+      - PORT=4007
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  stock-adjustment-service:
+    build:
+      context: ./services/stock-adjustment-service
+    container_name: stock-adjustment-service
+    ports:
+      - "4008:4008"
+    env_file: .env
+    environment:
+      - PORT=4008
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  cycle-counting-service:
+    build:
+      context: ./services/cycle-counting-service
+    container_name: cycle-counting-service
+    ports:
+      - "4009:4009"
+    env_file: .env
+    environment:
+      - PORT=4009
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  risk-compliance-service:
+    build:
+      context: ./services/risk-compliance-service
+    container_name: risk-compliance-service
+    ports:
+      - "4010:4010"
+    env_file: .env
+    environment:
+      - PORT=4010
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+    container_name: notification-service
+    ports:
+      - "4011:4011"
+    env_file: .env
+    environment:
+      - PORT=4011
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  reporting-analytics-service:
+    build:
+      context: ./services/reporting-analytics-service
+    container_name: reporting-analytics-service
+    ports:
+      - "4012:4012"
+    env_file: .env
+    environment:
+      - PORT=4012
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  document-service:
+    build:
+      context: ./services/document-service
+    container_name: document-service
+    ports:
+      - "4013:4013"
+    env_file: .env
+    environment:
+      - PORT=4013
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+  auth-user-access-service:
+    build:
+      context: ./services/auth-user-access-service
+    container_name: auth-user-access-service
+    ports:
+      - "4014:4014"
+    env_file: .env
+    environment:
+      - PORT=4014
+      - NODE_ENV=production
+    networks:
+      - pharma-network
+
+networks:
+  pharma-network:
+    driver: bridge
 
 volumes:
   influxdb_data:

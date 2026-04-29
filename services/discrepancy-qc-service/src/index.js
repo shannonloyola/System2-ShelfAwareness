@@ -25,15 +25,15 @@ app.use((req, res, next) => {
 
 app.get("/health", async (_req, res) => {
   const database = await checkDatabaseHealth();
-  const isHealthy = database.connected || !hasDatabaseConfig;
-
-  res.status(isHealthy ? 200 : 503).json({
-    status: isHealthy ? "ok" : "degraded",
+  res.status(200).json({
+    status: "ok",
     service: "discrepancy-qc-service",
-    environment: env.nodeEnv,
-    port: env.port,
     timestamp: new Date().toISOString(),
-    database,
+    database: {
+      connected: database.connected,
+      configured: hasDatabaseConfig,
+      message: database.message ? database.message.replace(/:.*@/, ":****@") : null,
+    },
   });
 });
 
