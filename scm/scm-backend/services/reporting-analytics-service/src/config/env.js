@@ -10,6 +10,7 @@ const loadFallbackEnv = () => {
     path.resolve(process.cwd(), "..", ".env"),
     path.resolve(process.cwd(), "..", "..", ".env"),
     path.resolve(process.cwd(), "..", "..", "..", ".env"),
+    path.resolve(process.cwd(), "..", "..", "..", "..", ".env"),
   ];
 
   for (const candidate of candidates) {
