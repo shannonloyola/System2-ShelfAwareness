@@ -1,0 +1,35 @@
+name: SCM Frontend CI
+
+on:
+  push:
+    paths:
+      - "scm/scm-frontend/**"
+      - ".github/workflows/scm-frontend.yml"
+  pull_request:
+    paths:
+      - "scm/scm-frontend/**"
+      - ".github/workflows/scm-frontend.yml"
+
+jobs:
+  frontend:
+    name: Build SCM frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: scm/scm-frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: scm/scm-frontend
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: scm/scm-frontend

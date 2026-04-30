@@ -5,7 +5,7 @@
 
   ## Running the code
 
-  The active frontend lives in `src/frontend` and is served through the
+  The active frontend lives in `scm/scm-frontend` and is served through the
   top-level scripts.
 
   1. Run `npm i` to install the root dependencies.

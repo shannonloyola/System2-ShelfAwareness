@@ -1,0 +1,42 @@
+name: SCM Backend CI
+
+on:
+  push:
+    paths:
+      - "scm/scm-backend/**"
+      - ".github/workflows/scm-backend.yml"
+  pull_request:
+    paths:
+      - "scm/scm-backend/**"
+      - ".github/workflows/scm-backend.yml"
+
+jobs:
+  backend:
+    name: Build SCM backend services
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install and build backend API
+        run: |
+          npm ci
+          npm run build --if-present
+        working-directory: scm/scm-backend/backend
+
+      - name: Install and build backend microservices
+        shell: bash
+        run: |
+          for service in scm/scm-backend/services/*; do
+            if [ -f "$service/package.json" ]; then
+              echo "Building $service"
+              npm ci --prefix "$service"
+              npm --prefix "$service" run build --if-present
+            fi
+          done
