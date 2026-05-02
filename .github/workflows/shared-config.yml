@@ -1,0 +1,47 @@
+# Shared Configuration for GitHub Actions Workflows
+# This file contains common environment variables and settings used across workflows
+
+# Common Environment Variables
+NODE_VERSION: '20'
+CACHE_VERSION: 'v1'
+
+# Service Configuration
+FRONTEND_NAME: 'pharma-frontend'
+BACKEND_NAME: 'supplier-service'
+
+# Deployment Settings
+STAGING_URL: 'https://staging.pharma.example.com'
+PRODUCTION_URL: 'https://api.pharma.example.com'
+
+# Docker Configuration
+DOCKER_REGISTRY: 'docker.io'
+DOCKER_NAMESPACE: 'pharma-distribution'
+
+# Testing Configuration
+TEST_TIMEOUT: '30000'
+COVERAGE_THRESHOLD: '80'
+
+# Security Configuration
+AUDIT_LEVEL: 'moderate'
+SNYK_SEVERITY_THRESHOLD: 'high'
+
+# Notification Configuration
+SLACK_DEPLOYMENTS_CHANNEL: '#deployments'
+SLACK_ALERTS_CHANNEL: '#alerts'
+
+# Pact Broker Configuration
+PACT_BROKER_URL: 'https://test.pactflow.io'
+PACT_BROKER_ENVIRONMENT: 'production'
+
+# Performance Configuration
+LHCI_MIN_PERFORMANCE_SCORE: '80'
+K6_THRESHOLD_DURATION: '5000'
+
+# Database Configuration
+POSTGRES_VERSION: '15'
+POSTGRES_DB: 'supplier_test'
+
+# Cache Configuration
+CACHE_DEPENDENCY_PATH: |
+  package-lock.json
+  services/supplier-service/package-lock.json

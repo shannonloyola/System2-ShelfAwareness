@@ -1,0 +1,11 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "paths": {
+      "@retail/api-client": ["../../packages/api-client/src/index.ts"],
+      "@retail/design-tokens": ["../../packages/design-tokens/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "__tests__/**/*.ts", "__tests__/**/*.tsx"],
+  "exclude": ["node_modules", "android", "ios"]
+}
