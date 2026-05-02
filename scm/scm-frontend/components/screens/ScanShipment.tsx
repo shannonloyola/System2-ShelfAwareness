@@ -5,7 +5,9 @@ import {
   AlertCircle,
   Camera,
   CheckCircle2,
+  ClipboardList,
   Loader2,
+  PackageCheck,
   ScanBarcode,
   ShieldAlert,
   StopCircle,
@@ -25,6 +27,12 @@ type BarcodeDetectorConstructor = new (options?: {
 };
 
 type ShipmentLookupResult = Record<string, unknown>;
+
+type ExpectedShipmentItem = {
+  id: string;
+  name: string;
+  quantity: string;
+};
 
 const extractShipment = (payload: unknown): ShipmentLookupResult | null => {
   if (!payload || typeof payload !== "object") {
@@ -49,6 +57,130 @@ const extractShipment = (payload: unknown): ShipmentLookupResult | null => {
   }
 
   return Object.keys(record).length > 0 ? record : null;
+};
+
+const getNestedRecord = (
+  record: ShipmentLookupResult | null,
+  keys: string[],
+) => {
+  if (!record) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = record[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as ShipmentLookupResult;
+    }
+  }
+
+  return null;
+};
+
+const getStringField = (
+  record: ShipmentLookupResult | null,
+  keys: string[],
+) => {
+  if (!record) {
+    return "";
+  }
+
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+
+  return "";
+};
+
+const getArrayField = (
+  record: ShipmentLookupResult | null,
+  keys: string[],
+) => {
+  if (!record) {
+    return [];
+  }
+
+  for (const key of keys) {
+    const value = record[key];
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+
+  return [];
+};
+
+const getExpectedItems = (
+  shipment: ShipmentLookupResult | null,
+): ExpectedShipmentItem[] => {
+  const purchaseOrder = getNestedRecord(shipment, ["purchase_order", "po"]);
+  const rawItems = [
+    ...getArrayField(shipment, [
+      "expected_items",
+      "expectedItems",
+      "items",
+      "line_items",
+      "lineItems",
+      "purchase_order_items",
+      "purchaseOrderItems",
+    ]),
+    ...getArrayField(purchaseOrder, [
+      "items",
+      "line_items",
+      "lineItems",
+      "purchase_order_items",
+      "purchaseOrderItems",
+    ]),
+  ];
+
+  return rawItems
+    .map((item, index) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const itemRecord = item as ShipmentLookupResult;
+      const name =
+        getStringField(itemRecord, [
+          "item_name",
+          "itemName",
+          "product_name",
+          "productName",
+          "name",
+          "sku",
+        ]) || `Item ${index + 1}`;
+      const quantity =
+        getStringField(itemRecord, [
+          "quantity",
+          "qty",
+          "expected_quantity",
+          "expectedQuantity",
+          "ordered_quantity",
+          "orderedQuantity",
+        ]) || "-";
+      const id =
+        getStringField(itemRecord, [
+          "po_item_id",
+          "id",
+          "sku",
+          "product_id",
+          "productId",
+        ]) || `${name}-${index}`;
+
+      return {
+        id,
+        name,
+        quantity,
+      };
+    })
+    .filter((item): item is ExpectedShipmentItem => Boolean(item));
 };
 
 const barcodeFormats = [
@@ -281,6 +413,43 @@ export function ScanShipment() {
     typeof shipmentLookup?.supplier_name === "string"
       ? shipmentLookup.supplier_name
       : null;
+  const shipmentPurchaseOrder = getNestedRecord(shipmentLookup, [
+    "purchase_order",
+    "po",
+  ]);
+  const shipmentPoNumber =
+    getStringField(shipmentLookup, [
+      "po_number",
+      "poNumber",
+      "po_no",
+      "poNo",
+      "purchase_order_number",
+      "purchaseOrderNumber",
+    ]) ||
+    getStringField(shipmentPurchaseOrder, [
+      "po_number",
+      "poNumber",
+      "po_no",
+      "poNo",
+    ]) ||
+    "-";
+  const shipmentSupplierName =
+    shipmentSupplier ||
+    getStringField(shipmentLookup, ["supplier", "supplierName"]) ||
+    getStringField(shipmentPurchaseOrder, [
+      "supplier_name",
+      "supplierName",
+      "supplier",
+    ]) ||
+    "-";
+  const expectedItems = getExpectedItems(shipmentLookup);
+  const expectedItemsCount =
+    getStringField(shipmentLookup, [
+      "expected_items_count",
+      "expectedItemsCount",
+      "item_count",
+      "itemCount",
+    ]) || String(expectedItems.length);
 
   return (
     <div className="min-h-full bg-[#F8FAFC] p-4 md:p-8">
@@ -479,6 +648,80 @@ export function ScanShipment() {
             </section>
           </aside>
         </div>
+
+        {shipmentLookup && !shipmentLookupLoading && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+            <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold uppercase text-[#00A3AD]">
+                  <ClipboardList className="h-4 w-4" />
+                  Shipment Detail
+                </div>
+                <h2 className="mt-2 text-2xl font-semibold text-slate-950">
+                  {shipmentPoNumber}
+                </h2>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase text-slate-500">
+                    Supplier
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-950">
+                    {shipmentSupplierName}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase text-slate-500">
+                    Expected Items
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-950">
+                    {expectedItemsCount}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <div className="flex items-center gap-2">
+                <PackageCheck className="h-5 w-5 text-[#00A3AD]" />
+                <h3 className="text-lg font-semibold text-slate-950">
+                  Expected Items List
+                </h3>
+              </div>
+
+              {expectedItems.length > 0 ? (
+                <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
+                  <div className="grid grid-cols-[1fr_7rem] bg-slate-50 px-4 py-3 text-xs font-semibold uppercase text-slate-500">
+                    <span>Item</span>
+                    <span className="text-right">Qty</span>
+                  </div>
+
+                  <div className="divide-y divide-slate-200">
+                    {expectedItems.map((item) => (
+                      <div
+                        key={item.id}
+                        className="grid grid-cols-[1fr_7rem] px-4 py-3 text-sm"
+                      >
+                        <span className="font-medium text-slate-900">
+                          {item.name}
+                        </span>
+                        <span className="text-right font-semibold text-slate-700">
+                          {item.quantity}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+                  No expected item lines were returned for this shipment.
+                </div>
+              )}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );
