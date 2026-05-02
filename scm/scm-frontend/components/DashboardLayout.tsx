@@ -14,6 +14,7 @@ import {
   ClipboardList,
   FileText,
   LogOut,
+  ScanBarcode,
   User,
 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -43,6 +44,11 @@ const navigation = [
     name: "Distribution",
     href: "/distribution",
     icon: TruckIcon,
+  },
+  {
+    name: "Scan Shipment",
+    href: "/scan-shipment",
+    icon: ScanBarcode,
   },
 ];
 
