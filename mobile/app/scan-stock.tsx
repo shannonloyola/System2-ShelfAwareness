@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View, Button, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, Button, ActivityIndicator, TextInput } from 'react-native';
 import { useState, useEffect } from 'react';
 import { Camera, useCameraDevice, useCodeScanner, useCameraPermission } from 'react-native-vision-camera';
 
@@ -7,10 +7,11 @@ export default function ScanStockScreen() {
   const device = useCameraDevice('back');
   
   const [scannedCode, setScannedCode] = useState<{ type: string; value: string } | null>(null);
-  const [stockResult, setStockResult] = useState<{ available: number; reserved: number } | null>(null);
+  const [stockResult, setStockResult] = useState<{ available: number; reserved: number; threshold: number } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(true);
+  const [manualSku, setManualSku] = useState('');
 
   useEffect(() => {
     if (!hasPermission) {
@@ -35,12 +36,21 @@ export default function ScanStockScreen() {
       // Handle the different expected response shapes
       const available = data.available ?? data.availableStock ?? data.available_count ?? 0;
       const reserved = data.reserved ?? data.reservedStock ?? data.reserved_count ?? 0;
+      const threshold = data.reorderPoint ?? data.reorder_point ?? data.lowStockThreshold ?? data.low_stock_threshold ?? 10;
       
-      setStockResult({ available, reserved });
+      setStockResult({ available, reserved, threshold });
     } catch (err: any) {
       setError(err.message || 'An error occurred fetching stock');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleManualSearch = () => {
+    if (manualSku.trim()) {
+      setIsScanning(false);
+      setScannedCode({ type: 'Manual Input', value: manualSku.trim() });
+      fetchStock(manualSku.trim());
     }
   };
 
@@ -90,7 +100,7 @@ export default function ScanStockScreen() {
       <View style={styles.overlay}>
         {scannedCode ? (
           <View style={styles.resultCard}>
-            <Text style={styles.resultTitle}>Barcode Scanned</Text>
+            <Text style={styles.resultTitle}>SKU Lookup Result</Text>
             <Text style={styles.resultText}>SKU: {scannedCode.value} ({scannedCode.type})</Text>
             
             <View style={styles.stockContainer}>
@@ -107,6 +117,12 @@ export default function ScanStockScreen() {
                 <View style={styles.stockResult}>
                   <Text style={styles.stockText}>Available: <Text style={styles.boldText}>{stockResult.available}</Text></Text>
                   <Text style={styles.stockText}>Reserved: <Text style={styles.boldText}>{stockResult.reserved}</Text></Text>
+                  
+                  {stockResult.available <= stockResult.threshold && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>Low Stock</Text>
+                    </View>
+                  )}
                 </View>
               )}
             </View>
@@ -116,13 +132,27 @@ export default function ScanStockScreen() {
                 setScannedCode(null);
                 setStockResult(null);
                 setError(null);
+                setManualSku('');
                 setIsScanning(true);
               }} />
             </View>
           </View>
         ) : (
-          <View style={styles.scanPrompt}>
-            <Text style={styles.promptText}>Point camera at an EAN-13 or Code128 barcode</Text>
+          <View style={styles.scanPromptContainer}>
+            <View style={styles.scanPrompt}>
+              <Text style={styles.promptText}>Point camera at an EAN-13 or Code128 barcode</Text>
+            </View>
+            <View style={styles.manualInputContainer}>
+              <TextInput
+                style={styles.input}
+                placeholder="Or enter SKU manually..."
+                value={manualSku}
+                onChangeText={setManualSku}
+                onSubmitEditing={handleManualSearch}
+                autoCapitalize="none"
+              />
+              <Button title="Search" onPress={handleManualSearch} />
+            </View>
           </View>
         )}
       </View>
@@ -145,7 +175,12 @@ const styles = StyleSheet.create({
   stockResult: { width: '100%', alignItems: 'center' },
   stockText: { fontSize: 16, color: '#333', marginVertical: 2 },
   boldText: { fontWeight: 'bold', fontSize: 18 },
+  badge: { backgroundColor: '#ff4444', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, marginTop: 10 },
+  badgeText: { color: 'white', fontSize: 12, fontWeight: 'bold', textTransform: 'uppercase' },
   buttonContainer: { width: '100%' },
+  scanPromptContainer: { width: '100%', alignItems: 'center' },
   scanPrompt: { backgroundColor: 'rgba(0,0,0,0.7)', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 20 },
-  promptText: { color: 'white', fontSize: 16, fontWeight: '500' }
+  promptText: { color: 'white', fontSize: 16, fontWeight: '500' },
+  manualInputContainer: { backgroundColor: 'white', padding: 10, borderRadius: 12, marginTop: 15, width: '85%', flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5 },
+  input: { flex: 1, height: 40, borderColor: '#ccc', borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, marginRight: 10, fontSize: 16 }
 });
