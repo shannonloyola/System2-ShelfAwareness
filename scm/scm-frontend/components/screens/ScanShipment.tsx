@@ -217,6 +217,8 @@ export function ScanShipment() {
     useState<ShipmentLookupResult | null>(null);
   const [shipmentLookupError, setShipmentLookupError] = useState("");
   const [shipmentLookupLoading, setShipmentLookupLoading] = useState(false);
+  const [markReceivedError, setMarkReceivedError] = useState("");
+  const [markReceivedLoading, setMarkReceivedLoading] = useState(false);
 
   const stopCamera = useCallback(() => {
     if (frameRef.current) {
@@ -240,6 +242,7 @@ export function ScanShipment() {
 
     setShipmentLookup(null);
     setShipmentLookupError("");
+    setMarkReceivedError("");
     setShipmentLookupLoading(true);
 
     try {
@@ -289,6 +292,58 @@ export function ScanShipment() {
       }
     }
   }, []);
+
+  const markShipmentAsReceived = useCallback(async () => {
+    if (!shipmentLookup) {
+      return;
+    }
+
+    const shipmentId = getStringField(shipmentLookup, [
+      "id",
+      "shipment_id",
+      "shipmentId",
+    ]);
+
+    if (!shipmentId) {
+      setMarkReceivedError("Shipment id is missing. Scan the shipment again.");
+      return;
+    }
+
+    setMarkReceivedError("");
+    setMarkReceivedLoading(true);
+
+    try {
+      const response = await fetch(
+        buildGatewayUrl(`/shipments/${encodeURIComponent(shipmentId)}/status`),
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ status: "received" }),
+        },
+      );
+
+      if (!response.ok) {
+        setMarkReceivedError("Unable to mark shipment as received. Try again.");
+        return;
+      }
+
+      const payload = (await response.json().catch(() => null)) as unknown;
+      const updatedShipment = extractShipment(payload);
+
+      setShipmentLookup((currentShipment) => ({
+        ...(currentShipment ?? {}),
+        ...(updatedShipment ?? {}),
+        status: getStringField(updatedShipment, ["status"]) || "received",
+      }));
+      toast.success("Shipment marked as received");
+    } catch {
+      setMarkReceivedError("Unable to mark shipment as received. Try again.");
+    } finally {
+      setMarkReceivedLoading(false);
+    }
+  }, [shipmentLookup]);
 
   const captureTrackingCode = useCallback(
     (value: string) => {
@@ -409,6 +464,13 @@ export function ScanShipment() {
 
   const shipmentStatus =
     typeof shipmentLookup?.status === "string" ? shipmentLookup.status : null;
+  const shipmentId = getStringField(shipmentLookup, [
+    "id",
+    "shipment_id",
+    "shipmentId",
+  ]);
+  const shipmentIsReceived =
+    shipmentStatus?.trim().toLowerCase() === "received";
   const shipmentSupplier =
     typeof shipmentLookup?.supplier_name === "string"
       ? shipmentLookup.supplier_name
@@ -662,24 +724,49 @@ export function ScanShipment() {
                 </h2>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl border border-slate-200 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase text-slate-500">
-                    Supplier
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-slate-950">
-                    {shipmentSupplierName}
-                  </p>
+              <div className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">
+                      Supplier
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-slate-950">
+                      {shipmentSupplierName}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">
+                      Expected Items
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-slate-950">
+                      {expectedItemsCount}
+                    </p>
+                  </div>
                 </div>
 
-                <div className="rounded-xl border border-slate-200 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase text-slate-500">
-                    Expected Items
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-slate-950">
-                    {expectedItemsCount}
-                  </p>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => void markShipmentAsReceived()}
+                  disabled={
+                    markReceivedLoading || shipmentIsReceived || !shipmentId
+                  }
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {markReceivedLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
+                  {shipmentIsReceived ? "Received" : "Mark as Received"}
+                </button>
+
+                {markReceivedError && (
+                  <div className="flex gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{markReceivedError}</span>
+                  </div>
+                )}
               </div>
             </div>
 
