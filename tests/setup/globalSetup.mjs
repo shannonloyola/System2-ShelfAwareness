@@ -50,26 +50,46 @@ export default async function globalSetup() {
     console.log('Suppliers seeded successfully');
   }
 
-  // Insert sample products (assuming product_catalog table exists)
-  const { error: productError } = await supabase
-    .from('product_catalog')
+  // Insert sample QC inspections
+  const { error: qcError } = await supabase
+    .from('qc_inspections')
     .upsert([
       {
-        id: 'test-product-1',
-        product_name: 'Test Product 1',
-        sku: 'TP001',
-        description: 'A test product',
-        category: 'Test',
-        unit_price: 10.00,
-        currency_code: 'USD',
-        supplier_id: 'test-supplier-1'
+        id: 'test-qc-1',
+        result: 'Pass',
+        notes: 'Test QC inspection',
+        reported_by: 'Test Agent'
+      },
+      {
+        id: 'test-qc-2',
+        result: 'Fail',
+        notes: 'Test QC failure',
+        reported_by: 'Test Agent'
       }
     ]);
 
-  if (productError) {
-    console.error('Error seeding products:', productError);
+  if (qcError) {
+    console.error('Error seeding QC inspections:', qcError);
   } else {
-    console.log('Products seeded successfully');
+    console.log('QC inspections seeded successfully');
+  }
+
+  // Insert sample purchase orders
+  const { error: poError } = await supabase
+    .from('purchase_orders')
+    .upsert([
+      {
+        id: 'test-po-1',
+        supplier_name: 'Test Supplier 1',
+        total_value: 1000.00,
+        status: 'Pending'
+      }
+    ]);
+
+  if (poError) {
+    console.error('Error seeding purchase orders:', poError);
+  } else {
+    console.log('Purchase orders seeded successfully');
   }
 
   // Add more seeding as needed for other tables

@@ -1,19 +1,17 @@
 export default {
   testEnvironment: "node",
-  testMatch: ["**/tests/**/*.test.js", "**/tests/**/*.test.mjs"],
+  testMatch: ["**/tests/**/*.test.js"],
   testTimeout: 30000,
   globalSetup: "./tests/setup/globalSetup.mjs",
   globalTeardown: "./tests/setup/globalTeardown.mjs",
   collectCoverageFrom: [
-    "src/**/*.js",
-    "src/**/*.mjs",
-    "!src/**/*.config.js",
-    "!src/**/*.config.mjs",
-    "!src/db-utils.mjs"
+    "src/**/*.{js,mjs}",
+    "!src/**/*.config.{js,mjs}",
+    "!src/**/dist/**"
   ],
   collectCoverage: true,
   coverageDirectory: "coverage",
-  coverageReporters: ["text", "text-summary", "lcov", "html", "json"],
+  coverageReporters: ["text", "lcov", "html", "json"],
   coveragePathIgnorePatterns: [
     "/node_modules/",
     "/tests/",

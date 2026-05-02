@@ -30,7 +30,7 @@ services:
   # Core Services
   pharma-frontend:
     build:
-      context: ./src/frontend
+      context: ./scm/scm-frontend
     container_name: pharma-frontend
     ports:
       - "5173:5173"
@@ -43,7 +43,7 @@ services:
 
   pharma-backend:
     build:
-      context: ./src/backend
+      context: ./scm/scm-backend/backend
     container_name: pharma-backend
     ports:
       - "3001:3001"
@@ -57,7 +57,7 @@ services:
   # Specialized Microservices
   supplier-service:
     build:
-      context: ./services/supplier-service
+      context: ./scm/scm-backend/services/supplier-service
     container_name: supplier-service
     ports:
       - "4001:4001"
@@ -70,7 +70,7 @@ services:
 
   procurement-service:
     build:
-      context: ./services/procurement-service
+      context: ./scm/scm-backend/services/procurement-service
     container_name: procurement-service
     ports:
       - "4002:4002"
@@ -83,7 +83,7 @@ services:
 
   product-catalog-service:
     build:
-      context: ./services/product-catalog-service
+      context: ./scm/scm-backend/services/product-catalog-service
     container_name: product-catalog-service
     ports:
       - "4003:4003"
@@ -96,7 +96,7 @@ services:
 
   inventory-service:
     build:
-      context: ./services/inventory-service
+      context: ./scm/scm-backend/services/inventory-service
     container_name: inventory-service
     ports:
       - "4004:4004"
@@ -109,7 +109,7 @@ services:
 
   warehouse-receiving-service:
     build:
-      context: ./services/warehouse-receiving-service
+      context: ./scm/scm-backend/services/warehouse-receiving-service
     container_name: warehouse-receiving-service
     ports:
       - "4005:4005"
@@ -122,7 +122,7 @@ services:
 
   distribution-service:
     build:
-      context: ./services/distribution-service
+      context: ./scm/scm-backend/services/distribution-service
     container_name: distribution-service
     ports:
       - "4006:4006"
@@ -135,7 +135,7 @@ services:
 
   discrepancy-qc-service:
     build:
-      context: ./services/discrepancy-qc-service
+      context: ./scm/scm-backend/services/discrepancy-qc-service
     container_name: discrepancy-qc-service
     ports:
       - "4007:4007"
@@ -148,7 +148,7 @@ services:
 
   stock-adjustment-service:
     build:
-      context: ./services/stock-adjustment-service
+      context: ./scm/scm-backend/services/stock-adjustment-service
     container_name: stock-adjustment-service
     ports:
       - "4008:4008"
@@ -161,7 +161,7 @@ services:
 
   cycle-counting-service:
     build:
-      context: ./services/cycle-counting-service
+      context: ./scm/scm-backend/services/cycle-counting-service
     container_name: cycle-counting-service
     ports:
       - "4009:4009"
@@ -174,7 +174,7 @@ services:
 
   risk-compliance-service:
     build:
-      context: ./services/risk-compliance-service
+      context: ./scm/scm-backend/services/risk-compliance-service
     container_name: risk-compliance-service
     ports:
       - "4010:4010"
@@ -187,7 +187,7 @@ services:
 
   notification-service:
     build:
-      context: ./services/notification-service
+      context: ./scm/scm-backend/services/notification-service
     container_name: notification-service
     ports:
       - "4011:4011"
@@ -200,7 +200,7 @@ services:
 
   reporting-analytics-service:
     build:
-      context: ./services/reporting-analytics-service
+      context: ./scm/scm-backend/services/reporting-analytics-service
     container_name: reporting-analytics-service
     ports:
       - "4012:4012"
@@ -213,7 +213,7 @@ services:
 
   document-service:
     build:
-      context: ./services/document-service
+      context: ./scm/scm-backend/services/document-service
     container_name: document-service
     ports:
       - "4013:4013"
@@ -226,7 +226,7 @@ services:
 
   auth-user-access-service:
     build:
-      context: ./services/auth-user-access-service
+      context: ./scm/scm-backend/services/auth-user-access-service
     container_name: auth-user-access-service
     ports:
       - "4014:4014"
