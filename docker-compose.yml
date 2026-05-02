@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  # Frontend Service
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: pharma-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - backend
+    networks:
+      - pharma-network
+    restart: unless-stopped
+
+  # Backend Service
+  backend:
+    build:
+      context: ./services/supplier-service
+      dockerfile: Dockerfile
+    container_name: supplier-service
+    ports:
+      - "4001:4001"
+    environment:
+      - NODE_ENV=production
+      - PORT=4001
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:password@postgres:5432/supplier_db}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+    depends_on:
+      - postgres
+    networks:
+      - pharma-network
+    restart: unless-stopped
+    volumes:
+      - ./services/supplier-service/src:/app/src
+      - ./services/supplier-service/package.json:/app/package.json
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres-db
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=supplier_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./suppliers_schema.sql:/docker-entrypoint-initdb.d/01-suppliers.sql
+      - ./payments_schema.sql:/docker-entrypoint-initdb.d/02-payments.sql
+      - ./risk_assessments_schema.sql:/docker-entrypoint-initdb.d/03-risk-assessments.sql
+      - ./delivery_schedules_schema.sql:/docker-entrypoint-initdb.d/04-delivery-schedules.sql
+    networks:
+      - pharma-network
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: redis-cache
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - pharma-network
+    restart: unless-stopped
+
+  # Monitoring Stack
+  influxdb:
+    image: influxdb:1.8
+    container_name: influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      - INFLUXDB_DB=k6
+    volumes:
+      - influxdb_data:/var/lib/influxdb
+    networks:
+      - pharma-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - influxdb
+    networks:
+      - pharma-network
+    restart: unless-stopped
+
+  # Performance Testing
+  k6:
+    image: grafana/k6:latest
+    container_name: k6
+    volumes:
+      - ./tests/performance:/scripts
+    environment:
+      - K6_PROMETHEUS_RW_SERVER_URL=http://influxdb:8086/api/v1/prom/promdb/write
+    depends_on:
+      - influxdb
+    networks:
+      - pharma-network
+    profiles:
+      - testing
+
+networks:
+  pharma-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  influxdb_data:
+  grafana_data:

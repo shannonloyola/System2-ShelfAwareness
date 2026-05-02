@@ -1,0 +1,250 @@
+{
+  "consumer": {
+    "name": "PharmaPOFrontend"
+  },
+  "interactions": [
+    {
+      "description": "a request to fetch the supplier scorecard for Test Supplier",
+      "providerStates": [
+        {
+          "name": "a supplier scorecard exists for Test Supplier"
+        }
+      ],
+      "request": {
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+          "apikey": "test-api-key"
+        },
+        "method": "GET",
+        "path": "/rest/v1/supplier_scorecards_view",
+        "query": {
+          "select": [
+            "*"
+          ],
+          "supplier_name": [
+            "ilike.%Test Supplier%"
+          ]
+        }
+      },
+      "response": {
+        "body": [
+          {
+            "approved_discrepancies": 1,
+            "approved_pos": 10,
+            "avg_discrepancy_units": 3.5,
+            "defect_rate": 9.5,
+            "on_time_delivery_pct": 82,
+            "po_approval_rate": 83.3,
+            "rejected_discrepancies": 1,
+            "reliability_score": 78.5,
+            "supplier_key": "supplier-test-001",
+            "supplier_name": "Test Supplier",
+            "total_discrepancies": 2,
+            "total_pos": 12,
+            "total_receipts": 10
+          }
+        ],
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "matchingRules": {
+          "body": {
+            "$": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$[*].approved_discrepancies": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$[*].approved_pos": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$[*].avg_discrepancy_units": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$[*].defect_rate": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$[*].on_time_delivery_pct": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$[*].po_approval_rate": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$[*].rejected_discrepancies": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$[*].reliability_score": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$[*].supplier_key": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$[*].supplier_name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$[*].total_discrepancies": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$[*].total_pos": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$[*].total_receipts": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      }
+    },
+    {
+      "description": "a request to search purchase orders by supplier name",
+      "providerStates": [
+        {
+          "name": "purchase orders with matching supplier names exist"
+        }
+      ],
+      "request": {
+        "headers": {
+          "Content-Type": "application/json",
+          "apikey": "test-api-key"
+        },
+        "method": "GET",
+        "path": "/rest/v1/purchase_orders",
+        "query": {
+          "supplier_name": [
+            "ilike.%Test%"
+          ]
+        }
+      },
+      "response": {
+        "body": [
+          {
+            "po_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "supplier_name": "Test Supplier"
+          }
+        ],
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8"
+        },
+        "matchingRules": {
+          "body": {
+            "$": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$[*].po_id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            },
+            "$[*].supplier_name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      }
+    }
+  ],
+  "metadata": {
+    "pact-js": {
+      "version": "16.3.0"
+    },
+    "pactRust": {
+      "ffi": "0.5.3",
+      "models": "1.3.9"
+    },
+    "pactSpecification": {
+      "version": "3.0.0"
+    }
+  },
+  "provider": {
+    "name": "SupabasePOAPI"
+  }
+}

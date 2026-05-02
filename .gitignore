@@ -1,0 +1,12 @@
+node_modules
+.env
+.env.*
+!.envexample
+
+# React Native mobile app
+mobile/*/node_modules
+mobile/*/android/.gradle
+mobile/*/android/app/build
+mobile/*/android/build
+mobile/*/ios/Pods
+mobile/*/ios/build
