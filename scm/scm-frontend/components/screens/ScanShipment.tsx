@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertCircle,
   Camera,
   CheckCircle2,
   Loader2,
@@ -10,6 +11,7 @@ import {
   StopCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { buildGatewayUrl } from "../../utils/api";
 
 type DetectedBarcode = {
   rawValue: string;
@@ -20,6 +22,33 @@ type BarcodeDetectorConstructor = new (options?: {
   formats?: string[];
 }) => {
   detect: (source: HTMLVideoElement) => Promise<DetectedBarcode[]>;
+};
+
+type ShipmentLookupResult = Record<string, unknown>;
+
+const extractShipment = (payload: unknown): ShipmentLookupResult | null => {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  if (Array.isArray(payload)) {
+    return (payload[0] as ShipmentLookupResult | undefined) ?? null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  if (Array.isArray(record.data)) {
+    return (record.data[0] as ShipmentLookupResult | undefined) ?? null;
+  }
+
+  if (record.data && typeof record.data === "object") {
+    return record.data as ShipmentLookupResult;
+  }
+
+  if (record.shipment && typeof record.shipment === "object") {
+    return record.shipment as ShipmentLookupResult;
+  }
+
+  return Object.keys(record).length > 0 ? record : null;
 };
 
 const barcodeFormats = [
@@ -41,6 +70,7 @@ export function ScanShipment() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const frameRef = useRef<number | null>(null);
+  const lookupRequestRef = useRef(0);
   const detectorRef = useRef<InstanceType<BarcodeDetectorConstructor> | null>(
     null,
   );
@@ -51,6 +81,10 @@ export function ScanShipment() {
   const [scanError, setScanError] = useState("");
   const [detectedCode, setDetectedCode] = useState("");
   const [manualCode, setManualCode] = useState("");
+  const [shipmentLookup, setShipmentLookup] =
+    useState<ShipmentLookupResult | null>(null);
+  const [shipmentLookupError, setShipmentLookupError] = useState("");
+  const [shipmentLookupLoading, setShipmentLookupLoading] = useState(false);
 
   const stopCamera = useCallback(() => {
     if (frameRef.current) {
@@ -67,6 +101,74 @@ export function ScanShipment() {
 
     setCameraActive(false);
   }, []);
+
+  const lookupShipment = useCallback(async (trackingNumber: string) => {
+    const requestId = lookupRequestRef.current + 1;
+    lookupRequestRef.current = requestId;
+
+    setShipmentLookup(null);
+    setShipmentLookupError("");
+    setShipmentLookupLoading(true);
+
+    try {
+      const response = await fetch(
+        buildGatewayUrl(
+          `/shipments?trackingNumber=${encodeURIComponent(trackingNumber)}`,
+        ),
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          cache: "no-store",
+        },
+      );
+
+      if (requestId !== lookupRequestRef.current) {
+        return;
+      }
+
+      if (response.status === 404) {
+        setShipmentLookupError("Shipment not found");
+        return;
+      }
+
+      if (!response.ok) {
+        setShipmentLookupError("Unable to look up shipment. Try again.");
+        return;
+      }
+
+      const payload = (await response.json()) as unknown;
+      const shipment = extractShipment(payload);
+
+      if (!shipment) {
+        setShipmentLookupError("Shipment not found");
+        return;
+      }
+
+      setShipmentLookup(shipment);
+    } catch {
+      if (requestId === lookupRequestRef.current) {
+        setShipmentLookupError("Unable to look up shipment. Try again.");
+      }
+    } finally {
+      if (requestId === lookupRequestRef.current) {
+        setShipmentLookupLoading(false);
+      }
+    }
+  }, []);
+
+  const captureTrackingCode = useCallback(
+    (value: string) => {
+      setDetectedCode(value);
+      setManualCode(value);
+      toast.success("Shipment barcode captured", {
+        description: value,
+      });
+      void lookupShipment(value);
+    },
+    [lookupShipment],
+  );
 
   const scanFrame = useCallback(async () => {
     const detector = detectorRef.current;
@@ -87,11 +189,7 @@ export function ScanShipment() {
 
       if (firstResult?.rawValue) {
         const value = firstResult.rawValue.trim();
-        setDetectedCode(value);
-        setManualCode(value);
-        toast.success("Shipment barcode captured", {
-          description: value,
-        });
+        captureTrackingCode(value);
         stopCamera();
         return;
       }
@@ -106,7 +204,7 @@ export function ScanShipment() {
     if (streamRef.current) {
       frameRef.current = requestAnimationFrame(scanFrame);
     }
-  }, [stopCamera]);
+  }, [captureTrackingCode, stopCamera]);
 
   const startCamera = useCallback(async () => {
     setScanError("");
@@ -170,15 +268,19 @@ export function ScanShipment() {
       return;
     }
 
-    setDetectedCode(value);
-    toast.success("Shipment barcode captured", {
-      description: value,
-    });
+    captureTrackingCode(value);
   };
 
   useEffect(() => {
     return () => stopCamera();
   }, [stopCamera]);
+
+  const shipmentStatus =
+    typeof shipmentLookup?.status === "string" ? shipmentLookup.status : null;
+  const shipmentSupplier =
+    typeof shipmentLookup?.supplier_name === "string"
+      ? shipmentLookup.supplier_name
+      : null;
 
   return (
     <div className="min-h-full bg-[#F8FAFC] p-4 md:p-8">
@@ -303,6 +405,36 @@ export function ScanShipment() {
                   <p className="mt-3 break-all rounded-lg bg-white px-3 py-2 font-mono text-sm">
                     {detectedCode}
                   </p>
+
+                  {shipmentLookupLoading && (
+                    <div className="mt-3 flex items-center gap-2 text-sm font-medium text-emerald-900">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Looking up shipment...
+                    </div>
+                  )}
+
+                  {shipmentLookupError && (
+                    <div className="mt-3 flex gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>{shipmentLookupError}</span>
+                    </div>
+                  )}
+
+                  {shipmentLookup && !shipmentLookupLoading && (
+                    <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-900">
+                      <div className="flex items-center gap-2 font-semibold">
+                        <CheckCircle2 className="h-4 w-4" />
+                        Shipment found
+                      </div>
+                      {(shipmentStatus || shipmentSupplier) && (
+                        <p className="mt-1 text-emerald-800">
+                          {[shipmentSupplier, shipmentStatus]
+                            .filter(Boolean)
+                            .join(" - ")}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="mt-3 text-sm text-slate-500">
@@ -325,7 +457,10 @@ export function ScanShipment() {
               </label>
               <input
                 value={manualCode}
-                onChange={(event) => setManualCode(event.target.value)}
+                onChange={(event) => {
+                  setManualCode(event.target.value);
+                  setShipmentLookupError("");
+                }}
                 placeholder="Enter or paste tracking barcode"
                 className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-[#00A3AD] focus:ring-2 focus:ring-[#00A3AD]/20"
               />
@@ -333,8 +468,12 @@ export function ScanShipment() {
               <button
                 type="button"
                 onClick={confirmManualCode}
-                className="mt-4 w-full rounded-xl bg-[#1A2B47] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#263F64]"
+                disabled={shipmentLookupLoading}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1A2B47] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#263F64] disabled:cursor-not-allowed disabled:opacity-70"
               >
+                {shipmentLookupLoading && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
                 Confirm Barcode
               </button>
             </section>
