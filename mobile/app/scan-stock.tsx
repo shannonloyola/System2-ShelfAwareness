@@ -1,10 +1,10 @@
-import { StyleSheet, Text, View, Button, ActivityIndicator, TextInput } from 'react-native';
-import { useState, useEffect } from 'react';
-import { Camera, useCameraDevice, useCodeScanner, useCameraPermission } from 'react-native-vision-camera';
+import { StyleSheet, Text, View, Button, ActivityIndicator, TextInput, TouchableOpacity } from 'react-native';
+import { useState } from 'react';
+import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
+import { palette, spacing, radius, shadow, typography } from '@/constants/design';
 
 export default function ScanStockScreen() {
-  const { hasPermission, requestPermission } = useCameraPermission();
-  const device = useCameraDevice('back');
+  const [permission, requestPermission] = useCameraPermissions();
   
   const [scannedCode, setScannedCode] = useState<{ type: string; value: string } | null>(null);
   const [stockResult, setStockResult] = useState<{ available: number; reserved: number; threshold: number } | null>(null);
@@ -12,12 +12,6 @@ export default function ScanStockScreen() {
   const [error, setError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(true);
   const [manualSku, setManualSku] = useState('');
-
-  useEffect(() => {
-    if (!hasPermission) {
-      requestPermission();
-    }
-  }, [hasPermission, requestPermission]);
 
   const fetchStock = async (sku: string) => {
     setIsLoading(true);
@@ -33,7 +27,6 @@ export default function ScanStockScreen() {
       
       const data = await response.json();
       
-      // Handle the different expected response shapes
       const available = data.available ?? data.availableStock ?? data.available_count ?? 0;
       const reserved = data.reserved ?? data.reservedStock ?? data.reserved_count ?? 0;
       const threshold = data.reorderPoint ?? data.reorder_point ?? data.lowStockThreshold ?? data.low_stock_threshold ?? 10;
@@ -54,32 +47,20 @@ export default function ScanStockScreen() {
     }
   };
 
-  const codeScanner = useCodeScanner({
-    codeTypes: ['ean-13', 'code-128'],
-    onCodeScanned: (codes) => {
-      // Prevent rapid duplicate scans
-      if (!isScanning) return;
-      if (codes.length > 0) {
-        const firstCode = codes[0];
-        if (firstCode.value && firstCode.type) {
-          setIsScanning(false);
-          setScannedCode({ type: firstCode.type, value: firstCode.value });
-          fetchStock(firstCode.value);
-        }
-      }
+  const handleBarcodeScanned = (result: BarcodeScanningResult) => {
+    if (!isScanning) return;
+    if (result.data) {
+      setIsScanning(false);
+      setScannedCode({ type: result.type, value: result.data });
+      fetchStock(result.data);
     }
-  });
+  };
 
-  if (device == null) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.text}>No Camera Device Found</Text>
-        <Text style={styles.subtext}>Please run on a physical device.</Text>
-      </View>
-    );
+  if (!permission) {
+    return <View style={styles.container}><ActivityIndicator color="#fff" /></View>;
   }
   
-  if (!hasPermission) {
+  if (!permission.granted) {
     return (
       <View style={styles.container}>
         <Text style={styles.text}>Camera Permission Required</Text>
@@ -91,11 +72,13 @@ export default function ScanStockScreen() {
 
   return (
     <View style={styles.container}>
-      <Camera
+      <CameraView
         style={StyleSheet.absoluteFill}
-        device={device}
-        isActive={isScanning}
-        codeScanner={codeScanner}
+        facing="back"
+        onBarcodeScanned={handleBarcodeScanned}
+        barcodeScannerSettings={{
+          barcodeTypes: ["ean13", "code128"],
+        }}
       />
       <View style={styles.overlay}>
         {scannedCode ? (
@@ -106,7 +89,7 @@ export default function ScanStockScreen() {
             <View style={styles.stockContainer}>
               {isLoading && (
                 <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="small" color="#0a7ea4" />
+                  <ActivityIndicator size="small" color={palette.primary} />
                   <Text style={styles.statusText}>Fetching stock...</Text>
                 </View>
               )}
@@ -140,7 +123,7 @@ export default function ScanStockScreen() {
         ) : (
           <View style={styles.scanPromptContainer}>
             <View style={styles.scanPrompt}>
-              <Text style={styles.promptText}>Point camera at an EAN-13 or Code128 barcode</Text>
+              <Text style={styles.promptText}>Point camera at a barcode</Text>
             </View>
             <View style={styles.manualInputContainer}>
               <TextInput

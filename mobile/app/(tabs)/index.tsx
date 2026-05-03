@@ -37,6 +37,7 @@ export default function DashboardScreen() {
       ]);
       setStats(statsData);
       setPending(pendingData);
+      console.log('[DASHBOARD] Recent Scans:', scansData);
       setRecentScans(scansData);
     } catch (err: any) {
       setError('Could not load dashboard data. Pull to refresh.');

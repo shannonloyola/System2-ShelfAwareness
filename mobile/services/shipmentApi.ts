@@ -1,14 +1,11 @@
 /**
  * Shipment API service for the ShelfAwareness mobile app.
- * Connects to the warehouse-receiving-service on port 4005.
+ * Connects to the warehouse-receiving-service.
  */
 import { Platform } from 'react-native';
 
-// On Android emulator, localhost = 10.0.2.2
-// On physical device or iOS, use the actual host IP / env var
-const BASE_URL =
-  (process.env.EXPO_PUBLIC_WAREHOUSE_URL as string | undefined) ||
-  (Platform.OS === 'android' ? 'http://10.0.2.2:4005' : 'http://localhost:4005');
+// Using your PC's IP since it's reachable via hotspot
+const BASE_URL = 'http://172.20.10.3:4005'; 
 
 export interface Shipment {
   id: string;
@@ -27,39 +24,42 @@ export interface ShipmentStats {
   receivedToday: number;
 }
 
-const handleResponse = async (res: Response) => {
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(body || `Request failed: ${res.status}`);
+/**
+ * Base fetch helper
+ */
+async function fetchApi(endpoint: string, options: RequestInit = {}) {
+  const response = await fetch(`${BASE_URL}${endpoint}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+  if (response.status === 404) return null;
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(body || `Request failed: ${response.status}`);
   }
-  const json = await res.json();
+
+  const json = await response.json();
   return json.data ?? json;
-};
+}
 
 export const getShipmentByTracking = async (trackingNumber: string): Promise<Shipment | null> => {
-  const res = await fetch(
-    `${BASE_URL}/shipments?trackingNumber=${encodeURIComponent(trackingNumber)}`,
-    { method: 'GET', headers: { 'Content-Type': 'application/json' } },
-  );
-  return handleResponse(res);
+  return fetchApi(`/shipments?trackingNumber=${encodeURIComponent(trackingNumber)}`, {
+    method: 'GET',
+  });
 };
 
 export const getPendingShipments = async (): Promise<Shipment[]> => {
-  const res = await fetch(`${BASE_URL}/shipments/pending`, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  const data = await handleResponse(res);
+  const data = await fetchApi('/shipments/pending', { method: 'GET' });
   return Array.isArray(data) ? data : [];
 };
 
 export const getTodayStats = async (): Promise<ShipmentStats> => {
-  const res = await fetch(`${BASE_URL}/shipments/stats/today`, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  const data = await handleResponse(res);
+  const data = await fetchApi('/shipments/stats/today', { method: 'GET' });
   return { receivedToday: data?.receivedToday ?? 0 };
 };
 
@@ -68,12 +68,10 @@ export const markAsReceived = async (
   receivedBy?: string,
   notes?: string,
 ): Promise<Shipment> => {
-  const res = await fetch(`${BASE_URL}/shipments/${id}/status`, {
+  const data = await fetchApi(`/shipments/${id}/status`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status: 'received', receivedBy, notes }),
   });
-  const data = await handleResponse(res);
   if (!data) throw new Error('No response from server');
   return data;
 };

@@ -1,14 +1,17 @@
 import { env } from "../config/env.js";
 
-const buildHeaders = () => ({
-  apikey: env.supabaseAnonKey,
-  Authorization: `Bearer ${env.supabaseAnonKey}`,
-  "Content-Type": "application/json",
-});
+const buildHeaders = () => {
+  const key = env.supabaseServiceRoleKey || env.supabaseAnonKey;
+  return {
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+    "Content-Type": "application/json",
+  };
+};
 
 const ensureRestConfig = () => {
-  if (!env.supabaseUrl || !env.supabaseAnonKey) {
-    throw new Error("SUPABASE_URL or SUPABASE_ANON_KEY is not set");
+  if (!env.supabaseUrl || (!env.supabaseAnonKey && !env.supabaseServiceRoleKey)) {
+    throw new Error("SUPABASE_URL and at least one API KEY must be set");
   }
 };
 

@@ -31,12 +31,18 @@ services:
   pharma-frontend:
     build:
       context: ./scm/scm-frontend
+      args:
+        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        - NEXT_PUBLIC_BACKEND_API_URL=${NEXT_PUBLIC_BACKEND_API_URL}
+        - NEXT_PUBLIC_SUPPLIER_SERVICE_URL=${NEXT_PUBLIC_SUPPLIER_SERVICE_URL}
     container_name: pharma-frontend
     ports:
       - "5173:5173"
     env_file: .env
     environment:
       - PORT=5173
+      - HOSTNAME=0.0.0.0
       - NODE_ENV=production
     networks:
       - pharma-network

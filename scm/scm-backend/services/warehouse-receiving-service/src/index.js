@@ -4,6 +4,7 @@ import { checkDatabaseHealth, hasDatabaseConfig } from "./lib/database.js";
 import { deliverySchedulesRouter } from "./routes/deliverySchedules.js";
 import { grnDraftsRouter } from "./routes/grnDrafts.js";
 import { grnQualityChecksRouter } from "./routes/grnQualityChecks.js";
+import { shipmentsRouter } from "./routes/shipments.js";
 
 const app = express();
 
@@ -42,6 +43,7 @@ app.get("/health", async (_req, res) => {
 app.use("/grn-drafts", grnDraftsRouter);
 app.use("/grn-quality-checks", grnQualityChecksRouter);
 app.use("/delivery-schedules", deliverySchedulesRouter);
+app.use("/shipments", shipmentsRouter);
 
 app.use((error, _req, res, _next) => {
   const status = error.status || 500;

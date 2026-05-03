@@ -12,7 +12,7 @@ import {
   Animated,
   Vibration,
 } from 'react-native';
-import { Camera, useCameraDevice, useCodeScanner, useCameraPermission } from 'react-native-vision-camera';
+import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getShipmentByTracking, markAsReceived, type Shipment } from '@/services/shipmentApi';
@@ -24,8 +24,7 @@ type ScanPhase = 'scan' | 'result' | 'success';
 export default function ScanShipmentScreen() {
   const { prefill } = useLocalSearchParams<{ prefill?: string }>();
   const router = useRouter();
-  const { hasPermission, requestPermission } = useCameraPermission();
-  const device = useCameraDevice('back');
+  const [permission, requestPermission] = useCameraPermissions();
 
   const [phase, setPhase] = useState<ScanPhase>('scan');
   const [isScanning, setIsScanning] = useState(true);
@@ -62,29 +61,28 @@ export default function ScanShipmentScreen() {
 
     try {
       const data = await getShipmentByTracking(value);
+      console.log('[SCAN] Shipment Found:', JSON.stringify(data, null, 2));
       if (!data) {
         setLookupError('Shipment not found. Check the tracking number and try again.');
       } else {
         setShipment(data);
+        await saveRecentScan(data); // Save to history immediately
         Vibration.vibrate(50);
       }
     } catch (err: any) {
+      console.error('[SCAN] Lookup Error:', err);
       setLookupError(err.message || 'Could not reach the server. Check your connection.');
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  const codeScanner = useCodeScanner({
-    codeTypes: ['ean-13', 'code-128', 'qr'],
-    onCodeScanned: (codes) => {
-      if (!isScanning || phase !== 'scan') return;
-      const first = codes[0];
-      if (first?.value) {
-        lookupShipment(first.value);
-      }
-    },
-  });
+  const handleBarcodeScanned = (result: BarcodeScanningResult) => {
+    if (!isScanning || phase !== 'scan') return;
+    if (result.data) {
+      lookupShipment(result.data);
+    }
+  };
 
   const handleMarkReceived = async () => {
     if (!shipment) return;
@@ -92,6 +90,7 @@ export default function ScanShipmentScreen() {
     setMarkError(null);
     try {
       const updated = await markAsReceived(shipment.id);
+      console.log('[SCAN] Mark as Received Success:', updated);
       await saveRecentScan(updated);
       setShipment(updated);
       setPhase('success');
@@ -103,6 +102,7 @@ export default function ScanShipmentScreen() {
       }).start();
       Vibration.vibrate([0, 80, 40, 80]);
     } catch (err: any) {
+      console.error('[SCAN] Mark Received Error:', err);
       setMarkError(err.message || 'Failed to update shipment status.');
     } finally {
       setMarkingReceived(false);
@@ -121,8 +121,18 @@ export default function ScanShipmentScreen() {
     successAnim.setValue(0);
   };
 
+  // ── Helper ──────────────────────────────────────────────────────────────────
+  const isProcessable = (status: string) => {
+    const s = status.toLowerCase();
+    return s === 'pending' || s === 'initialized' || s === 'handed_to_freight' || s === 'in_transit' || s === 'scheduled';
+  };
+
   // ── Permission states ───────────────────────────────────────────────────────
-  if (!hasPermission) {
+  if (!permission) {
+    return <View style={styles.centered}><ActivityIndicator color={palette.primary} /></View>;
+  }
+
+  if (!permission.granted) {
     return (
       <View style={styles.centered}>
         <Ionicons name="camera-outline" size={60} color={palette.primary} />
@@ -176,12 +186,14 @@ export default function ScanShipmentScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       {/* Camera */}
-      {device && phase === 'scan' && (
-        <Camera
+      {phase === 'scan' && (
+        <CameraView
           style={StyleSheet.absoluteFill}
-          device={device}
-          isActive={isScanning}
-          codeScanner={codeScanner}
+          facing="back"
+          onBarcodeScanned={handleBarcodeScanned}
+          barcodeScannerSettings={{
+            barcodeTypes: ["ean13", "code128", "qr"],
+          }}
         />
       )}
 
@@ -343,7 +355,7 @@ export default function ScanShipmentScreen() {
               )}
 
               {/* Actions */}
-              {shipment.status === 'pending' ? (
+              {shipment.status.toLowerCase() !== 'received' ? (
                 <TouchableOpacity
                   style={[styles.btnPrimary, { marginTop: spacing.lg }]}
                   onPress={handleMarkReceived}
@@ -378,7 +390,7 @@ export default function ScanShipmentScreen() {
   );
 }
 
-// ── Sub-component ─────────────────────────────────────────────────────────────
+// ── Sub-components ─────────────────────────────────────────────────────────────
 function DetailRow({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
     <View style={styles.detailRow}>
@@ -391,22 +403,25 @@ function DetailRow({ icon, label, value }: { icon: string; label: string; value:
   );
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 const statusBadgeStyle = (status: string) => ({
   backgroundColor:
-    status === 'received' ? palette.successLight :
-    status === 'pending' ? palette.warningLight :
-    palette.infoLight,
+    status.toLowerCase() === 'received' ? palette.successLight :
+      isPendingStatus(status) ? palette.warningLight :
+        palette.infoLight,
 });
 
 const statusTextStyle = (status: string) => ({
   color:
-    status === 'received' ? palette.success :
-    status === 'pending' ? palette.warning :
-    palette.info,
+    status.toLowerCase() === 'received' ? palette.success :
+      isPendingStatus(status) ? palette.warning :
+        palette.info,
 });
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+const isPendingStatus = (status: string) => {
+  const s = status.toLowerCase();
+  return s === 'pending' || s === 'initialized' || s === 'handed_to_freight' || s === 'scheduled';
+};
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xl, backgroundColor: palette.bg },
@@ -414,8 +429,6 @@ const styles = StyleSheet.create({
   mt8: { marginTop: spacing.sm },
   mt16: { marginTop: spacing.md },
   textCenter: { textAlign: 'center' },
-
-  // Header
   headerBar: {
     position: 'absolute',
     top: 0, left: 0, right: 0,
@@ -430,8 +443,6 @@ const styles = StyleSheet.create({
   },
   headerBtn: { padding: spacing.sm, borderRadius: radius.full },
   headerTitle: { color: '#fff', fontSize: 17, fontWeight: '600', letterSpacing: 0.3 },
-
-  // Scan
   scanContent: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 120, paddingBottom: spacing.xl },
   viewfinderWrapper: { alignItems: 'center', width: '100%' },
   viewfinder: {
@@ -444,8 +455,6 @@ const styles = StyleSheet.create({
   cornerTR: { top: 0, right: 0, borderBottomWidth: 0, borderLeftWidth: 0, borderTopRightRadius: 6 },
   cornerBL: { bottom: 0, left: 0, borderTopWidth: 0, borderRightWidth: 0, borderBottomLeftRadius: 6 },
   cornerBR: { bottom: 0, right: 0, borderTopWidth: 0, borderLeftWidth: 0, borderBottomRightRadius: 6 },
-
-  // Manual
   manualCard: {
     backgroundColor: 'rgba(255,255,255,0.97)',
     borderRadius: radius.lg,
@@ -465,8 +474,6 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
     alignItems: 'center', justifyContent: 'center',
   },
-
-  // Result
   resultScroll: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 100, paddingBottom: spacing.xxl, paddingHorizontal: spacing.md },
   trackingBadge: {
     flexDirection: 'row', alignItems: 'center',
@@ -500,8 +507,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     marginTop: spacing.lg, paddingHorizontal: spacing.sm,
   },
-
-  // Buttons
   btnPrimary: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     backgroundColor: palette.primary, borderRadius: radius.md,
@@ -512,7 +517,5 @@ const styles = StyleSheet.create({
   btnPrimaryText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   btnGhost: { marginTop: spacing.md, paddingVertical: spacing.sm },
   btnGhostText: { color: palette.primary, fontSize: 15, fontWeight: '600' },
-
-  // Success
   successIcon: { width: 120, height: 120, borderRadius: 60, backgroundColor: palette.successLight, alignItems: 'center', justifyContent: 'center' },
 });

@@ -1,12 +1,10 @@
 /**
- * AsyncStorage helpers for persisting recent scans.
- * Keeps the last 10 successful scans across app restarts.
+ * In-memory fallback storage for recent scans.
+ * Bypasses problematic AsyncStorage modules while maintaining session-based history.
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Shipment } from '../services/shipmentApi';
 
-const STORAGE_KEY = 'shelfaware_recent_scans';
 const MAX_SCANS = 10;
+let memoryCache: RecentScan[] = [];
 
 export interface RecentScan {
   id: string;
@@ -17,37 +15,31 @@ export interface RecentScan {
   itemCount?: number;
 }
 
-export const saveRecentScan = async (shipment: Shipment): Promise<void> => {
+export const saveRecentScan = async (shipment: any): Promise<void> => {
   try {
-    const existing = await getRecentScans();
     const newScan: RecentScan = {
-      id: shipment.id,
-      trackingNumber: shipment.tracking_number,
+      id: shipment.id || shipment.shipment_id,
+      trackingNumber: shipment.tracking_number || shipment.shipment_id,
       supplierName: shipment.supplier_name,
       receivedAt: new Date().toISOString(),
       status: shipment.status,
       itemCount: shipment.item_count,
     };
-    // Remove duplicate if same tracking number already exists, then prepend
-    const filtered = existing.filter((s) => s.trackingNumber !== shipment.tracking_number);
-    const updated = [newScan, ...filtered].slice(0, MAX_SCANS);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+
+    // Prepend and limit
+    const filtered = memoryCache.filter((s) => s.id !== newScan.id);
+    memoryCache = [newScan, ...filtered].slice(0, MAX_SCANS);
+
+    console.log('[MEMORY_STORAGE] Saved successfully:', newScan.id);
   } catch (e) {
-    // Non-critical — silently fail storage errors
-    console.warn('Failed to save recent scan:', e);
+    console.error('[MEMORY_STORAGE] Save Error:', e);
   }
 };
 
 export const getRecentScans = async (): Promise<RecentScan[]> => {
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as RecentScan[];
-  } catch {
-    return [];
-  }
+  return [...memoryCache];
 };
 
 export const clearRecentScans = async (): Promise<void> => {
-  await AsyncStorage.removeItem(STORAGE_KEY);
+  memoryCache = [];
 };
