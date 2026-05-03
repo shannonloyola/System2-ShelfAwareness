@@ -17,7 +17,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getShipmentByTracking, markAsReceived, type Shipment } from '@/services/shipmentApi';
 import { saveRecentScan } from '@/utils/recentScans';
+import { cleanBarcode, isValidBarcode } from '@/utils/barcodeUtils';
 import { palette, spacing, radius, shadow, typography } from '@/constants/design';
+
 
 type ScanPhase = 'scan' | 'result' | 'success';
 
@@ -49,8 +51,12 @@ export default function ScanShipmentScreen() {
   }, [prefill]);
 
   const lookupShipment = useCallback(async (tracking: string) => {
-    const value = tracking.trim();
-    if (!value) return;
+    const value = cleanBarcode(tracking);
+    if (!value || !isValidBarcode(value)) {
+      if (value) setLookupError('Invalid tracking format');
+      return;
+    }
+
     setIsScanning(false);
     setTrackingValue(value);
     setLookupError(null);

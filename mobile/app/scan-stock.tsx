@@ -2,6 +2,8 @@ import { StyleSheet, Text, View, Button, ActivityIndicator, TextInput, Touchable
 import { useState } from 'react';
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import { palette, spacing, radius, shadow, typography } from '@/constants/design';
+import { cleanBarcode, isValidBarcode } from '@/utils/barcodeUtils';
+
 
 export default function ScanStockScreen() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -50,11 +52,17 @@ export default function ScanStockScreen() {
   const handleBarcodeScanned = (result: BarcodeScanningResult) => {
     if (!isScanning) return;
     if (result.data) {
-      setIsScanning(false);
-      setScannedCode({ type: result.type, value: result.data });
-      fetchStock(result.data);
+      const barcode = cleanBarcode(result.data);
+      if (isValidBarcode(barcode)) {
+        setIsScanning(false);
+        setScannedCode({ type: result.type, value: barcode });
+        fetchStock(barcode);
+      } else {
+        setError('Invalid barcode format');
+      }
     }
   };
+
 
   if (!permission) {
     return <View style={styles.container}><ActivityIndicator color="#fff" /></View>;
