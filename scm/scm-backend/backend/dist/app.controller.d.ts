@@ -8,4 +8,10 @@ export declare class AppController {
         status: string;
         timestamp: string;
     };
+    getApiHealth(): {
+        service: string;
+        framework: string;
+        status: string;
+        timestamp: string;
+    };
 }

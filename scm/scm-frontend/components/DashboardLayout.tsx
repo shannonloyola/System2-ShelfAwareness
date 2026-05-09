@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -15,51 +15,150 @@ import {
   FileText,
   LogOut,
   User,
+  Loader2,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
+import { useAuth, type AppRole } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 
 interface DashboardLayoutProps {
   children: ReactNode;
 }
 
-const navigation = [
+interface NavItem {
+  name: string;
+  href: string;
+  icon: React.ElementType;
+  roles: AppRole[]; // which roles can see this item
+}
+
+const navigation: NavItem[] = [
   {
     name: "Dashboard",
     href: "/dashboard",
     icon: LayoutDashboard,
+    roles: [
+      "owner_president",
+      "finance_manager",
+      "procurement_manager",
+      "logistics_coordinator",
+      "warehouse_manager",
+      "qc_inspector",
+      "sales_processor",
+      "delivery_person",
+      "b2b_customer",
+      "supplier",
+    ],
   },
-  { name: "Product Master", href: "/products", icon: Database },
-  { name: "Procurement", href: "/procurement", icon: Package },
-  { name: "PO List", href: "/po-list", icon: FileText },
-  { name: "Warehouse", href: "/warehouse", icon: Warehouse },
+  {
+    name: "Product Master",
+    href: "/products",
+    icon: Database,
+    roles: [
+      "owner_president",
+      "procurement_manager",
+      "warehouse_manager",
+      "qc_inspector",
+      "sales_processor",
+    ],
+  },
+  {
+    name: "Procurement",
+    href: "/procurement",
+    icon: Package,
+    roles: ["owner_president", "procurement_manager", "finance_manager"],
+  },
+  {
+    name: "PO List",
+    href: "/po-list",
+    icon: FileText,
+    roles: [
+      "owner_president",
+      "procurement_manager",
+      "finance_manager",
+      "supplier",
+    ],
+  },
+  {
+    name: "Warehouse",
+    href: "/warehouse",
+    icon: Warehouse,
+    roles: [
+      "owner_president",
+      "warehouse_manager",
+      "logistics_coordinator",
+      "qc_inspector",
+    ],
+  },
   {
     name: "Discrepancies",
     href: "/discrepancies",
     icon: ClipboardList,
+    roles: [
+      "owner_president",
+      "warehouse_manager",
+      "qc_inspector",
+      "logistics_coordinator",
+    ],
   },
-  { name: "Stock Management", href: "/stock", icon: BarChart3 },
+  {
+    name: "Stock Management",
+    href: "/stock",
+    icon: BarChart3,
+    roles: [
+      "owner_president",
+      "warehouse_manager",
+      "logistics_coordinator",
+      "finance_manager",
+    ],
+  },
   {
     name: "Distribution",
     href: "/distribution",
     icon: TruckIcon,
+    roles: [
+      "owner_president",
+      "logistics_coordinator",
+      "delivery_person",
+      "warehouse_manager",
+    ],
   },
 ];
 
-export function DashboardLayout({
-  children,
-}: DashboardLayoutProps) {
+export function DashboardLayout({ children }: DashboardLayoutProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { user, role, isLoading } = useAuth();
 
-  const handleLogout = () => {
+  // Redirect unauthenticated users to login
+  useEffect(() => {
+    if (!isLoading && !user) {
+      router.replace("/login");
+    }
+  }, [isLoading, user, router]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     toast.success("Logged Out", {
       description: "You have been successfully logged out",
     });
-    setTimeout(() => {
-      router.push("/login");
-    }, 500);
+    router.replace("/login");
   };
+
+  // Show spinner while loading auth state
+  if (isLoading || !user) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#F8FAFC]">
+        <Loader2 className="w-8 h-8 animate-spin text-[#00A3AD]" />
+      </div>
+    );
+  }
+
+  // Filter nav based on role
+  const visibleNav = navigation.filter(
+    (item) => role && item.roles.includes(role)
+  );
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -75,7 +174,7 @@ export function DashboardLayout({
         </div>
 
         <nav className="flex-1 p-4 space-y-2">
-          {navigation.map((item) => {
+          {visibleNav.map((item) => {
             const isActive = pathname === item.href;
             return (
               <Link
@@ -100,22 +199,18 @@ export function DashboardLayout({
             <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
               <User className="w-4 h-4" />
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <p
-                className="text-sm font-semibold"
-                style={{
-                  fontFamily: "Public Sans, sans-serif",
-                }}
+                className="text-sm font-semibold capitalize truncate"
+                style={{ fontFamily: "Public Sans, sans-serif" }}
               >
-                Admin User
+                {role?.replace(/_/g, " ") ?? "User"}
               </p>
               <p
-                className="text-xs text-white/60"
-                style={{
-                  fontFamily: "Public Sans, sans-serif",
-                }}
+                className="text-xs text-white/60 truncate"
+                style={{ fontFamily: "Public Sans, sans-serif" }}
               >
-                admin@shelfaware.ph
+                {user.email}
               </p>
             </div>
           </div>
@@ -165,7 +260,7 @@ export function DashboardLayout({
 
         {/* Mobile Bottom Navigation */}
         <nav className="lg:hidden bg-white border-t border-[#111827]/10 flex items-center gap-1 px-2 py-3 shadow-lg safe-area-inset-bottom overflow-x-auto">
-          {navigation.map((item) => {
+          {visibleNav.map((item) => {
             const isActive = pathname === item.href;
             return (
               <Link

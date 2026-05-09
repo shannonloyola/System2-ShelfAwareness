@@ -9,32 +9,45 @@ import { Checkbox } from "../ui/checkbox";
 import { Logo } from "../Logo";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { supabase } from "@/lib/supabase";
 
 export function LoginScreen() {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
-  const [employeeId, setEmployeeId] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!employeeId || !password) {
+
+    if (!email || !password) {
       toast.error("Missing Credentials", {
-        description: "Please enter both Employee ID and Password"
+        description: "Please enter both Email and Password",
       });
       return;
     }
 
-    // Simulate login
-    toast.success("Login Successful", {
-      description: "Welcome to Shelf Awareness"
+    setIsLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
     });
-    
-    setTimeout(() => {
-      router.push("/dashboard");
-    }, 500);
+    setIsLoading(false);
+
+    if (error) {
+      toast.error("Login Failed", {
+        description: error.message,
+      });
+      return;
+    }
+
+    toast.success("Login Successful", {
+      description: "Welcome to Shelf Awareness",
+    });
+
+    router.push("/dashboard");
   };
 
   return (
@@ -92,17 +105,17 @@ export function LoginScreen() {
             </div>
 
             <form onSubmit={handleLogin} className="space-y-6">
-              {/* Employee ID */}
+              {/* Email */}
               <div>
-                <Label htmlFor="employeeId" className="text-[#111827] font-semibold mb-2 block" style={{ fontFamily: 'Public Sans, sans-serif' }}>
-                  Employee ID
+                <Label htmlFor="email" className="text-[#111827] font-semibold mb-2 block" style={{ fontFamily: 'Public Sans, sans-serif' }}>
+                  Email
                 </Label>
                 <Input
-                  id="employeeId"
-                  type="text"
-                  placeholder="Enter your Employee ID"
-                  value={employeeId}
-                  onChange={(e) => setEmployeeId(e.target.value)}
+                  id="email"
+                  type="email"
+                  placeholder="Enter your email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="h-12 border-[#E5E7EB] focus:border-[#00A3AD] focus:ring-[#00A3AD] rounded-lg"
                   style={{ fontFamily: 'Public Sans, sans-serif' }}
                 />
@@ -165,10 +178,11 @@ export function LoginScreen() {
               {/* Login Button */}
               <Button
                 type="submit"
-                className="w-full h-12 bg-[#00A3AD] hover:bg-[#0891B2] text-white font-bold text-base shadow-lg rounded-lg"
+                disabled={isLoading}
+                className="w-full h-12 bg-[#00A3AD] hover:bg-[#0891B2] text-white font-bold text-base shadow-lg rounded-lg disabled:opacity-60"
                 style={{ fontFamily: 'Public Sans, sans-serif' }}
               >
-                Login
+                {isLoading ? "Logging in..." : "Login"}
               </Button>
 
               {/* Security Notice */}
