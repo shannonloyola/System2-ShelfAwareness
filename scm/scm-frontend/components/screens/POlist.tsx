@@ -33,7 +33,7 @@ import {
   TabsTrigger,
 } from "../ui/tabs";
 import { toast } from "sonner";
-import { supabase } from "@/lib/supabase";
+import { supabase, supabaseSCM } from "@/lib/supabase";
 import { PerItemTracker } from "../PerItemTracker";
 import {
   fetchExpiredPOs,
@@ -415,19 +415,19 @@ export function PODetailPage() {
       { data: itemData, error: itemError },
       { data: historyData, error: historyError },
     ] = await Promise.all([
-      supabase
+      supabaseSCM
         .from("purchase_orders")
         .select(
           "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, approval_status, approved_by, approved_at, is_late",
         )
         .eq("po_id", poId)
         .maybeSingle(),
-      supabase
+      supabaseSCM
         .from("purchase_order_items")
         .select("po_item_id, po_id, item_name, quantity")
         .eq("po_id", poId)
         .order("po_item_id", { ascending: true }),
-      supabase
+      supabaseSCM
         .from("po_status_history")
         .select("history_id, status_name, changed_at")
         .eq("po_id", poId)
@@ -506,19 +506,20 @@ export function PODetailPage() {
 
     const publicUrl = publicUrlData.publicUrl;
 
-    let { data: latestHistory } = await supabase
+    const { data: latestHistoryInitial } = await supabaseSCM
       .from("po_status_history")
       .select("history_id")
       .eq("po_id", po.po_id)
       .order("changed_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    let latestHistory = latestHistoryInitial;
 
     if (!latestHistory) {
       const {
         data: insertedHistory,
         error: insertHistoryError,
-      } = await supabase
+      } = await supabaseSCM
         .from("po_status_history")
         .insert({
           po_id: po.po_id,
@@ -537,7 +538,7 @@ export function PODetailPage() {
       latestHistory = insertedHistory;
     }
 
-    await supabase
+    await supabaseSCM
       .from("po_status_history")
       .update({ document_url: publicUrl })
       .eq("history_id", latestHistory.history_id);
@@ -591,7 +592,7 @@ export function PODetailPage() {
     setApprovalSubmitting(action);
     const nextStatus = "Approved";
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseSCM
       .from("purchase_orders")
       .update({
         approval_status: nextStatus,
@@ -636,7 +637,7 @@ export function PODetailPage() {
     }
 
     setRejecting(true);
-    const { data, error } = await supabase
+    const { data, error } = await supabaseSCM
       .from("purchase_orders")
       .update({
         approval_status: "Rejected",
@@ -682,7 +683,7 @@ export function PODetailPage() {
     }
     setSavingEta(true);
 
-    const { error: updateError } = await supabase
+    const { error: updateError } = await supabaseSCM
       .from("purchase_orders")
       .update({ expected_delivery_date: etaDraft })
       .eq("po_id", po.po_id);
@@ -693,7 +694,7 @@ export function PODetailPage() {
       return;
     }
 
-    await supabase.from("po_status_history").insert({
+    await supabaseSCM.from("po_status_history").insert({
       po_id: po.po_id,
       status_name: "ETA Updated",
       changed_at: new Date().toISOString(),
@@ -1277,13 +1278,13 @@ export function POList() {
       { data: poData, error: poError },
       { data: itemData, error: itemError },
     ] = await Promise.all([
-      supabase
+      supabaseSCM
         .from("purchase_orders")
         .select(
           "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, approval_status, approved_by, approved_at, is_late",
         )
         .order("created_at", { ascending: false }),
-      supabase
+      supabaseSCM
         .from("purchase_order_items")
         .select("po_item_id, po_id, item_name, quantity"),
     ]);

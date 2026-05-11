@@ -758,7 +758,7 @@ export function InboundProcurement() {
         const newId = typeof data === "string" ? data : null;
         if (newId) {
           const match = (
-            await supabase
+            await supabaseSCM
               .from("purchase_orders")
               .select(
                 "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication, paid_at",
@@ -768,7 +768,7 @@ export function InboundProcurement() {
           ).data as PurchaseOrderRow | null;
           if (match) {
             if (!match.paid_at) {
-              await supabase
+              await supabaseSCM
                 .from("purchase_orders")
                 .update({ paid_at: match.created_at })
                 .eq("po_id", newId);
@@ -833,7 +833,7 @@ export function InboundProcurement() {
 
       let error: unknown = null;
       if (form.editingPoItemId) {
-        const result = await supabase
+        const result = await supabaseSCM
           .from("purchase_order_items")
           .update({ quantity: parsedQty })
           .eq("po_id", selectedPO.po_id)
@@ -852,7 +852,7 @@ export function InboundProcurement() {
           });
           return;
         }
-        const result = await supabase
+        const result = await supabaseSCM
           .from("purchase_order_items")
           .insert([
             {

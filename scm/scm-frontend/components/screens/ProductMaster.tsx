@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useCallback,
   useRef,
   useState,
   type ChangeEvent,
@@ -54,7 +55,14 @@ import {
 } from "../ui/tabs";
 import { toast } from "sonner";
 import JsBarcode from "jsbarcode";
-import { scmProjectId as projectId, scmPublicAnonKey as publicAnonKey } from "@/utils/supabase/info";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
+import {
+  scmProjectId,
+  scmPublicAnonKey,
+  fulfillmentProjectId,
+  fulfillmentPublicAnonKey,
+} from "@/utils/supabase/info";
 
 interface Product {
   id: string;
@@ -124,6 +132,18 @@ const normalizeLocationValue = (value: string): string =>
 
 const inventoryRowsPerPage = 10;
 const pricingRowsPerPage = 10;
+const scmRestBaseUrl = `https://${scmProjectId}.supabase.co/rest/v1`;
+const fulfillmentRestBaseUrl = `https://${fulfillmentProjectId}.supabase.co/rest/v1`;
+const scmHeaders = {
+  apikey: scmPublicAnonKey,
+  Authorization: `Bearer ${scmPublicAnonKey}`,
+  "Content-Type": "application/json",
+};
+const fulfillmentHeaders = {
+  apikey: fulfillmentPublicAnonKey,
+  Authorization: `Bearer ${fulfillmentPublicAnonKey}`,
+  "Content-Type": "application/json",
+};
 
 const buildCategoryOptions = (
   rows: ProductCategory[],
@@ -279,6 +299,7 @@ const BarcodePreview = ({ value }: { value: string }) => {
 };
 
 export function ProductMaster() {
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState("");
   const [parentCategoryFilter, setParentCategoryFilter] =
     useState<string>("all");
@@ -310,6 +331,10 @@ export function ProductMaster() {
   const [categories, setCategories] = useState<
     ProductCategory[]
   >([]);
+  const [isCategoriesLoading, setIsCategoriesLoading] =
+    useState(true);
+  const [categoriesLoadError, setCategoriesLoadError] =
+    useState("");
   const [
     selectedParentCategoryId,
     setSelectedParentCategoryId,
@@ -367,24 +392,47 @@ export function ProductMaster() {
     setDebugLogs((prev) => [log, ...prev]);
     console.log(`[${type}]`, message, data || "");
   };
+  const pricingActor =
+    user?.email?.trim() || user?.id || "product_master_ui";
+  const resolvePricingActor = async () => {
+    const contextActor =
+      user?.email?.trim() || user?.id || "";
+    if (contextActor) return contextActor;
+
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    const sessionActor =
+      authUser?.email?.trim() || authUser?.id || "";
+    if (sessionActor) return sessionActor;
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    return (
+      session?.user?.email?.trim() ||
+      session?.user?.id ||
+      pricingActor
+    );
+  };
   const loadProducts = async () => {
-    const productsUrl = `https://${projectId}.supabase.co/rest/v1/products?select=product_id,product_uuid,sku,product_name,unit,category,category_id,barcode,supplier,warehouse_location,unit_price,currency_code,inventory_on_hand,created_at`;
-    const inventoryUrl = `https://${projectId}.supabase.co/rest/v1/v_products_with_inventory?select=product_id,qty_on_hand,updated_at`;
+    const productsUrl = `${scmRestBaseUrl}/products?select=product_id,product_uuid,sku,product_name,unit,category,category_id,barcode,supplier,warehouse_location,unit_price,currency_code,inventory_on_hand,created_at`;
+    const inventoryUrl = `${fulfillmentRestBaseUrl}/inventory_on_hand?select=product_id,qty_on_hand,updated_at`;
 
     try {
       addDebugLog(
         "info",
-        "Loading products + inventory from shared database",
+        "Loading products from SCM and inventory from Fulfillment",
       );
-      const headers = {
-        apikey: publicAnonKey,
-        Authorization: `Bearer ${publicAnonKey}`,
-        "Content-Type": "application/json",
-      };
-
       const [productsRes, inventoryRes] = await Promise.all([
-        fetch(productsUrl, { method: "GET", headers }),
-        fetch(inventoryUrl, { method: "GET", headers }),
+        fetch(productsUrl, {
+          method: "GET",
+          headers: scmHeaders,
+        }),
+        fetch(inventoryUrl, {
+          method: "GET",
+          headers: fulfillmentHeaders,
+        }),
       ]);
 
       if (!productsRes.ok) {
@@ -417,7 +465,7 @@ export function ProductMaster() {
       const mappedProducts: Product[] = (productRows || []).map(
         (p: any) => {
           const inventory = inventoryByProductId.get(
-            String(p.product_id),
+            String(p.product_uuid ?? p.product_id),
           );
           return {
             id:
@@ -460,16 +508,11 @@ export function ProductMaster() {
   };
 
   const loadProductPricing = async () => {
-    const pricingUrl = `https://${projectId}.supabase.co/rest/v1/product_pricing?select=pricing_id,product_id,cost_price,selling_price,currency_code,effective_from,effective_to,created_at,created_by,updated_at,updated_by,is_active&order=effective_from.desc,created_at.desc`;
+    const pricingUrl = `${scmRestBaseUrl}/product_pricing?select=pricing_id,product_id,cost_price,selling_price,currency_code,effective_from,effective_to,created_at,created_by,updated_at,updated_by,is_active&order=effective_from.desc,created_at.desc`;
     try {
-      const headers = {
-        apikey: publicAnonKey,
-        Authorization: `Bearer ${publicAnonKey}`,
-        "Content-Type": "application/json",
-      };
       const response = await fetch(pricingUrl, {
         method: "GET",
-        headers,
+        headers: scmHeaders,
       });
       if (!response.ok) {
         const text = await response.text();
@@ -504,21 +547,16 @@ export function ProductMaster() {
       actor?: string;
     },
   ): Promise<boolean> => {
-    const headers = {
-      apikey: publicAnonKey,
-      Authorization: `Bearer ${publicAnonKey}`,
-      "Content-Type": "application/json",
-    };
     const actor = options?.actor || "product_master_ui";
     const normalizedCurrency = (currencyCode || "PHP").trim();
     const today = new Date().toISOString().slice(0, 10);
     const nowIso = new Date().toISOString();
 
     const activeRes = await fetch(
-      `https://${projectId}.supabase.co/rest/v1/product_pricing?select=pricing_id,cost_price,selling_price,currency_code,is_active&product_id=eq.${productId}&is_active=eq.true&order=effective_from.desc,created_at.desc&limit=1`,
+      `${scmRestBaseUrl}/product_pricing?select=pricing_id,cost_price,selling_price,currency_code,is_active&product_id=eq.${productId}&is_active=eq.true&order=effective_from.desc,created_at.desc&limit=1`,
       {
         method: "GET",
-        headers,
+        headers: scmHeaders,
       },
     );
     if (!activeRes.ok) {
@@ -547,10 +585,13 @@ export function ProductMaster() {
 
     if (currentRecord?.pricing_id && currentRecord.is_active) {
       const deactivateRes = await fetch(
-        `https://${projectId}.supabase.co/rest/v1/product_pricing?pricing_id=eq.${currentRecord.pricing_id}`,
+        `${scmRestBaseUrl}/product_pricing?pricing_id=eq.${currentRecord.pricing_id}`,
         {
           method: "PATCH",
-          headers: { ...headers, Prefer: "return=minimal" },
+          headers: {
+            ...scmHeaders,
+            Prefer: "return=minimal",
+          },
           body: JSON.stringify({
             is_active: false,
             effective_to: today,
@@ -568,10 +609,13 @@ export function ProductMaster() {
     }
 
     const insertRes = await fetch(
-      `https://${projectId}.supabase.co/rest/v1/product_pricing`,
+      `${scmRestBaseUrl}/product_pricing`,
       {
         method: "POST",
-        headers: { ...headers, Prefer: "return=minimal" },
+        headers: {
+          ...scmHeaders,
+          Prefer: "return=minimal",
+        },
         body: JSON.stringify({
           product_id: productId,
           cost_price: resolvedCostPrice,
@@ -597,47 +641,50 @@ export function ProductMaster() {
     refreshProductAndPricing();
   }, []);
 
+  const loadCategories = useCallback(async () => {
+    try {
+      setIsCategoriesLoading(true);
+      setCategoriesLoadError("");
+      addDebugLog("info", "Loading categories from database");
+      const categoriesUrl = `${scmRestBaseUrl}/product_categories?select=id,name,parent_id`;
+      const response = await fetch(categoriesUrl, {
+        method: "GET",
+        headers: scmHeaders,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        const message = `Categories load failed (${response.status})`;
+        setCategories([]);
+        setCategoriesLoadError(message);
+        addDebugLog("error", message, errorText);
+        return;
+      }
+
+      const fetchedCategories = await response.json();
+      setCategories(Array.isArray(fetchedCategories) ? fetchedCategories : []);
+
+      addDebugLog(
+        "success",
+        `Loaded ${fetchedCategories.length} categories with hierarchy`,
+      );
+    } catch (error) {
+      setCategories([]);
+      setCategoriesLoadError("Failed to load categories");
+      addDebugLog(
+        "error",
+        "Failed to load categories",
+        error,
+      );
+    } finally {
+      setIsCategoriesLoading(false);
+    }
+  }, []);
+
   // Fetch categories from database
   useEffect(() => {
-    const loadCategories = async () => {
-      try {
-        addDebugLog("info", "Loading categories from database");
-        const categoriesUrl = `https://${projectId}.supabase.co/rest/v1/product_categories?select=id,name,parent_id`;
-        const response = await fetch(categoriesUrl, {
-          method: "GET",
-          headers: {
-            apikey: publicAnonKey,
-            Authorization: `Bearer ${publicAnonKey}`,
-            "Content-Type": "application/json",
-          },
-        });
-
-        if (!response.ok) {
-          addDebugLog(
-            "error",
-            `Categories load failed (${response.status})`,
-          );
-          return;
-        }
-
-        const fetchedCategories = await response.json();
-        setCategories(fetchedCategories);
-
-        addDebugLog(
-          "success",
-          `Loaded ${fetchedCategories.length} categories with hierarchy`,
-        );
-      } catch (error) {
-        addDebugLog(
-          "error",
-          "Failed to load categories",
-          error,
-        );
-      }
-    };
-
     loadCategories();
-  }, []);
+  }, [loadCategories]);
 
   const categoriesById = useMemo(() => {
     return new Map(categories.map((c) => [c.id, c]));
@@ -709,8 +756,11 @@ export function ProductMaster() {
   ]);
 
   const parentCategories = useMemo(
-    () => categories.filter((c) => !c.parent_id),
-    [categories],
+    () =>
+      categories.filter(
+        (c) => !c.parent_id || !categoriesById.has(c.parent_id),
+      ),
+    [categories, categoriesById],
   );
 
   const pagedInventoryProducts = useMemo(() => {
@@ -761,13 +811,11 @@ export function ProductMaster() {
   ) => {
     if (!productId || !categoryText) return;
     await fetch(
-      `https://${projectId}.supabase.co/rest/v1/products?product_id=eq.${encodeURIComponent(productId)}`,
+      `${scmRestBaseUrl}/products?product_id=eq.${encodeURIComponent(productId)}`,
       {
         method: "PATCH",
         headers: {
-          apikey: publicAnonKey,
-          Authorization: `Bearer ${publicAnonKey}`,
-          "Content-Type": "application/json",
+          ...scmHeaders,
           Prefer: "return=minimal",
         },
         body: JSON.stringify({ category: categoryText }),
@@ -991,13 +1039,11 @@ export function ProductMaster() {
       let inserted = 0;
       for (const row of rowsToInsert) {
         const response = await fetch(
-          `https://${projectId}.supabase.co/rest/v1/products?select=product_id`,
+          `${scmRestBaseUrl}/products?select=product_id,product_uuid`,
           {
             method: "POST",
             headers: {
-              apikey: publicAnonKey,
-              Authorization: `Bearer ${publicAnonKey}`,
-              "Content-Type": "application/json",
+              ...scmHeaders,
               Prefer: "return=representation",
             },
             body: JSON.stringify(row),
@@ -1017,10 +1063,18 @@ export function ProductMaster() {
         }
         const insertedRows = await response.json();
         const insertedProductId = insertedRows?.[0]?.product_id;
+        const insertedProductUuid =
+          insertedRows?.[0]?.product_uuid;
         if (insertedProductId) {
           await patchCategoryDisplay(
             String(insertedProductId),
             row.category,
+          );
+        }
+        if (insertedProductUuid) {
+          await syncInventoryOnHand(
+            String(insertedProductUuid),
+            Number(row.inventory_on_hand ?? 0),
           );
         }
         inserted += 1;
@@ -1071,25 +1125,22 @@ export function ProductMaster() {
     stockQty: number,
   ) => {
     if (!productUuid) return;
-    const headers = {
-      apikey: publicAnonKey,
-      Authorization: `Bearer ${publicAnonKey}`,
-      "Content-Type": "application/json",
-    };
-
     const invLookup = await fetch(
-      `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?select=product_id,bin_id&product_id=eq.${encodeURIComponent(productUuid)}&limit=1`,
-      { method: "GET", headers },
+      `${fulfillmentRestBaseUrl}/inventory_on_hand?select=product_id,bin_id&product_id=eq.${encodeURIComponent(productUuid)}&limit=1`,
+      { method: "GET", headers: fulfillmentHeaders },
     );
     const invRows = invLookup.ok ? await invLookup.json() : [];
 
     if (invRows.length > 0) {
       const row = invRows[0];
       await fetch(
-        `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?product_id=eq.${encodeURIComponent(row.product_id)}&bin_id=eq.${encodeURIComponent(row.bin_id)}`,
+        `${fulfillmentRestBaseUrl}/inventory_on_hand?product_id=eq.${encodeURIComponent(row.product_id)}&bin_id=eq.${encodeURIComponent(row.bin_id)}`,
         {
           method: "PATCH",
-          headers: { ...headers, Prefer: "return=minimal" },
+          headers: {
+            ...fulfillmentHeaders,
+            Prefer: "return=minimal",
+          },
           body: JSON.stringify({ qty_on_hand: stockQty }),
         },
       );
@@ -1097,8 +1148,8 @@ export function ProductMaster() {
     }
 
     const binLookup = await fetch(
-      `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?select=bin_id&limit=1`,
-      { method: "GET", headers },
+      `${fulfillmentRestBaseUrl}/inventory_on_hand?select=bin_id&limit=1`,
+      { method: "GET", headers: fulfillmentHeaders },
     );
     let binId: string | null = null;
     if (binLookup.ok) {
@@ -1110,8 +1161,8 @@ export function ProductMaster() {
 
     if (!binId) {
       const binsTableLookup = await fetch(
-        `https://${projectId}.supabase.co/rest/v1/bins?select=id&limit=1`,
-        { method: "GET", headers },
+        `${fulfillmentRestBaseUrl}/bins?select=id&limit=1`,
+        { method: "GET", headers: fulfillmentHeaders },
       );
       if (binsTableLookup.ok) {
         const binsRows = await binsTableLookup.json();
@@ -1122,14 +1173,22 @@ export function ProductMaster() {
     }
 
     if (!binId) {
-      throw new Error("Cannot sync stock: no bin available");
+      addDebugLog(
+        "warning",
+        "Skipped stock sync because no fulfillment bin is available yet",
+        { productUuid, stockQty },
+      );
+      return;
     }
 
     await fetch(
-      `https://${projectId}.supabase.co/rest/v1/inventory_on_hand`,
+      `${fulfillmentRestBaseUrl}/inventory_on_hand`,
       {
         method: "POST",
-        headers: { ...headers, Prefer: "return=minimal" },
+        headers: {
+          ...fulfillmentHeaders,
+          Prefer: "return=minimal",
+        },
         body: JSON.stringify({
           product_id: productUuid,
           bin_id: binId,
@@ -1208,12 +1267,6 @@ export function ProductMaster() {
 
     setIsUpdating(true);
     try {
-      const headers = {
-        apikey: publicAnonKey,
-        Authorization: `Bearer ${publicAnonKey}`,
-        "Content-Type": "application/json",
-      };
-
       const payload = {
         product_name: editFormData.productName.trim(),
         category_id: resolvedUpdateCategoryId,
@@ -1229,10 +1282,13 @@ export function ProductMaster() {
       };
 
       const updateRes = await fetch(
-        `https://${projectId}.supabase.co/rest/v1/products?product_id=eq.${selectedProduct.id}`,
+        `${scmRestBaseUrl}/products?product_id=eq.${selectedProduct.id}`,
         {
           method: "PATCH",
-          headers: { ...headers, Prefer: "return=minimal" },
+          headers: {
+            ...scmHeaders,
+            Prefer: "return=minimal",
+          },
           body: JSON.stringify(payload),
         },
       );
@@ -1264,6 +1320,10 @@ export function ProductMaster() {
       }
 
       const nextCurrency = editFormData.currencyCode.trim();
+      const actor = await resolvePricingActor();
+      addDebugLog("info", "Resolved pricing actor for update", {
+        actor,
+      });
       const previousUnitPrice = Number(
         selectedProduct.unitPrice ?? 0,
       );
@@ -1284,7 +1344,7 @@ export function ProductMaster() {
           nextUnitPrice,
           nextCurrency,
           {
-            actor: "product_master_ui",
+            actor,
             costPrice: nextCostPrice,
           },
         );
@@ -1316,18 +1376,15 @@ export function ProductMaster() {
         `Deleting product: ${selectedProduct.name} (ID: ${selectedProduct.id})`,
       );
 
-      const headers = {
-        apikey: publicAnonKey,
-        Authorization: `Bearer ${publicAnonKey}`,
-        "Content-Type": "application/json",
-      };
-
       // Delete from products table
       const deleteRes = await fetch(
-        `https://${projectId}.supabase.co/rest/v1/products?product_id=eq.${selectedProduct.id}`,
+        `${scmRestBaseUrl}/products?product_id=eq.${selectedProduct.id}`,
         {
           method: "DELETE",
-          headers: { ...headers, Prefer: "return=minimal" },
+          headers: {
+            ...scmHeaders,
+            Prefer: "return=minimal",
+          },
         },
       );
 
@@ -1347,10 +1404,13 @@ export function ProductMaster() {
       if (selectedProduct.product_uuid) {
         try {
           await fetch(
-            `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?product_id=eq.${encodeURIComponent(selectedProduct.product_uuid)}`,
+            `${fulfillmentRestBaseUrl}/inventory_on_hand?product_id=eq.${encodeURIComponent(selectedProduct.product_uuid)}`,
             {
               method: "DELETE",
-              headers: { ...headers, Prefer: "return=minimal" },
+              headers: {
+                ...fulfillmentHeaders,
+                Prefer: "return=minimal",
+              },
             },
           );
           addDebugLog(
@@ -1492,24 +1552,18 @@ export function ProductMaster() {
         productPayload,
       );
 
-      const apiUrl = `https://${projectId}.supabase.co/rest/v1/products`;
+      const apiUrl = `${scmRestBaseUrl}/products`;
       addDebugLog(
         "info",
         `POST request to Supabase REST API: ${apiUrl}`,
       );
 
-      const headers = {
-        apikey: publicAnonKey,
-        Authorization: `Bearer ${publicAnonKey}`,
-        "Content-Type": "application/json",
-      };
-
       const response = await fetch(
-        `${apiUrl}?select=product_id`,
+        `${apiUrl}?select=product_id,product_uuid`,
         {
           method: "POST",
           headers: {
-            ...headers,
+            ...scmHeaders,
             Prefer: "return=representation",
           },
           body: JSON.stringify(productPayload),
@@ -1553,6 +1607,7 @@ export function ProductMaster() {
 
       const insertedRows = await response.json();
       const insertedProductId = insertedRows?.[0]?.product_id;
+      const insertedProductUuid = insertedRows?.[0]?.product_uuid;
       if (insertedProductId) {
         await patchCategoryDisplay(
           String(insertedProductId),
@@ -1560,16 +1615,26 @@ export function ProductMaster() {
         );
         const numericProductId = Number(insertedProductId);
         if (!Number.isNaN(numericProductId)) {
+          const actor = await resolvePricingActor();
+          addDebugLog("info", "Resolved pricing actor for create", {
+            actor,
+          });
           await upsertProductPricingHistory(
             numericProductId,
             nextUnitPrice,
             formData.currencyCode || "PHP",
             {
               costPrice: nextCostPrice,
-              actor: "product_master_ui",
+              actor,
             },
           );
         }
+      }
+      if (insertedProductUuid) {
+        await syncInventoryOnHand(
+          String(insertedProductUuid),
+          parseInt(formData.currentStock || "0", 10) || 0,
+        );
       }
 
       addDebugLog(
@@ -2028,7 +2093,19 @@ export function ProductMaster() {
           </Dialog>
           <Dialog
             open={showNewProductDialog}
-            onOpenChange={setShowNewProductDialog}
+            onOpenChange={(open) => {
+              setShowNewProductDialog(open);
+              if (open) {
+                setSelectedParentCategoryId("");
+                setSelectedChildCategoryId("");
+                if (
+                  !isCategoriesLoading &&
+                  categories.length === 0
+                ) {
+                  void loadCategories();
+                }
+              }
+            }}
           >
             <DialogTrigger asChild>
               <Button className="bg-[#00A3AD] hover:bg-[#0891B2] text-white shadow-sm">
@@ -2088,19 +2165,32 @@ export function ProductMaster() {
                       <SelectValue placeholder="Select parent category" />
                     </SelectTrigger>
                     <SelectContent>
-                      {parentCategories.length > 0 ? (
+                      {isCategoriesLoading ? (
+                        <SelectItem value="loading" disabled>
+                          Loading...
+                        </SelectItem>
+                      ) : parentCategories.length > 0 ? (
                         parentCategories.map((c) => (
                           <SelectItem key={c.id} value={c.id}>
                             {c.name}
                           </SelectItem>
                         ))
+                      ) : categoriesLoadError ? (
+                        <SelectItem value="load-error" disabled>
+                          Failed to load categories
+                        </SelectItem>
                       ) : (
-                        <SelectItem value="loading" disabled>
-                          Loading...
+                        <SelectItem value="no-categories" disabled>
+                          No parent categories available
                         </SelectItem>
                       )}
                     </SelectContent>
                   </Select>
+                  {categoriesLoadError ? (
+                    <p className="mt-2 text-xs text-[#EA580C]">
+                      {categoriesLoadError}. Close and reopen the dialog to retry.
+                    </p>
+                  ) : null}
                   <Label className="text-[#6B7280] mt-4 block">
                     Subcategory (Optional)
                   </Label>
@@ -3454,7 +3544,7 @@ export function ProductMaster() {
                 SUPABASE REST API ENDPOINT
               </div>
               <div className="text-sm text-white font-mono break-all">
-                https://{projectId}.supabase.co/rest/v1/products
+                {scmRestBaseUrl}/products
               </div>
             </div>
             <div className="p-4 rounded-lg bg-white/5 border border-white/10">

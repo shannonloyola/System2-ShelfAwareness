@@ -144,7 +144,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   }, [isLoading, user, router]);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: "local" });
     toast.success("Logged Out", {
       description: "You have been successfully logged out",
     });
