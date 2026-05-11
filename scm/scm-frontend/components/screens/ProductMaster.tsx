@@ -54,7 +54,7 @@ import {
 } from "../ui/tabs";
 import { toast } from "sonner";
 import JsBarcode from "jsbarcode";
-import { projectId, publicAnonKey } from "@/utils/supabase/info";
+import { scmProjectId as projectId, scmPublicAnonKey as publicAnonKey } from "@/utils/supabase/info";
 
 interface Product {
   id: string;

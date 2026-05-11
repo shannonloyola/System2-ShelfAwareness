@@ -1,4 +1,4 @@
-import { projectId, publicAnonKey } from "./supabase/info";
+import { fulfillmentProjectId as projectId, fulfillmentPublicAnonKey as publicAnonKey } from "./supabase/info";
 
 export interface PostGRNResult {
   grn_id: string;

@@ -39,7 +39,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         setUser(session.user);
-        await fetchRole(session.user.id);
+        
+        // 1. Check JWT Metadata first (fastest, works across projects)
+        const metaRole = session.user.app_metadata?.role as AppRole;
+        if (metaRole) {
+          setRole(metaRole);
+          setIsLoading(false);
+        } else {
+          // 2. Fallback to Database Profiles (only in Identity Project)
+          await fetchRole(session.user.id);
+        }
       } else {
         setIsLoading(false);
       }
@@ -50,7 +59,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
         setUser(session.user);
-        await fetchRole(session.user.id);
+        
+        const metaRole = session.user.app_metadata?.role as AppRole;
+        if (metaRole) {
+          setRole(metaRole);
+          setIsLoading(false);
+        } else {
+          await fetchRole(session.user.id);
+        }
       } else {
         setUser(null);
         setRole(null);

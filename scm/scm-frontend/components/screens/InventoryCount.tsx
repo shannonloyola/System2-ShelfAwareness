@@ -14,7 +14,7 @@ import { Input } from "../ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Label } from "../ui/label";
 import { toast } from "sonner";
-import { supabase } from "@/lib/supabase";
+import { supabase, supabaseFulfillment } from "@/lib/supabase";
 import { CSVUploader } from "../CSVUploader";
 import { CSVRow } from "@/lib/csvParser";
 import {
@@ -73,7 +73,7 @@ export default function InventoryCount() {
   const loadShelfItems = async () => {
     setLoadingShelfItems(true);
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseFulfillment
         .from("products")
         .select("product_id,sku,product_name,barcode,inventory_on_hand")
         .order("product_name", { ascending: true })
@@ -162,7 +162,7 @@ export default function InventoryCount() {
 
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseFulfillment
         .from("products")
         .select("*")
         .eq("barcode", trimmedBarcode)
@@ -263,7 +263,7 @@ export default function InventoryCount() {
     for (const row of bulkCounts) {
       try {
         // Find product by SKU
-        const { data, error } = await supabase
+        const { data, error } = await supabaseFulfillment
           .from("products")
           .select("*")
           .eq("sku", row.sku)

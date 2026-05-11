@@ -13,14 +13,14 @@ const backorderAgingSelect =
   "backorder_id,order_uuid,order_no,retailer_name,sku,qty_backordered,created_at,age_days,latest_status";
 
 const buildHeaders = () => ({
-  apikey: env.supabaseAnonKey,
-  Authorization: `Bearer ${env.supabaseAnonKey}`,
+  apikey: env.fulfillmentSupabaseAnonKey,
+  Authorization: `Bearer ${env.fulfillmentSupabaseServiceRoleKey || env.fulfillmentSupabaseAnonKey}`,
   "Content-Type": "application/json",
 });
 
 const ensureRestConfig = () => {
-  if (!env.supabaseUrl || !env.supabaseAnonKey) {
-    throw new Error("SUPABASE_URL or SUPABASE_ANON_KEY is not set");
+  if (!env.fulfillmentSupabaseUrl || !env.fulfillmentSupabaseAnonKey) {
+    throw new Error("FULFILLMENT_SUPABASE_URL or FULFILLMENT_SUPABASE_ANON_KEY is not set");
   }
 };
 
@@ -73,7 +73,7 @@ const pickBinId = async () => {
   const headers = buildHeaders();
 
   const inventoryLookup = await fetch(
-    `${env.supabaseUrl}/rest/v1/inventory_on_hand?select=bin_id&limit=1`,
+    `${env.fulfillmentSupabaseUrl}/rest/v1/inventory_on_hand?select=bin_id&limit=1`,
     {
       method: "GET",
       headers,
@@ -87,7 +87,7 @@ const pickBinId = async () => {
     }
   }
 
-  const binsLookup = await fetch(`${env.supabaseUrl}/rest/v1/bins?select=id&limit=1`, {
+  const binsLookup = await fetch(`${env.fulfillmentSupabaseUrl}/rest/v1/bins?select=id&limit=1`, {
     method: "GET",
     headers,
   });
@@ -106,7 +106,7 @@ export const restHealthCheck = async () => {
   ensureRestConfig();
 
   const response = await fetch(
-    `${env.supabaseUrl}/rest/v1/products?select=product_id&limit=1`,
+    `${env.fulfillmentSupabaseUrl}/rest/v1/products?select=product_id&limit=1`,
     {
       method: "GET",
       headers: buildHeaders(),
@@ -121,7 +121,7 @@ export const restHealthCheck = async () => {
 export const listInventoryRest = async ({ limit, offset, search }) => {
   ensureRestConfig();
 
-  const productsUrl = new URL(`${env.supabaseUrl}/rest/v1/products`);
+  const productsUrl = new URL(`${env.fulfillmentSupabaseUrl}/rest/v1/products`);
   productsUrl.searchParams.set("select", productSelect);
   productsUrl.searchParams.set("order", "product_name.asc");
   productsUrl.searchParams.set("limit", String(limit));
@@ -142,7 +142,7 @@ export const listInventoryRest = async ({ limit, offset, search }) => {
       }),
     ),
     handleResponse(
-      await fetch(`${env.supabaseUrl}/rest/v1/inventory_on_hand?select=${inventorySelect}`, {
+      await fetch(`${env.fulfillmentSupabaseUrl}/rest/v1/inventory_on_hand?select=${inventorySelect}`, {
         method: "GET",
         headers: buildHeaders(),
       }),
@@ -156,7 +156,7 @@ export const getInventoryItemRest = async (productId) => {
   ensureRestConfig();
 
   const productRes = await fetch(
-    `${env.supabaseUrl}/rest/v1/products?select=${productSelect}&product_id=eq.${encodeURIComponent(productId)}&limit=1`,
+    `${env.fulfillmentSupabaseUrl}/rest/v1/products?select=${productSelect}&product_id=eq.${encodeURIComponent(productId)}&limit=1`,
     {
       method: "GET",
       headers: buildHeaders(),
@@ -168,7 +168,7 @@ export const getInventoryItemRest = async (productId) => {
   }
 
   const inventoryRes = await fetch(
-    `${env.supabaseUrl}/rest/v1/inventory_on_hand?select=${inventorySelect}&or=(product_id.eq.${encodeURIComponent(productId)}${products[0].product_uuid ? `,product_id.eq.${encodeURIComponent(products[0].product_uuid)}` : ""})`,
+    `${env.fulfillmentSupabaseUrl}/rest/v1/inventory_on_hand?select=${inventorySelect}&or=(product_id.eq.${encodeURIComponent(productId)}${products[0].product_uuid ? `,product_id.eq.${encodeURIComponent(products[0].product_uuid)}` : ""})`,
     {
       method: "GET",
       headers: buildHeaders(),
@@ -195,7 +195,7 @@ export const receiveScanRest = async ({
 
   for (const productKey of productKeys) {
     const lookupRes = await fetch(
-      `${env.supabaseUrl}/rest/v1/inventory_on_hand?select=product_id,bin_id,qty_on_hand&product_id=eq.${encodeURIComponent(productKey)}&limit=1`,
+      `${env.fulfillmentSupabaseUrl}/rest/v1/inventory_on_hand?select=product_id,bin_id,qty_on_hand&product_id=eq.${encodeURIComponent(productKey)}&limit=1`,
       {
         method: "GET",
         headers,
@@ -215,7 +215,7 @@ export const receiveScanRest = async ({
     nextOnHand = Number(row.qty_on_hand ?? 0) + increment;
 
     const patchRes = await fetch(
-      `${env.supabaseUrl}/rest/v1/inventory_on_hand?product_id=eq.${encodeURIComponent(row.product_id)}&bin_id=eq.${encodeURIComponent(row.bin_id)}`,
+      `${env.fulfillmentSupabaseUrl}/rest/v1/inventory_on_hand?product_id=eq.${encodeURIComponent(row.product_id)}&bin_id=eq.${encodeURIComponent(row.bin_id)}`,
       {
         method: "PATCH",
         headers: {
@@ -240,7 +240,7 @@ export const receiveScanRest = async ({
     nextOnHand = increment;
 
     await handleResponse(
-      await fetch(`${env.supabaseUrl}/rest/v1/inventory_on_hand`, {
+      await fetch(`${env.fulfillmentSupabaseUrl}/rest/v1/inventory_on_hand`, {
         method: "POST",
         headers: {
           ...headers,
@@ -259,7 +259,7 @@ export const receiveScanRest = async ({
 
   await handleResponse(
     await fetch(
-      `${env.supabaseUrl}/rest/v1/products?product_id=eq.${encodeURIComponent(product_id)}`,
+      `${env.fulfillmentSupabaseUrl}/rest/v1/products?product_id=eq.${encodeURIComponent(product_id)}`,
       {
         method: "PATCH",
         headers: {
@@ -294,7 +294,7 @@ export const listBackorderAlertsRest = async (limit) => {
 
   return handleResponse(
     await fetch(
-      `${env.supabaseUrl}/rest/v1/backorder_alerts?select=${backorderAlertSelect}&order=created_at.desc&limit=${limit}`,
+      `${env.fulfillmentSupabaseUrl}/rest/v1/backorder_alerts?select=${backorderAlertSelect}&order=created_at.desc&limit=${limit}`,
       {
         method: "GET",
         headers: buildHeaders(),
@@ -308,7 +308,7 @@ export const listBackorderAgingRest = async (limit) => {
 
   return handleResponse(
     await fetch(
-      `${env.supabaseUrl}/rest/v1/v_backorder_aging?select=${backorderAgingSelect}&order=created_at.asc&limit=${limit}`,
+      `${env.fulfillmentSupabaseUrl}/rest/v1/v_backorder_aging?select=${backorderAgingSelect}&order=created_at.asc&limit=${limit}`,
       {
         method: "GET",
         headers: buildHeaders(),

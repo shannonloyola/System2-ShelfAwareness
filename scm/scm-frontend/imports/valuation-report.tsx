@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { supabase, supabaseFulfillment } from "../lib/supabase";
 
 type ValueBasis = "cost" | "unit";
 
@@ -60,9 +60,9 @@ export default function ValuationReport() {
       setLoading(true);
       const [{ data: products, error: pErr }, { data: inventory, error: iErr }, { data: pricing, error: prErr }] =
         await Promise.all([
-          supabase.from("products").select("product_id,sku,product_name,category,warehouse_location,unit_price,currency_code"),
-          supabase.from("v_products_with_inventory").select("product_id,qty_on_hand,updated_at"),
-          supabase.from("v_latest_product_cost_price").select("product_id,cost_price"),
+          supabaseFulfillment.from("products").select("product_id,sku,product_name,category,warehouse_location,unit_price,currency_code"),
+          supabaseFulfillment.from("v_products_with_inventory").select("product_id,qty_on_hand,updated_at"),
+          supabaseFulfillment.from("v_latest_product_cost_price").select("product_id,cost_price"),
         ]);
       setLoading(false);
 

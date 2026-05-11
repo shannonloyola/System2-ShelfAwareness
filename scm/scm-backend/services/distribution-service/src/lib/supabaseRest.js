@@ -1,14 +1,14 @@
 import { env } from "../config/env.js";
 
 const buildHeaders = (includeJson = true) => ({
-  apikey: env.supabaseAnonKey,
-  Authorization: `Bearer ${env.supabaseAnonKey}`,
+  apikey: env.fulfillmentSupabaseAnonKey,
+  Authorization: `Bearer ${env.fulfillmentSupabaseServiceRoleKey || env.fulfillmentSupabaseAnonKey}`,
   ...(includeJson ? { "Content-Type": "application/json" } : {}),
 });
 
 const ensureRestConfig = () => {
-  if (!env.supabaseUrl || !env.supabaseAnonKey) {
-    throw new Error("SUPABASE_URL or SUPABASE_ANON_KEY is not set");
+  if (!env.fulfillmentSupabaseUrl || !env.fulfillmentSupabaseAnonKey) {
+    throw new Error("FULFILLMENT_SUPABASE_URL or FULFILLMENT_SUPABASE_ANON_KEY is not set");
   }
 };
 
@@ -25,7 +25,7 @@ const handleResponse = async (response) => {
 };
 
 const retailOrdersFunctionBase = () =>
-  `${env.supabaseUrl}/functions/v1/retail-orders`;
+  `${env.fulfillmentSupabaseUrl}/functions/v1/retail-orders`;
 
 const mapPayments = (payments = []) =>
   payments.map((payment) => ({
@@ -37,7 +37,7 @@ export const restHealthCheck = async () => {
   ensureRestConfig();
 
   const response = await fetch(
-    `${env.supabaseUrl}/rest/v1/retail_orders?select=order_uuid&limit=1`,
+    `${env.fulfillmentSupabaseUrl}/rest/v1/retail_orders?select=order_uuid&limit=1`,
     {
       method: "GET",
       headers: buildHeaders(),
@@ -54,7 +54,7 @@ export const listOrdersRest = async () => {
 
   return handleResponse(
     await fetch(
-      `${env.supabaseUrl}/rest/v1/retail_orders?select=order_uuid,order_no,retailer_name,status,total_amount,payment_terms,due_date,notes,created_at,priority_level,retail_order_lines(line_uuid,sku,qty,unit_price,line_total,qty_fulfilled,qty_backordered)&order=priority_rank.asc&order=created_at.asc`,
+      `${env.fulfillmentSupabaseUrl}/rest/v1/retail_orders?select=order_uuid,order_no,retailer_name,status,total_amount,payment_terms,due_date,notes,created_at,priority_level,retail_order_lines(line_uuid,sku,qty,unit_price,line_total,qty_fulfilled,qty_backordered)&order=priority_rank.asc&order=created_at.asc`,
       {
         method: "GET",
         headers: buildHeaders(),
@@ -68,7 +68,7 @@ export const listInventoryValueTotalRest = async () => {
 
   const rows = await handleResponse(
     await fetch(
-      `${env.supabaseUrl}/rest/v1/v_total_inventory_value_php?select=total_inventory_value_php`,
+      `${env.fulfillmentSupabaseUrl}/rest/v1/v_total_inventory_value_php?select=total_inventory_value_php`,
       {
         method: "GET",
         headers: buildHeaders(),
@@ -84,7 +84,7 @@ export const listInventoryValueByCategoryRest = async () => {
 
   return handleResponse(
     await fetch(
-      `${env.supabaseUrl}/rest/v1/v_inventory_value_by_category_php?select=category_name,total_value_php&order=total_value_php.desc`,
+      `${env.fulfillmentSupabaseUrl}/rest/v1/v_inventory_value_by_category_php?select=category_name,total_value_php&order=total_value_php.desc`,
       {
         method: "GET",
         headers: buildHeaders(),
@@ -102,7 +102,7 @@ export const listAvailableProductsRest = async () => {
       headers: buildHeaders(),
     }),
     fetch(
-      `${env.supabaseUrl}/rest/v1/v_products_with_inventory?select=product_id,qty_on_hand`,
+      `${env.fulfillmentSupabaseUrl}/rest/v1/v_products_with_inventory?select=product_id,qty_on_hand`,
       {
         method: "GET",
         headers: buildHeaders(),
@@ -120,21 +120,21 @@ export const listAvailableProductsRest = async () => {
   } else if (pricingRes.status === 404) {
     const [productsRes, productPricingRes, costRes] = await Promise.all([
       fetch(
-        `${env.supabaseUrl}/rest/v1/products?select=product_id,sku,product_name,unit_price&order=product_name.asc`,
+        `${env.fulfillmentSupabaseUrl}/rest/v1/products?select=product_id,sku,product_name,unit_price&order=product_name.asc`,
         {
           method: "GET",
           headers: buildHeaders(),
         },
       ),
       fetch(
-        `${env.supabaseUrl}/rest/v1/product_pricing?select=product_id,selling_price,is_active,effective_from,created_at&is_active=eq.true&order=effective_from.desc,created_at.desc`,
+        `${env.fulfillmentSupabaseUrl}/rest/v1/product_pricing?select=product_id,selling_price,is_active,effective_from,created_at&is_active=eq.true&order=effective_from.desc,created_at.desc`,
         {
           method: "GET",
           headers: buildHeaders(),
         },
       ),
       fetch(
-        `${env.supabaseUrl}/rest/v1/v_latest_product_cost_price?select=product_id,cost_price`,
+        `${env.fulfillmentSupabaseUrl}/rest/v1/v_latest_product_cost_price?select=product_id,cost_price`,
         {
           method: "GET",
           headers: buildHeaders(),
@@ -219,7 +219,7 @@ export const updateOrderLinesRest = async (orderId, lines) => {
   for (const line of lines) {
     await handleResponse(
       await fetch(
-        `${env.supabaseUrl}/rest/v1/retail_order_lines?order_uuid=eq.${encodeURIComponent(orderId)}&sku=eq.${encodeURIComponent(line.sku)}`,
+        `${env.fulfillmentSupabaseUrl}/rest/v1/retail_order_lines?order_uuid=eq.${encodeURIComponent(orderId)}&sku=eq.${encodeURIComponent(line.sku)}`,
         {
           method: "PATCH",
           headers: {
@@ -239,7 +239,7 @@ export const cancelOrderRest = async (orderId) => {
   ensureRestConfig();
 
   return handleResponse(
-    await fetch(`${env.supabaseUrl}/rest/v1/rpc/cancel_retail_order`, {
+    await fetch(`${env.fulfillmentSupabaseUrl}/rest/v1/rpc/cancel_retail_order`, {
       method: "POST",
       headers: buildHeaders(),
       body: JSON.stringify({ p_order_uuid: orderId }),
@@ -273,7 +273,7 @@ export const listOrderPaymentsRest = async ({ retailerName, orderNo, orderTotal 
 
   const rows = await handleResponse(
     await fetch(
-      `${env.supabaseUrl}/rest/v1/payments?select=id,supplier_name,amount,payment_date,payment_method,reference_no,notes,created_at&supplier_name=eq.${encodeURIComponent(retailerName)}&notes=ilike.*${encodeURIComponent(`[Invoice:${orderNo}]`)}*&order=payment_date.desc&order=created_at.desc`,
+      `${env.fulfillmentSupabaseUrl}/rest/v1/payments?select=id,supplier_name,amount,payment_date,payment_method,reference_no,notes,created_at&supplier_name=eq.${encodeURIComponent(retailerName)}&notes=ilike.*${encodeURIComponent(`[Invoice:${orderNo}]`)}*&order=payment_date.desc&order=created_at.desc`,
       {
         method: "GET",
         headers: buildHeaders(),
@@ -296,7 +296,7 @@ export const createPaymentRest = async (payload) => {
   ensureRestConfig();
 
   await handleResponse(
-    await fetch(`${env.supabaseUrl}/rest/v1/payments`, {
+    await fetch(`${env.fulfillmentSupabaseUrl}/rest/v1/payments`, {
       method: "POST",
       headers: {
         ...buildHeaders(),

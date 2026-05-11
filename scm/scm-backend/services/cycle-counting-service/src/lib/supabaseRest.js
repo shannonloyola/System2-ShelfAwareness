@@ -5,14 +5,14 @@ const productSelect =
   "product_id,sku,product_name,barcode,inventory_on_hand";
 
 const buildHeaders = () => ({
-  apikey: env.supabaseAnonKey,
-  Authorization: `Bearer ${env.supabaseAnonKey}`,
+  apikey: env.fulfillmentSupabaseAnonKey,
+  Authorization: `Bearer ${env.fulfillmentSupabaseServiceRoleKey || env.fulfillmentSupabaseAnonKey}`,
   "Content-Type": "application/json",
 });
 
 const ensureRestConfig = () => {
-  if (!env.supabaseUrl || !env.supabaseAnonKey) {
-    throw new Error("SUPABASE_URL or SUPABASE_ANON_KEY is not set");
+  if (!env.fulfillmentSupabaseUrl || !env.fulfillmentSupabaseAnonKey) {
+    throw new Error("FULFILLMENT_SUPABASE_URL or FULFILLMENT_SUPABASE_ANON_KEY is not set");
   }
 };
 
@@ -43,7 +43,7 @@ export const restHealthCheck = async () => {
   ensureRestConfig();
 
   const response = await fetch(
-    `${env.supabaseUrl}/rest/v1/products?select=product_id&limit=1`,
+    `${env.fulfillmentSupabaseUrl}/rest/v1/products?select=product_id&limit=1`,
     {
       method: "GET",
       headers: buildHeaders(),
@@ -58,7 +58,7 @@ export const restHealthCheck = async () => {
 export const listShelfItemsRest = async ({ limit }) => {
   ensureRestConfig();
 
-  const url = new URL(`${env.supabaseUrl}/rest/v1/products`);
+  const url = new URL(`${env.fulfillmentSupabaseUrl}/rest/v1/products`);
   url.searchParams.set("select", productSelect);
   url.searchParams.set("order", "product_name.asc");
   url.searchParams.set("limit", String(limit));
@@ -76,7 +76,7 @@ export const listShelfItemsRest = async ({ limit }) => {
 export const getProductByBarcodeRest = async (barcode) => {
   ensureRestConfig();
 
-  const url = new URL(`${env.supabaseUrl}/rest/v1/products`);
+  const url = new URL(`${env.fulfillmentSupabaseUrl}/rest/v1/products`);
   url.searchParams.set("select", productSelect);
   url.searchParams.set("barcode", `eq.${barcode}`);
   url.searchParams.set("limit", "1");
@@ -98,7 +98,7 @@ export const getProductByBarcodeRest = async (barcode) => {
 export const getProductBySkuRest = async (sku) => {
   ensureRestConfig();
 
-  const url = new URL(`${env.supabaseUrl}/rest/v1/products`);
+  const url = new URL(`${env.fulfillmentSupabaseUrl}/rest/v1/products`);
   url.searchParams.set("select", productSelect);
   url.searchParams.set("sku", `eq.${sku}`);
   url.searchParams.set("limit", "1");

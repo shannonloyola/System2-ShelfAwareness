@@ -30,7 +30,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { toast } from "sonner";
-import { supabase } from "../../lib/supabase";
+import { supabase, supabaseSCM } from "../../lib/supabase";
 import {
   blockInvalidNumberKeys,
   isPhoneValid,
@@ -356,7 +356,7 @@ export function InboundProcurement() {
     }
 
     setCheckingSkus(true);
-    const { data, error } = await supabase
+    const { data, error } = await supabaseSCM
       .from("products")
       .select("sku")
       .in("sku", uniqueSkus);
@@ -432,7 +432,7 @@ export function InboundProcurement() {
 
   const fetchPurchaseOrders = useCallback(async () => {
     setLoadingPOs(true);
-    const { data, error } = await supabase
+    const { data, error } = await supabaseSCM
       .from("purchase_orders")
       .select(
         "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication",
@@ -451,7 +451,7 @@ export function InboundProcurement() {
   }, []);
 
   const fetchProducts = useCallback(async () => {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseSCM
       .from("products")
       .select("sku, product_name, unit, barcode")
       .order("product_name", { ascending: true });
@@ -468,7 +468,7 @@ export function InboundProcurement() {
 
   const fetchPOItems = useCallback(async (poId: string) => {
     setLoadingItems(true);
-    const { data, error } = await supabase
+    const { data, error } = await supabaseSCM
       .from("purchase_order_items")
       .select("po_item_id, po_id, item_name, quantity")
       .eq("po_id", poId)
@@ -489,7 +489,7 @@ export function InboundProcurement() {
     const year = new Date().getFullYear();
     const prefix = `PO-JP-${year}-`;
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseSCM
       .from("purchase_orders")
       .select("po_no")
       .like("po_no", `${prefix}%`);
@@ -512,7 +512,7 @@ export function InboundProcurement() {
 
   const updatePOHeader = useCallback(
     async (poId: string, status: string, resolvedSupplierName: string) => {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseSCM
         .from("purchase_orders")
         .update({
           po_no: poNo || null,
@@ -562,7 +562,7 @@ export function InboundProcurement() {
           poNo || (await generateUniquePONumber());
         if (!poNo) setPoNo(generatedPoNo);
         const nowIso = new Date().toISOString();
-        const { data, error } = await supabase
+        const { data, error } = await supabaseSCM
           .from("purchase_orders")
           .insert([
             {
@@ -629,7 +629,7 @@ export function InboundProcurement() {
           poNo || (await generateUniquePONumber());
         if (!poNo) setPoNo(generatedPoNo);
         const nowIso = new Date().toISOString();
-        const { data, error } = await supabase
+        const { data, error } = await supabaseSCM
           .from("purchase_orders")
           .insert([
             {
@@ -655,7 +655,7 @@ export function InboundProcurement() {
         setSelectedPO(data as PurchaseOrderRow);
       }
 
-      const { count, error: countError } = await supabase
+      const { count, error: countError } = await supabaseSCM
         .from("purchase_order_items")
         .select("po_item_id", { count: "exact", head: true })
         .eq("po_id", targetPoId);
@@ -737,7 +737,7 @@ export function InboundProcurement() {
           items: cleanedItems,
         };
 
-        const { data, error } = await supabase.rpc(
+        const { data, error } = await supabaseSCM.rpc(
           "bulk_import_po",
           { p_payload: payload },
         );
@@ -906,7 +906,7 @@ export function InboundProcurement() {
       if (!selectedPO?.po_id) return;
 
       setAddingItem(true);
-      const { error } = await supabase
+      const { error } = await supabaseSCM
         .from("purchase_order_items")
         .delete()
         .eq("po_id", selectedPO.po_id)
@@ -990,7 +990,7 @@ export function InboundProcurement() {
         });
         return;
       }
-      const { data, error } = await supabase
+      const { data, error } = await supabaseSCM
         .from("purchase_orders")
         .update({ status: targetStatus })
         .eq("po_id", selectedPO.po_id)

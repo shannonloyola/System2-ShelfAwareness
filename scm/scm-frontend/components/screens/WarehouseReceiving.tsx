@@ -51,9 +51,9 @@ import {
   RadioGroupItem,
 } from "../ui/radio-group";
 import { toast } from "sonner";
-import { projectId, publicAnonKey } from "@/utils/supabase/info";
+import { fulfillmentProjectId as projectId, fulfillmentPublicAnonKey as publicAnonKey } from "@/utils/supabase/info";
 import { postGRN } from "@/utils/postGRN";
-import { supabase } from "@/lib/supabase";
+import { supabase, supabaseSCM, supabaseFulfillment } from "@/lib/supabase";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -326,7 +326,7 @@ export function WarehouseReceiving() {
     let isMounted = true;
 
     const loadBackorderAlerts = async () => {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseFulfillment
         .from("backorder_alerts")
         .select(
           "id, sku, message, grn_reference, pending_backorder_count, created_at",
@@ -342,7 +342,7 @@ export function WarehouseReceiving() {
 
     void loadBackorderAlerts();
 
-    const channel = supabase
+    const channel = supabaseFulfillment
       .channel("warehouse-backorder-alerts")
       .on(
         "postgres_changes",
@@ -368,7 +368,7 @@ export function WarehouseReceiving() {
 
     return () => {
       isMounted = false;
-      void supabase.removeChannel(channel);
+      void supabaseFulfillment.removeChannel(channel);
     };
   }, []);
 

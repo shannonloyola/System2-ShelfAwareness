@@ -56,7 +56,7 @@ import {
   type StockAdjustment,
   type ReasonCategory,
 } from "@/imports/adjustmentAPI";
-import { supabase } from "@/lib/supabase";
+import { supabase, supabaseSCM, supabaseFulfillment } from "@/lib/supabase";
 import MovementReport from "@/imports/movement-report";
 import ValuationReport from "@/imports/valuation-report";
 
@@ -273,14 +273,14 @@ export function StockManagement() {
     const loadBackorderData = async () => {
       setBackorderLoading(true);
       const [backordersRes, alertsRes] = await Promise.all([
-        supabase
+        supabaseFulfillment
           .from("v_backorder_aging")
           .select(
             "backorder_id, order_uuid, order_no, retailer_name, sku, qty_backordered, created_at, age_days, latest_status",
           )
           .order("created_at", { ascending: true })
           .limit(25),
-        supabase
+        supabaseFulfillment
           .from("backorder_alerts")
           .select(
             "id, sku, message, grn_reference, pending_backorder_count, created_at",
@@ -308,7 +308,7 @@ export function StockManagement() {
 
     void loadBackorderData();
 
-    const channel = supabase
+    const channel = supabaseFulfillment
       .channel("stock-management-backorder-alerts")
       .on(
         "postgres_changes",
@@ -335,7 +335,7 @@ export function StockManagement() {
 
     return () => {
       isMounted = false;
-      void supabase.removeChannel(channel);
+      void supabaseFulfillment.removeChannel(channel);
     };
   }, []);
 
@@ -344,7 +344,7 @@ export function StockManagement() {
     if (mainTab === "adjustments") {
       setLoading(true);
       Promise.all([
-        supabase
+        supabaseFulfillment
           .from("products")
           .select(
             "product_id, sku, product_name, inventory_on_hand",

@@ -1,8 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
-import { projectId, publicAnonKey } from './info';
+import { projectId, publicAnonKey, scmProjectId, scmPublicAnonKey, fulfillmentProjectId, fulfillmentPublicAnonKey } from './info';
 
-// Create a single Supabase client for interacting with your database
+// Identity Client (for Auth, Profiles)
 export const supabase = createClient(
   `https://${projectId}.supabase.co`,
   publicAnonKey
+);
+
+// Supply Chain Client (for Suppliers, Procurement)
+export const supabaseSCM = createClient(
+  `https://${scmProjectId}.supabase.co`,
+  scmPublicAnonKey
+);
+
+// Fulfillment Client (for Warehouse, Inventory, Distribution)
+export const supabaseFulfillment = createClient(
+  `https://${fulfillmentProjectId}.supabase.co`,
+  fulfillmentPublicAnonKey
 );
