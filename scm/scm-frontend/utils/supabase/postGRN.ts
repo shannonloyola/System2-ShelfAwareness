@@ -1,4 +1,7 @@
-import { projectId, publicAnonKey } from "./info";
+import {
+  fulfillmentProjectId as projectId,
+  fulfillmentPublicAnonKey as publicAnonKey,
+} from "./info";
 
 export interface PostGRNResult {
   grn_id: string;

@@ -2,7 +2,12 @@ import { useState, useEffect, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
-import { projectId, publicAnonKey } from "@/utils/supabase/info";
+import {
+  scmProjectId,
+  scmPublicAnonKey,
+  fulfillmentProjectId,
+  fulfillmentPublicAnonKey,
+} from "@/utils/supabase/info";
 
 interface InventoryRow {
   product_id: number;
@@ -29,26 +34,55 @@ export function InventoryTable() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const headers = { apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` };
+      const scmHeaders = {
+        apikey: scmPublicAnonKey,
+        Authorization: `Bearer ${scmPublicAnonKey}`,
+      };
+      const fulfillmentHeaders = {
+        apikey: fulfillmentPublicAnonKey,
+        Authorization: `Bearer ${fulfillmentPublicAnonKey}`,
+      };
 
-      // Fetch products with their inventory_on_hand via product_uuid join
-      const res = await fetch(
-        `https://${projectId}.supabase.co/rest/v1/products` +
-        `?select=product_id,sku,product_name,unit,product_uuid,inventory_on_hand!inner(qty_on_hand,updated_at)` +
-        `&order=product_name.asc`,
-        { headers }
+      const [productsRes, inventoryRes] = await Promise.all([
+        fetch(
+          `https://${scmProjectId}.supabase.co/rest/v1/products?select=product_id,sku,product_name,unit,product_uuid&order=product_name.asc`,
+          { headers: scmHeaders }
+        ),
+        fetch(
+          `https://${fulfillmentProjectId}.supabase.co/rest/v1/inventory_on_hand?select=product_id,qty_on_hand,updated_at`,
+          { headers: fulfillmentHeaders }
+        ),
+      ]);
+
+      if (!productsRes.ok) throw new Error(await productsRes.text());
+      if (!inventoryRes.ok) throw new Error(await inventoryRes.text());
+
+      const [products, inventoryRows] = await Promise.all([
+        productsRes.json(),
+        inventoryRes.json(),
+      ]);
+
+      const inventoryByProductUuid = new Map(
+        (Array.isArray(inventoryRows) ? inventoryRows : []).map((row: any) => [
+          String(row.product_id),
+          {
+            qty_on_hand: Number(row.qty_on_hand ?? 0),
+            updated_at: row.updated_at ?? "",
+          },
+        ])
       );
-      if (!res.ok) throw new Error(await res.text());
-      const data: any[] = await res.json();
 
-      const mapped: InventoryRow[] = data.map((p) => ({
-        product_id: p.product_id,
-        sku: p.sku,
-        product_name: p.product_name,
-        unit: p.unit ?? "pcs",
-        qty_on_hand: p.inventory_on_hand?.[0]?.qty_on_hand ?? 0,
-        updated_at: p.inventory_on_hand?.[0]?.updated_at ?? "",
-      }));
+      const mapped: InventoryRow[] = (Array.isArray(products) ? products : []).map((p: any) => {
+        const inventory = inventoryByProductUuid.get(String(p.product_uuid));
+        return {
+          product_id: p.product_id,
+          sku: p.sku,
+          product_name: p.product_name,
+          unit: p.unit ?? "pcs",
+          qty_on_hand: inventory?.qty_on_hand ?? 0,
+          updated_at: inventory?.updated_at ?? "",
+        };
+      });
 
       setRows(mapped);
     } catch (err) {

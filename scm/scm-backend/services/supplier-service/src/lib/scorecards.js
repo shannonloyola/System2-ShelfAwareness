@@ -1,9 +1,9 @@
 import { env } from "../config/env.js";
 import { createHttpError } from "./http.js";
 
-const buildHeaders = () => ({
-  apikey: env.supabaseAnonKey,
-  Authorization: `Bearer ${env.supabaseAnonKey}`,
+const buildHeaders = (anonKey) => ({
+  apikey: anonKey,
+  Authorization: `Bearer ${anonKey}`,
 });
 
 const round = (value) =>
@@ -28,7 +28,7 @@ const parseRows = async (response, label) => {
 };
 
 const fetchPurchaseOrders = async (supplierName) => {
-  const url = new URL(`${env.supabaseUrl}/rest/v1/purchase_orders`);
+  const url = new URL(`${env.scmSupabaseUrl}/rest/v1/purchase_orders`);
   url.searchParams.set(
     "select",
     "po_id,supplier_name,status,approval_status,is_late,expected_delivery_date,created_at,paid_at",
@@ -37,7 +37,7 @@ const fetchPurchaseOrders = async (supplierName) => {
   url.searchParams.set("limit", "1000");
 
   const response = await fetch(url, {
-    headers: buildHeaders(),
+    headers: buildHeaders(env.scmSupabaseAnonKey),
   });
 
   return parseRows(response, "purchase orders");
@@ -45,7 +45,7 @@ const fetchPurchaseOrders = async (supplierName) => {
 
 const fetchDiscrepancies = async (supplierName) => {
   const url = new URL(
-    `${env.supabaseUrl}/rest/v1/shipment_discrepancies`,
+    `${env.qualitySupabaseUrl}/rest/v1/shipment_discrepancies`,
   );
   url.searchParams.set(
     "select",
@@ -55,7 +55,7 @@ const fetchDiscrepancies = async (supplierName) => {
   url.searchParams.set("limit", "1000");
 
   const response = await fetch(url, {
-    headers: buildHeaders(),
+    headers: buildHeaders(env.qualitySupabaseAnonKey),
   });
 
   return parseRows(response, "shipment discrepancies");

@@ -11,3 +11,11 @@ export const scmPublicAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOi
 // Fulfillment Project
 export const fulfillmentProjectId = "dkqvbyewfyzfmisyisgs";
 export const fulfillmentPublicAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRrcXZieWV3Znl6Zm1pc3lpc2dzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MDYzODgsImV4cCI6MjA5NDA4MjM4OH0.Xui9uAuI32CENmcaqETD4QLh7TIZYslIfJuSVUwV-iU";
+
+// Quality & Compliance Project
+export const qualityProjectId = "jbfzhlalkjbtbitvxeog";
+export const qualityPublicAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpiZnpobGFsa2pidGJpdHZ4ZW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MTA5MDYsImV4cCI6MjA5NDA4NjkwNn0.wnzTZ78OufBxrKqR8ag7M0SDcvXzveJt1rw--a9Uv84";
+
+// Support & Intel Project
+export const supportIntelProjectId = "gxeqtthumaujxjbnrsqd";
+export const supportIntelPublicAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4ZXF0dGh1bWF1anhqYm5yc3FkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0OTcyMTQsImV4cCI6MjA5NDA3MzIxNH0.UhDc9kQ_U9Nfb-Jcc3MMNMkHnCBVkdf8jY6-x4cNg7c";

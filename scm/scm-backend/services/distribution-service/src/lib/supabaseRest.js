@@ -52,15 +52,72 @@ export const restHealthCheck = async () => {
 export const listOrdersRest = async () => {
   ensureRestConfig();
 
-  return handleResponse(
-    await fetch(
-      `${env.fulfillmentSupabaseUrl}/rest/v1/retail_orders?select=order_uuid,order_no,retailer_name,status,total_amount,payment_terms,due_date,notes,created_at,priority_level,retail_order_lines(line_uuid,sku,qty,unit_price,line_total,qty_fulfilled,qty_backordered)&order=priority_rank.asc&order=created_at.asc`,
-      {
-        method: "GET",
-        headers: buildHeaders(),
-      },
+  const [orders, lines] = await Promise.all([
+    handleResponse(
+      await fetch(
+        `${env.fulfillmentSupabaseUrl}/rest/v1/retail_orders?select=*&order=created_at.asc`,
+        {
+          method: "GET",
+          headers: buildHeaders(),
+        },
+      ),
     ),
-  );
+    handleResponse(
+      await fetch(
+        `${env.fulfillmentSupabaseUrl}/rest/v1/retail_order_lines?select=order_uuid,line_uuid,sku,qty,qty_fulfilled,qty_backordered`,
+        {
+          method: "GET",
+          headers: buildHeaders(),
+        },
+      ),
+    ),
+  ]);
+
+  const linesByOrderId = new Map();
+
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const orderId = String(line.order_uuid);
+    if (!linesByOrderId.has(orderId)) {
+      linesByOrderId.set(orderId, []);
+    }
+
+    linesByOrderId.get(orderId).push({
+      line_uuid: line.line_uuid,
+      sku: line.sku,
+      qty: Number(line.qty ?? 0),
+      unit_price: 0,
+      line_total: 0,
+      qty_fulfilled: Number(line.qty_fulfilled ?? 0),
+      qty_backordered: Number(line.qty_backordered ?? 0),
+    });
+  }
+
+  return (Array.isArray(orders) ? orders : [])
+    .map((order) => ({
+      order_uuid: order.order_uuid,
+      order_no: order.order_no ?? null,
+      retailer_name: order.retailer_name ?? "",
+      status: order.status ?? "placed",
+      total_amount: Number(order.total_amount ?? 0),
+      payment_terms: order.payment_terms ?? null,
+      due_date: order.due_date ?? null,
+      notes: order.notes ?? null,
+      created_at: order.created_at ?? null,
+      priority_level: order.priority_level ?? null,
+      priority_rank:
+        order.priority_rank === null || order.priority_rank === undefined
+          ? Number.MAX_SAFE_INTEGER
+          : Number(order.priority_rank),
+      retail_order_lines: linesByOrderId.get(String(order.order_uuid)) ?? [],
+    }))
+    .sort((a, b) => {
+      if (a.priority_rank !== b.priority_rank) {
+        return a.priority_rank - b.priority_rank;
+      }
+
+      return new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime();
+    })
+    .map(({ priority_rank, ...order }) => order);
 };
 
 export const listInventoryValueTotalRest = async () => {

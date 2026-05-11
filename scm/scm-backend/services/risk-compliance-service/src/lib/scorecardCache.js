@@ -38,14 +38,18 @@ const parseResponse = async (response, label) => {
 };
 
 export const listSuppliersForRecalculation = async () => {
-  const url = new URL(`${env.supabaseUrl}/rest/v1/suppliers`);
+  const url = new URL(`${env.scmSupabaseUrl}/rest/v1/suppliers`);
   url.searchParams.set("select", "supplier_name");
   url.searchParams.set("status", "eq.Active");
   url.searchParams.set("order", "supplier_name.asc");
   url.searchParams.set("limit", "1000");
 
   const response = await fetch(url, {
-    headers: buildHeaders(),
+    headers: {
+      apikey: env.scmSupabaseAnonKey,
+      Authorization: `Bearer ${env.scmSupabaseAnonKey}`,
+      "Content-Type": "application/json",
+    },
   });
 
   const rows = await parseResponse(

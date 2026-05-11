@@ -1,6 +1,11 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { toast } from "sonner";
-import { projectId, publicAnonKey } from "@/utils/supabase/info";
+import {
+  scmProjectId,
+  scmPublicAnonKey,
+  fulfillmentProjectId,
+  fulfillmentPublicAnonKey,
+} from "@/utils/supabase/info";
 import { useEffect, useMemo, useState } from "react";
 import { 
   Plus, 
@@ -8,7 +13,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
-import { supabase } from "@/lib/supabase";
+import { supabaseFulfillment, supabaseSCM } from "@/lib/supabase";
 import {
   blockInvalidNumberKeys,
   sanitizeDecimalInput,
@@ -173,42 +178,49 @@ export function OutboundDistribution() {
       .join(" ")
       .trim();
 
+  const scmRestBaseUrl = `https://${scmProjectId}.supabase.co/rest/v1`;
   const retailOrdersBaseUrl =
-    `https://${projectId}.supabase.co/functions/v1/retail-orders`;
+    `https://${fulfillmentProjectId}.supabase.co/functions/v1/retail-orders`;
 
-  const functionHeaders = {
-    apikey: publicAnonKey,
-    Authorization: `Bearer ${publicAnonKey}`,
+  const scmRestHeaders = {
+    apikey: scmPublicAnonKey,
+    Authorization: `Bearer ${scmPublicAnonKey}`,
+    "Content-Type": "application/json",
+  };
+
+  const fulfillmentRestHeaders = {
+    apikey: fulfillmentPublicAnonKey,
+    Authorization: `Bearer ${fulfillmentPublicAnonKey}`,
+    "Content-Type": "application/json",
+  };
+
+  const fulfillmentFunctionHeaders = {
+    apikey: fulfillmentPublicAnonKey,
+    Authorization: `Bearer ${fulfillmentPublicAnonKey}`,
     "Content-Type": "application/json",
   };
 
   const loadLockedPricingFallback = async () => {
-    const restHeaders = {
-      apikey: publicAnonKey,
-      Authorization: `Bearer ${publicAnonKey}`,
-      "Content-Type": "application/json",
-    };
-
     const [productsRes, pricingRes, costRes] = await Promise.all([
       fetch(
-        `https://${projectId}.supabase.co/rest/v1/products?select=product_id,sku,product_name,unit_price&order=product_name.asc`,
+        `${scmRestBaseUrl}/products?select=product_id,sku,product_name,unit_price&order=product_name.asc`,
         {
           method: "GET",
-          headers: restHeaders,
+          headers: scmRestHeaders,
         },
       ),
       fetch(
-        `https://${projectId}.supabase.co/rest/v1/product_pricing?select=product_id,selling_price,is_active,effective_from,created_at&is_active=eq.true&order=effective_from.desc,created_at.desc`,
+        `${scmRestBaseUrl}/product_pricing?select=product_id,selling_price,is_active,effective_from,created_at&is_active=eq.true&order=effective_from.desc,created_at.desc`,
         {
           method: "GET",
-          headers: restHeaders,
+          headers: scmRestHeaders,
         },
       ),
       fetch(
-        `https://${projectId}.supabase.co/rest/v1/v_latest_product_cost_price?select=product_id,cost_price`,
+        `${scmRestBaseUrl}/v_latest_product_cost_price?select=product_id,cost_price`,
         {
           method: "GET",
-          headers: restHeaders,
+          headers: scmRestHeaders,
         },
       ),
     ]);
@@ -264,14 +276,10 @@ export function OutboundDistribution() {
   useEffect(() => {
     const fetchTotalInventoryValue = async () => {
       try {
-        const url = `https://${projectId}.supabase.co/rest/v1/v_total_inventory_value_php?select=total_inventory_value_php`;
+        const url = `${scmRestBaseUrl}/v_total_inventory_value_php?select=total_inventory_value_php`;
         const response = await fetch(url, {
           method: "GET",
-          headers: {
-            apikey: publicAnonKey,
-            Authorization: `Bearer ${publicAnonKey}`,
-            "Content-Type": "application/json",
-          },
+          headers: scmRestHeaders,
         });
 
         if (response.ok) {
@@ -288,20 +296,16 @@ export function OutboundDistribution() {
     };
 
     fetchTotalInventoryValue();
-  }, []);
+  }, [scmRestBaseUrl]);
 
   // Fetch Inventory Value by Category
   useEffect(() => {
     const fetchInventoryValueByCategory = async () => {
       try {
-        const url = `https://${projectId}.supabase.co/rest/v1/v_inventory_value_by_category_php?select=category_name,total_value_php&order=total_value_php.desc`;
+        const url = `${scmRestBaseUrl}/v_inventory_value_by_category_php?select=category_name,total_value_php&order=total_value_php.desc`;
         const response = await fetch(url, {
           method: "GET",
-          headers: {
-            apikey: publicAnonKey,
-            Authorization: `Bearer ${publicAnonKey}`,
-            "Content-Type": "application/json",
-          },
+          headers: scmRestHeaders,
         });
 
         if (response.ok) {
@@ -316,14 +320,14 @@ export function OutboundDistribution() {
     };
 
     fetchInventoryValueByCategory();
-  }, []);
+  }, [scmRestBaseUrl]);
 
   const isLocked = (status: string) =>
     status === "dispatched" || status === "fulfilled";
 
   const fetchOrders = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    const { data, error } = await supabaseFulfillment
       .from("retail_orders")
       .select(`
         order_uuid,
@@ -359,7 +363,7 @@ export function OutboundDistribution() {
 
   const fetchInvoiceSummary = async (order: RetailOrder) => {
     setLoadingInvoiceSummary(true);
-    const { data, error } = await supabase
+    const { data, error } = await supabaseSCM
       .from("payments")
       .select(
         "id, supplier_name, amount, payment_date, payment_method, reference_no, notes, created_at",
@@ -398,15 +402,26 @@ export function OutboundDistribution() {
   };
 
   const fetchAvailableProducts = async () => {
-    const [pricingRes, inventoryRes] =
+    const [pricingRes, inventoryRes, productMetaRes] =
       await Promise.all([
         fetch(`${retailOrdersBaseUrl}/pricing`, {
           method: "GET",
-          headers: functionHeaders,
+          headers: fulfillmentFunctionHeaders,
         }),
-        supabase
-          .from("v_products_with_inventory")
-          .select("product_id, qty_on_hand"),
+        fetch(
+          `https://${fulfillmentProjectId}.supabase.co/rest/v1/inventory_on_hand?select=product_id,qty_on_hand`,
+          {
+            method: "GET",
+            headers: fulfillmentRestHeaders,
+          },
+        ),
+        fetch(
+          `${scmRestBaseUrl}/products?select=product_id,product_uuid,sku`,
+          {
+            method: "GET",
+            headers: scmRestHeaders,
+          },
+        ),
       ]);
 
     let serverProducts: any[] = [];
@@ -416,7 +431,7 @@ export function OutboundDistribution() {
       serverProducts = Array.isArray(pricingPayload?.products)
         ? pricingPayload.products
         : [];
-    } else if (pricingRes.status === 404) {
+    } else {
       try {
         serverProducts = await loadLockedPricingFallback();
       } catch (fallbackError) {
@@ -424,33 +439,56 @@ export function OutboundDistribution() {
           description:
             fallbackError instanceof Error
               ? fallbackError.message
-              : "Retail pricing endpoint is unavailable.",
+              : "Retail pricing sources are unavailable.",
         });
         return;
       }
-    } else {
-      toast.error("Failed to load locked pricing", {
-        description: await pricingRes.text(),
+    }
+
+    if (!inventoryRes.ok) {
+      toast.error("Failed to load fulfillment inventory", {
+        description: await inventoryRes.text(),
       });
       return;
     }
 
-    const inventoryByProductId = new Map<string, number>(
-      ((inventoryRes.data as any[]) || []).map((row) => [
+    if (!productMetaRes.ok) {
+      toast.error("Failed to load product metadata", {
+        description: await productMetaRes.text(),
+      });
+      return;
+    }
+
+    const [inventoryRows, productMetaRows] = await Promise.all([
+      inventoryRes.json(),
+      productMetaRes.json(),
+    ]);
+
+    const inventoryByProductUuid = new Map<string, number>(
+      (Array.isArray(inventoryRows) ? inventoryRows : []).map((row: any) => [
         String(row.product_id),
         Number(row.qty_on_hand ?? 0),
       ]),
     );
 
+    const productUuidBySku = new Map<string, string>(
+      (Array.isArray(productMetaRows) ? productMetaRows : []).map((row: any) => [
+        String(row.sku),
+        String(row.product_uuid),
+      ]),
+    );
+
     setAvailableProducts(
       (serverProducts.map((product: any) => {
-        const productId = String(product.product_id);
+        const productUuid = productUuidBySku.get(String(product.sku));
         return {
-          product_id: productId,
+          product_id: String(product.product_id),
           sku: product.sku,
           product_name: product.product_name,
           current_stock:
-            inventoryByProductId.get(productId) ?? 0,
+            (productUuid
+              ? inventoryByProductUuid.get(productUuid)
+              : undefined) ?? 0,
           selling_price: Number(product.selling_price ?? 0),
           cost_price: Number(product.cost_price ?? 0),
         };
@@ -542,7 +580,7 @@ export function OutboundDistribution() {
         return;
       }
 
-      const { error } = await supabase
+      const { error } = await supabaseFulfillment
         .from("retail_order_lines")
         .update({ qty: parsedQty })
         .eq("order_uuid", selectedOrder.order_uuid)
@@ -590,7 +628,7 @@ export function OutboundDistribution() {
     }
     setCancellingOrder(true);
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseFulfillment
       .rpc("cancel_retail_order", { p_order_uuid: selectedOrder.order_uuid });
 
     setCancellingOrder(false);
@@ -624,8 +662,8 @@ export function OutboundDistribution() {
         {
           method: "GET",
           headers: {
-            apikey: publicAnonKey,
-            Authorization: `Bearer ${publicAnonKey}`,
+            apikey: fulfillmentPublicAnonKey,
+            Authorization: `Bearer ${fulfillmentPublicAnonKey}`,
           },
         },
       );
@@ -676,7 +714,7 @@ export function OutboundDistribution() {
 
     setSavingPayment(true);
 
-    const { error } = await supabase.from("payments").insert({
+    const { error } = await supabaseSCM.from("payments").insert({
       supplier_name: selectedPaymentOrder.retailer_name,
       amount,
       payment_date: paymentForm.paymentDate,
@@ -746,7 +784,7 @@ export function OutboundDistribution() {
 
     const response = await fetch(`${retailOrdersBaseUrl}/orders`, {
       method: "POST",
-      headers: functionHeaders,
+      headers: fulfillmentFunctionHeaders,
       body: JSON.stringify({
         retailer_name: newOrder.retailerName,
         branch_suffix: newOrder.branchSuffix || null,

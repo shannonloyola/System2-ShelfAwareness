@@ -23,10 +23,25 @@ app.use(
   }),
 );
 
-const supabase = createClient(
+const fulfillmentSupabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
+
+const scmSupabaseUrl =
+  Deno.env.get("SCM_SUPABASE_URL") ??
+  Deno.env.get("NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_URL") ??
+  "";
+
+const scmSupabaseKey =
+  Deno.env.get("SCM_SUPABASE_SERVICE_ROLE_KEY") ??
+  Deno.env.get("SCM_SUPABASE_ANON_KEY") ??
+  Deno.env.get("NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_ANON_KEY") ??
+  "";
+
+const scmSupabase = scmSupabaseUrl && scmSupabaseKey
+  ? createClient(scmSupabaseUrl, scmSupabaseKey)
+  : null;
 
 const normalizePriorityLevel = (value: unknown) => {
   if (typeof value !== "string") return null;
@@ -80,12 +95,18 @@ type OrderRecord = {
 };
 
 const loadLockedPricing = async () => {
+  if (!scmSupabase) {
+    throw new Error(
+      "SCM Supabase client is not configured. Set SCM_SUPABASE_URL and SCM_SUPABASE_SERVICE_ROLE_KEY (or SCM_SUPABASE_ANON_KEY).",
+    );
+  }
+
   const [productsRes, pricingRes, costRes] = await Promise.all([
-    supabase
+    scmSupabase
       .from("products")
       .select("product_id, sku, product_name, unit_price")
       .order("product_name", { ascending: true }),
-    supabase
+    scmSupabase
       .from("product_pricing")
       .select(
         "product_id, selling_price, is_active, effective_from, created_at",
@@ -93,7 +114,7 @@ const loadLockedPricing = async () => {
       .eq("is_active", true)
       .order("effective_from", { ascending: false })
       .order("created_at", { ascending: false }),
-    supabase
+    scmSupabase
       .from("v_latest_product_cost_price")
       .select("product_id, cost_price"),
   ]);
@@ -150,7 +171,7 @@ const formatCurrency = (value: number) =>
   })}`;
 
 const fetchOrderWithLines = async (orderUuid: string) => {
-  const { data, error } = await supabase
+  const { data, error } = await fulfillmentSupabase
     .from("retail_orders")
     .select(`
       order_uuid,
@@ -380,7 +401,7 @@ const handleCreateOrder = async (c: any) => {
         .toFixed(2),
     );
 
-    const { data: order, error: orderError } = await supabase
+    const { data: order, error: orderError } = await fulfillmentSupabase
       .from("retail_orders")
       .insert({
         retailer_name,
@@ -413,7 +434,7 @@ const handleCreateOrder = async (c: any) => {
       throw new Error(orderError?.message ?? "Failed to create order");
     }
 
-    const { error: linesError } = await supabase
+    const { error: linesError } = await fulfillmentSupabase
       .from("retail_order_lines")
       .insert(
         resolvedLines.map((line) => ({
@@ -425,7 +446,7 @@ const handleCreateOrder = async (c: any) => {
       );
 
     if (linesError) {
-      await supabase
+      await fulfillmentSupabase
         .from("retail_orders")
         .delete()
         .eq("order_uuid", order.order_uuid);
@@ -433,7 +454,7 @@ const handleCreateOrder = async (c: any) => {
     }
 
     const { data: fulfillmentData, error: fulfillmentError } =
-      await supabase.rpc("fulfill_retail_order", {
+      await fulfillmentSupabase.rpc("fulfill_retail_order", {
         p_order_uuid: order.order_uuid,
       });
 

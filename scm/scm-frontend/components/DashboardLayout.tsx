@@ -57,10 +57,15 @@ const navigation: NavItem[] = [
     icon: Database,
     roles: [
       "owner_president",
+      "finance_manager",
       "procurement_manager",
+      "logistics_coordinator",
       "warehouse_manager",
       "qc_inspector",
       "sales_processor",
+      "delivery_person",
+      "b2b_customer",
+      "supplier",
     ],
   },
   {
@@ -77,6 +82,7 @@ const navigation: NavItem[] = [
       "owner_president",
       "procurement_manager",
       "finance_manager",
+      "logistics_coordinator",
       "supplier",
     ],
   },
@@ -88,7 +94,6 @@ const navigation: NavItem[] = [
       "owner_president",
       "warehouse_manager",
       "logistics_coordinator",
-      "qc_inspector",
     ],
   },
   {
@@ -99,7 +104,6 @@ const navigation: NavItem[] = [
       "owner_president",
       "warehouse_manager",
       "qc_inspector",
-      "logistics_coordinator",
     ],
   },
   {
@@ -109,8 +113,9 @@ const navigation: NavItem[] = [
     roles: [
       "owner_president",
       "warehouse_manager",
-      "logistics_coordinator",
       "finance_manager",
+      "procurement_manager",
+      "sales_processor",
     ],
   },
   {
@@ -163,7 +168,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Desktop Sidebar - Midnight Blue */}
-      <aside className="hidden lg:flex lg:flex-col w-64 bg-[#1A2B47] text-white">
+      <aside className="relative z-20 hidden w-64 shrink-0 lg:flex lg:flex-col bg-[#1A2B47] text-white">
         <div className="p-6 border-b border-white/10">
           <h1 className="text-2xl font-semibold tracking-tight">
             Shelf Awareness
@@ -173,7 +178,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </p>
         </div>
 
-        <nav className="flex-1 p-4 space-y-2">
+        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
           {visibleNav.map((item) => {
             const isActive = pathname === item.href;
             return (
@@ -193,7 +198,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           })}
         </nav>
 
-        <div className="p-4 border-t border-white/10 space-y-3">
+        <div className="mt-auto p-4 border-t border-white/10 space-y-3">
           {/* User Profile */}
           <div className="flex items-center gap-3 px-4 py-2">
             <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
@@ -217,8 +222,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
           {/* Logout Button */}
           <Button
+            type="button"
             onClick={handleLogout}
-            className="w-full bg-white/10 hover:bg-white/20 text-white border border-white/20 justify-start gap-3 px-4 rounded-lg font-semibold"
+            className="relative z-10 w-full pointer-events-auto bg-white/10 hover:bg-white/20 text-white border border-white/20 justify-start gap-3 px-4 rounded-lg font-semibold"
             variant="outline"
             style={{ fontFamily: "Public Sans, sans-serif" }}
           >
@@ -229,7 +235,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="relative z-0 flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Mobile Header */}
         <header className="lg:hidden bg-[#1A2B47] text-white p-4 flex items-center justify-between">
           <div>
@@ -241,12 +247,16 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors">
+            <button
+              type="button"
+              className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"
+            >
               <Bell className="w-5 h-5" />
             </button>
             <button
+              type="button"
               onClick={handleLogout}
-              className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"
+              className="relative z-10 w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"
             >
               <LogOut className="w-5 h-5" />
             </button>

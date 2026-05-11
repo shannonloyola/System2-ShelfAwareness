@@ -22,6 +22,9 @@ interface AuthContextType {
   isLoading: boolean;
 }
 
+const AUTH_SERVICE_URL =
+  process.env.NEXT_PUBLIC_AUTH_USER_ACCESS_SERVICE_URL || "http://localhost:4014";
+
 const AuthContext = createContext<AuthContextType>({
   user: null,
   role: null,
@@ -39,16 +42,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         setUser(session.user);
-        
-        // 1. Check JWT Metadata first (fastest, works across projects)
-        const metaRole = session.user.app_metadata?.role as AppRole;
-        if (metaRole) {
-          setRole(metaRole);
-          setIsLoading(false);
-        } else {
-          // 2. Fallback to Database Profiles (only in Identity Project)
-          await fetchRole(session.user.id);
-        }
+        await resolveRole(session.user);
       } else {
         setIsLoading(false);
       }
@@ -59,14 +53,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
         setUser(session.user);
-        
-        const metaRole = session.user.app_metadata?.role as AppRole;
-        if (metaRole) {
-          setRole(metaRole);
-          setIsLoading(false);
-        } else {
-          await fetchRole(session.user.id);
-        }
+        await resolveRole(session.user);
       } else {
         setUser(null);
         setRole(null);
@@ -79,7 +66,25 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, []);
 
-  const fetchRole = async (userId: string) => {
+  const resolveRole = async (sessionUser: User) => {
+    const appMetaRole = sessionUser.app_metadata?.role as AppRole | undefined;
+    if (appMetaRole) {
+      setRole(appMetaRole);
+      setIsLoading(false);
+      return;
+    }
+
+    const userMetaRole = sessionUser.user_metadata?.role as AppRole | undefined;
+    if (userMetaRole) {
+      setRole(userMetaRole);
+      setIsLoading(false);
+      return;
+    }
+
+    await fetchRole(sessionUser.id, sessionUser.email ?? undefined);
+  };
+
+  const fetchRole = async (userId: string, email?: string) => {
     try {
       const { data, error } = await supabase
         .from("profiles")
@@ -89,9 +94,27 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
       if (data && !error) {
         setRole(data.role as AppRole);
-      } else {
-        setRole("b2b_customer");
+        return;
       }
+
+      const params = new URLSearchParams();
+      params.set("userId", userId);
+      if (email) {
+        params.set("email", email);
+      }
+
+      const response = await fetch(`${AUTH_SERVICE_URL}/auth/role?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error(`Role lookup failed with status ${response.status}`);
+      }
+
+      const resolved = (await response.json()) as { role?: AppRole };
+      if (resolved.role) {
+        setRole(resolved.role);
+        return;
+      }
+
+      setRole("b2b_customer");
     } catch (err) {
       console.error("Error fetching user role:", err);
       setRole("b2b_customer");

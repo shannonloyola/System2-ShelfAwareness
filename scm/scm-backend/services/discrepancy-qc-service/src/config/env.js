@@ -35,14 +35,16 @@ export const env = {
   port: Number(process.env.PORT || 4007),
   databaseUrl: process.env.DATABASE_URL || "",
   dbSsl: parseBoolean(process.env.DB_SSL, true),
-  // Identity Project (Auth)
+  // Domain 4 Project (Quality & Compliance)
   supabaseUrl: (
+    process.env.DOMAIN4_SUPABASE_URL ||
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
     process.env.SUPABASE_URL ||
     process.env.VITE_SUPABASE_URL ||
     ""
   ).trim(),
   supabaseAnonKey: (
+    process.env.DOMAIN4_SUPABASE_ANON_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     process.env.SUPABASE_ANON_KEY ||
     process.env.VITE_SUPABASE_ANON_KEY ||

@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/http.js";
-import { validateUserSession, checkPermissions } from "../services/authService.js";
+import {
+  validateUserSession,
+  checkPermissions,
+  getUserRole,
+} from "../services/authService.js";
 
 export const authRouter = Router();
 
@@ -18,6 +22,15 @@ authRouter.get(
   asyncHandler(async (req, res) => {
     const { userId, resource, action } = req.query;
     const result = await checkPermissions(userId, resource, action);
+    res.json(result);
+  }),
+);
+
+authRouter.get(
+  "/role",
+  asyncHandler(async (req, res) => {
+    const { userId, email } = req.query;
+    const result = await getUserRole({ userId, email });
     res.json(result);
   }),
 );

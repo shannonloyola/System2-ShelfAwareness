@@ -25,7 +25,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { toast } from "sonner";
-import { projectId, publicAnonKey } from "@/utils/supabase/info";
+import { qualityProjectId as projectId, qualityPublicAnonKey as publicAnonKey } from "@/utils/supabase/info";
 import { supabase } from "@/lib/supabase";
 import {
   Bar,
