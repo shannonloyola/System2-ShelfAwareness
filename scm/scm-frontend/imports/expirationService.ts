@@ -1,8 +1,8 @@
-import { supabase } from "../lib/supabase";
+import { supabaseSCM } from "../lib/supabase";
 
 // ── Manually trigger expiration check (calls the Postgres function) ──
 export async function runExpirationCheck() {
-  const { data, error } = await supabase.rpc(
+  const { data, error } = await supabaseSCM.rpc(
     "expire_reservations",
   );
   if (error) throw new Error(error.message);
@@ -19,7 +19,7 @@ export async function reserveStock(
   productId: number,
   qty: number,
 ) {
-  const { error } = await supabase.rpc(
+  const { error } = await supabaseSCM.rpc(
     "reserve_product_stock",
     {
       p_product_id: productId,
@@ -31,7 +31,7 @@ export async function reserveStock(
 
 // ── Mark PO as paid — clears reservation, confirms stock deduction ──
 export async function markPOPaid(poId: string) {
-  const { error } = await supabase
+  const { error } = await supabaseSCM
     .from("purchase_orders")
     .update({
       status: "Paid",
@@ -46,7 +46,7 @@ export async function fetchExpiringSoon() {
   const twoHoursFromNow = new Date(
     Date.now() + 2 * 60 * 60 * 1000,
   ).toISOString();
-  const { data, error } = await supabase
+  const { data, error } = await supabaseSCM
     .from("purchase_orders")
     .select(
       "po_id, po_no, supplier_name, status, expires_at, reserved_at",
@@ -60,7 +60,7 @@ export async function fetchExpiringSoon() {
 
 // ── Fetch all currently expired unpaid POs ──
 export async function fetchExpiredPOs() {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseSCM
     .from("purchase_orders")
     .select("*")
     .eq("status", "Expired")

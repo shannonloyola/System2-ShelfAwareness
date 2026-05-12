@@ -3,18 +3,8 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
-
-export type AppRole =
-  | "owner_president"
-  | "finance_manager"
-  | "procurement_manager"
-  | "logistics_coordinator"
-  | "warehouse_manager"
-  | "qc_inspector"
-  | "sales_processor"
-  | "delivery_person"
-  | "b2b_customer"
-  | "supplier";
+import { normalizeAppRole, type AppRole } from "@/lib/rbac";
+export type { AppRole } from "@/lib/rbac";
 
 interface AuthContextType {
   user: User | null;
@@ -24,7 +14,7 @@ interface AuthContextType {
 
 const AUTH_SERVICE_URL =
   process.env.NEXT_PUBLIC_AUTH_USER_ACCESS_SERVICE_URL || "http://localhost:4014";
-const ROLE_LOOKUP_TIMEOUT_MS = 2500;
+const ROLE_LOOKUP_TIMEOUT_MS = 8000;
 const ROLE_CACHE_PREFIX = "shelf-awareness-role:";
 
 const AuthContext = createContext<AuthContextType>({
@@ -39,7 +29,7 @@ const getRoleCacheKey = (userId: string) =>
 const readCachedRole = (userId: string): AppRole | null => {
   if (typeof window === "undefined") return null;
   const cached = window.localStorage.getItem(getRoleCacheKey(userId));
-  return cached ? (cached as AppRole) : null;
+  return normalizeAppRole(cached);
 };
 
 const writeCachedRole = (userId: string, role: AppRole) => {
@@ -89,7 +79,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const resolveRole = (sessionUser: User) => {
-    const appMetaRole = sessionUser.app_metadata?.role as AppRole | undefined;
+    const appMetaRole = normalizeAppRole(sessionUser.app_metadata?.role);
     if (appMetaRole) {
       setRole(appMetaRole);
       writeCachedRole(sessionUser.id, appMetaRole);
@@ -97,7 +87,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
 
-    const userMetaRole = sessionUser.user_metadata?.role as AppRole | undefined;
+    const userMetaRole = normalizeAppRole(sessionUser.user_metadata?.role);
     if (userMetaRole) {
       setRole(userMetaRole);
       writeCachedRole(sessionUser.id, userMetaRole);
@@ -109,15 +99,22 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     if (cachedRole) {
       setRole(cachedRole);
       setIsLoading(false);
+      void fetchRole(sessionUser.id, sessionUser.email ?? undefined);
     } else {
-      setRole("b2b_customer");
-      setIsLoading(false);
+      setRole(null);
+      void fetchRole(sessionUser.id, sessionUser.email ?? undefined, true);
     }
-
-    void fetchRole(sessionUser.id, sessionUser.email ?? undefined);
   };
 
-  const fetchRole = async (userId: string, email?: string) => {
+  const fetchRole = async (
+    userId: string,
+    email?: string,
+    keepLoading = false,
+  ) => {
+    if (keepLoading) {
+      setIsLoading(true);
+    }
+
     try {
       const profileLookup = supabase
         .from("profiles")
@@ -137,10 +134,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       ]);
 
       const { data, error } = profileResult as Awaited<typeof profileLookup>;
-      if (data && !error && data.role) {
-        const nextRole = data.role as AppRole;
+      const profileRole = normalizeAppRole(data?.role);
+      if (data && !error && profileRole) {
+        const nextRole = profileRole;
         setRole(nextRole);
         writeCachedRole(userId, nextRole);
+        setIsLoading(false);
         return;
       }
 
@@ -163,18 +162,25 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         throw new Error(`Role lookup failed with status ${response.status}`);
       }
 
-      const resolved = (await response.json()) as { role?: AppRole };
-      if (resolved.role) {
-        setRole(resolved.role);
-        writeCachedRole(userId, resolved.role);
+      const resolved = (await response.json()) as { role?: string };
+      const serviceRole = normalizeAppRole(resolved.role);
+      if (serviceRole) {
+        setRole(serviceRole);
+        writeCachedRole(userId, serviceRole);
+        setIsLoading(false);
         return;
       }
 
-      setRole("b2b_customer");
+      throw new Error("Role lookup returned no mapped role");
     } catch (err) {
       console.error("Error fetching user role:", err);
-      setRole("b2b_customer");
-      clearCachedRole(userId);
+      const cachedRole = readCachedRole(userId);
+      setRole(cachedRole);
+      if (!cachedRole) {
+        clearCachedRole(userId);
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 

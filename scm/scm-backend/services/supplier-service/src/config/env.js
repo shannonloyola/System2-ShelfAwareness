@@ -49,6 +49,12 @@ export const env = {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     ""
   ).trim(),
+  supabaseServiceRoleKey: (
+    process.env.SUPABASE_SUPPLY_CHAIN_SERVICE_ROLE_KEY ||
+    process.env.SCM_SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    ""
+  ).trim(),
   scmSupabaseUrl: (
     process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_URL ||
     "https://wbktqkjdsqrvqxxtitsg.supabase.co"

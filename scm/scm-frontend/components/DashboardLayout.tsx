@@ -21,6 +21,7 @@ import { Button } from "./ui/button";
 import { toast } from "sonner";
 import { useAuth, type AppRole } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { ROUTE_ACCESS, canAccessRoute } from "@/lib/rbac";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -39,16 +40,7 @@ const navigation: NavItem[] = [
     href: "/dashboard",
     icon: LayoutDashboard,
     roles: [
-      "owner_president",
-      "finance_manager",
-      "procurement_manager",
-      "logistics_coordinator",
-      "warehouse_manager",
-      "qc_inspector",
-      "sales_processor",
-      "delivery_person",
-      "b2b_customer",
-      "supplier",
+      ...ROUTE_ACCESS["/dashboard"],
     ],
   },
   {
@@ -56,78 +48,44 @@ const navigation: NavItem[] = [
     href: "/products",
     icon: Database,
     roles: [
-      "owner_president",
-      "finance_manager",
-      "procurement_manager",
-      "logistics_coordinator",
-      "warehouse_manager",
-      "qc_inspector",
-      "sales_processor",
-      "delivery_person",
-      "b2b_customer",
-      "supplier",
+      ...ROUTE_ACCESS["/products"],
     ],
   },
   {
     name: "Procurement",
     href: "/procurement",
     icon: Package,
-    roles: ["owner_president", "procurement_manager", "finance_manager"],
+    roles: ROUTE_ACCESS["/procurement"],
   },
   {
     name: "PO List",
     href: "/po-list",
     icon: FileText,
-    roles: [
-      "owner_president",
-      "procurement_manager",
-      "finance_manager",
-      "logistics_coordinator",
-      "supplier",
-    ],
+    roles: ROUTE_ACCESS["/po-list"],
   },
   {
     name: "Warehouse",
     href: "/warehouse",
     icon: Warehouse,
-    roles: [
-      "owner_president",
-      "warehouse_manager",
-      "logistics_coordinator",
-    ],
+    roles: ROUTE_ACCESS["/warehouse"],
   },
   {
     name: "Discrepancies",
     href: "/discrepancies",
     icon: ClipboardList,
-    roles: [
-      "owner_president",
-      "warehouse_manager",
-      "qc_inspector",
-    ],
+    roles: ROUTE_ACCESS["/discrepancies"],
   },
   {
     name: "Stock Management",
     href: "/stock",
     icon: BarChart3,
-    roles: [
-      "owner_president",
-      "warehouse_manager",
-      "finance_manager",
-      "procurement_manager",
-      "sales_processor",
-    ],
+    roles: ROUTE_ACCESS["/stock"],
   },
   {
     name: "Distribution",
     href: "/distribution",
     icon: TruckIcon,
-    roles: [
-      "owner_president",
-      "logistics_coordinator",
-      "delivery_person",
-      "warehouse_manager",
-    ],
+    roles: ROUTE_ACCESS["/distribution"],
   },
 ];
 
@@ -142,6 +100,21 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       router.replace("/login");
     }
   }, [isLoading, user, router]);
+
+  useEffect(() => {
+    if (isLoading || !user || canAccessRoute(role, pathname)) {
+      return;
+    }
+
+    const fallbackHref =
+      navigation.find((item) => role && item.roles.includes(role))?.href ??
+      "/dashboard";
+
+    toast.error("Access denied", {
+      description: "Your role does not have access to this page.",
+    });
+    router.replace(fallbackHref);
+  }, [isLoading, pathname, role, router, user]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut({ scope: "local" });

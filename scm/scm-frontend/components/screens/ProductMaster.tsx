@@ -392,8 +392,7 @@ export function ProductMaster() {
     setDebugLogs((prev) => [log, ...prev]);
     console.log(`[${type}]`, message, data || "");
   };
-  const pricingActor =
-    user?.email?.trim() || user?.id || "product_master_ui";
+
   const resolvePricingActor = async () => {
     const contextActor =
       user?.email?.trim() || user?.id || "";
@@ -409,11 +408,18 @@ export function ProductMaster() {
     const {
       data: { session },
     } = await supabase.auth.getSession();
-    return (
+    const resolvedActor =
       session?.user?.email?.trim() ||
       session?.user?.id ||
-      pricingActor
-    );
+      "";
+
+    if (!resolvedActor) {
+      throw new Error(
+        "Unable to identify the logged-in user for pricing history.",
+      );
+    }
+
+    return resolvedActor;
   };
   const loadProducts = async () => {
     const productsUrl = `${scmRestBaseUrl}/products?select=product_id,product_uuid,sku,product_name,unit,category,category_id,barcode,supplier,warehouse_location,unit_price,currency_code,inventory_on_hand,created_at`;
@@ -547,7 +553,13 @@ export function ProductMaster() {
       actor?: string;
     },
   ): Promise<boolean> => {
-    const actor = options?.actor || "product_master_ui";
+    const actor = options?.actor?.trim();
+    if (!actor) {
+      throw new Error(
+        "Unable to identify the logged-in user for pricing history.",
+      );
+    }
+
     const normalizedCurrency = (currencyCode || "PHP").trim();
     const today = new Date().toISOString().slice(0, 10);
     const nowIso = new Date().toISOString();

@@ -14,6 +14,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { supabaseFulfillment, supabaseSCM } from "@/lib/supabase";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   blockInvalidNumberKeys,
   sanitizeDecimalInput,
@@ -110,9 +111,11 @@ const retailerPerformance = [
 ];
 
 export function OutboundDistribution() {
-  // Role guard placeholder - replace with real role source
-  const userRole = "Manager"; // TODO: Replace with actual user role from auth context
-  const canEditPriority = userRole === "Manager";
+  const { role } = useAuth();
+  const canEditPriority =
+    role === "owner_president" ||
+    role === "logistics_coordinator" ||
+    role === "warehouse_manager";
 
   const [showLogForm, setShowLogForm] = useState(false);
   const [totalInventoryValue, setTotalInventoryValue] = useState<number | null>(null);

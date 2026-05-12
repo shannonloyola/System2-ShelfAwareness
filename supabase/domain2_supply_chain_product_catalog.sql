@@ -183,6 +183,88 @@ create index if not exists idx_purchase_orders_status
 create index if not exists idx_purchase_orders_approval_status
   on public.purchase_orders (approval_status);
 
+-- Supplier-service source table used by Procurement "Send to Supplier".
+create table if not exists public.suppliers (
+  id uuid primary key default gen_random_uuid(),
+  supplier_name text not null,
+  contact_person text,
+  email text,
+  phone text,
+  address text,
+  currency_code text not null default 'PHP',
+  lead_time_days integer not null default 7
+    check (lead_time_days > 0),
+  status text not null default 'Active'
+    check (status in ('Active', 'Suspended')),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table public.suppliers
+  add column if not exists updated_at timestamptz default now();
+
+alter table public.suppliers enable row level security;
+
+drop policy if exists "allow_read_suppliers" on public.suppliers;
+drop policy if exists "allow_insert_suppliers" on public.suppliers;
+drop policy if exists "allow_update_suppliers" on public.suppliers;
+drop policy if exists "allow_delete_suppliers" on public.suppliers;
+
+create policy "allow_read_suppliers"
+  on public.suppliers
+  for select
+  to anon, authenticated
+  using (true);
+
+create policy "allow_insert_suppliers"
+  on public.suppliers
+  for insert
+  to anon, authenticated
+  with check (true);
+
+create policy "allow_update_suppliers"
+  on public.suppliers
+  for update
+  to anon, authenticated
+  using (true);
+
+create policy "allow_delete_suppliers"
+  on public.suppliers
+  for delete
+  to anon, authenticated
+  using (true);
+
+create index if not exists idx_suppliers_name
+  on public.suppliers (supplier_name);
+
+create index if not exists idx_suppliers_currency
+  on public.suppliers (currency_code);
+
+insert into public.suppliers (
+  supplier_name,
+  contact_person,
+  email,
+  phone,
+  address,
+  currency_code,
+  lead_time_days,
+  status
+)
+select
+  'HealthMed Supply',
+  'Supplier Desk',
+  'healthmed@example.com',
+  '+63 900 000 0000',
+  'Manila, Philippines',
+  'PHP',
+  7,
+  'Active'
+where not exists (
+  select 1
+  from public.suppliers
+  where lower(supplier_name) = lower('HealthMed Supply')
+);
+
 create table if not exists public.purchase_order_items (
   po_item_id uuid primary key default gen_random_uuid(),
   po_id uuid not null references public.purchase_orders(po_id) on delete cascade,
@@ -233,3 +315,62 @@ where not exists (
   where lower(existing.name) = lower(seed.name)
     and existing.parent_id is not distinct from seed.parent_id
 );
+
+-- Optional starter child records so ProductMaster subcategory dropdown has values.
+with parent_categories as (
+  select id, lower(name) as key
+  from public.product_categories
+  where parent_id is null
+    and lower(name) in ('pharma', 'medical supplies', 'cold chain')
+),
+seed_subcategories as (
+  select 'Prescription Medicines'::text as name, id as parent_id
+  from parent_categories
+  where key = 'pharma'
+  union all
+  select 'Over-the-Counter Medicines'::text, id
+  from parent_categories
+  where key = 'pharma'
+  union all
+  select 'Consumables'::text, id
+  from parent_categories
+  where key = 'medical supplies'
+  union all
+  select 'Devices'::text, id
+  from parent_categories
+  where key = 'medical supplies'
+  union all
+  select 'Refrigerated'::text, id
+  from parent_categories
+  where key = 'cold chain'
+  union all
+  select 'Frozen'::text, id
+  from parent_categories
+  where key = 'cold chain'
+)
+insert into public.product_categories (name, parent_id)
+select seed.name, seed.parent_id
+from seed_subcategories seed
+where not exists (
+  select 1
+  from public.product_categories existing
+  where lower(existing.name) = lower(seed.name)
+    and existing.parent_id is not distinct from seed.parent_id
+);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'product_categories'
+      and policyname = 'Product categories are readable'
+  ) then
+    create policy "Product categories are readable"
+    on public.product_categories
+    for select
+    using (true);
+  end if;
+end;
+$$;

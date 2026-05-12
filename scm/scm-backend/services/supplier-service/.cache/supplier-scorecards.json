@@ -238,5 +238,46 @@
     "risk_summary": "Warning",
     "source_month": "2026-04-01",
     "computed_at": "2026-04-06T18:06:37.944Z"
+  },
+  "scheb": {
+    "supplier_key": "scheb",
+    "supplier_name": "Scheb",
+    "total_pos": 0,
+    "approved_pos": 0,
+    "po_approval_rate": 0,
+    "total_receipts": 0,
+    "on_time_receipts": 0,
+    "on_time_delivery_pct": 0,
+    "total_discrepancies": 0,
+    "approved_discrepancies": 0,
+    "rejected_discrepancies": 0,
+    "avg_discrepancy_units": 0,
+    "defect_rate": 0,
+    "reliability_score": 30,
+    "risk_level": "high",
+    "risk_summary": "Warning",
+    "source_month": "2026-05-01",
+    "computed_at": "2026-05-12T13:05:58.979Z"
+  },
+  "he": {
+    "supplier_key": "he",
+    "supplier_name": "He",
+    "total_pos": 0,
+    "approved_pos": 0,
+    "po_approval_rate": 0,
+    "total_receipts": 0,
+    "on_time_receipts": 0,
+    "on_time_delivery_pct": 0,
+    "total_discrepancies": 0,
+    "approved_discrepancies": 0,
+    "rejected_discrepancies": 0,
+    "avg_discrepancy_units": 0,
+    "defect_rate": 0,
+    "reliability_score": 30,
+    "risk_level": "high",
+    "risk_summary": "Warning",
+    "source_month": "2026-05-01",
+    "computed_at": "2026-05-12T13:06:09.207Z"
   }
+}}
 }

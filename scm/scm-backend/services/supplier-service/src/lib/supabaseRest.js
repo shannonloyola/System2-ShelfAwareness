@@ -1,14 +1,47 @@
 import { env } from "../config/env.js";
 import { createHttpError } from "./http.js";
 
+const getProjectRefFromUrl = () => {
+  try {
+    return new URL(env.supabaseUrl).hostname.split(".")[0];
+  } catch {
+    return "";
+  }
+};
+
+const getProjectRefFromJwt = (token) => {
+  try {
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[1], "base64url").toString("utf8"),
+    );
+    return payload.ref || "";
+  } catch {
+    return "";
+  }
+};
+
+const getRestKey = () => {
+  const projectRef = getProjectRefFromUrl();
+  const serviceRoleRef = getProjectRefFromJwt(env.supabaseServiceRoleKey);
+
+  if (projectRef && serviceRoleRef === projectRef) {
+    return env.supabaseServiceRoleKey;
+  }
+
+  return env.supabaseAnonKey;
+};
+
 const buildHeaders = () => ({
-  apikey: env.supabaseAnonKey,
-  Authorization: `Bearer ${env.supabaseAnonKey}`,
+  apikey: getRestKey(),
+  Authorization: `Bearer ${getRestKey()}`,
   "Content-Type": "application/json",
 });
 
+const supplierSelect =
+  "id,supplier_name,contact_person,email,phone,address,currency_code,lead_time_days,status,created_at";
+
 const ensureRestConfig = () => {
-  if (!env.supabaseUrl || !env.supabaseAnonKey) {
+  if (!env.supabaseUrl || !getRestKey()) {
     throw new Error("SUPABASE_URL or SUPABASE_ANON_KEY is not set");
   }
 };
@@ -43,10 +76,7 @@ export const listSuppliersRest = async ({ limit, offset, search }) => {
   ensureRestConfig();
 
   const url = new URL(`${env.supabaseUrl}/rest/v1/suppliers`);
-  url.searchParams.set(
-    "select",
-    "id,supplier_name,contact_person,email,phone,address,currency_code,lead_time_days,status,created_at,updated_at",
-  );
+  url.searchParams.set("select", supplierSelect);
   url.searchParams.set("limit", String(limit));
   url.searchParams.set("offset", String(offset));
   url.searchParams.set("order", "supplier_name.asc");
@@ -70,10 +100,7 @@ export const getSupplierByIdRest = async (supplierId) => {
   ensureRestConfig();
 
   const url = new URL(`${env.supabaseUrl}/rest/v1/suppliers`);
-  url.searchParams.set(
-    "select",
-    "id,supplier_name,contact_person,email,phone,address,currency_code,lead_time_days,status,created_at,updated_at",
-  );
+  url.searchParams.set("select", supplierSelect);
   url.searchParams.set("id", `eq.${supplierId}`);
   url.searchParams.set("limit", "1");
 
