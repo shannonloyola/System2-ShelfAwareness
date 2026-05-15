@@ -33,18 +33,15 @@ const parseBoolean = (value, fallback) => {
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 4002),
-  databaseUrl: process.env.DATABASE_URL || "",
+  databaseUrl:
+    process.env.SUPABASE_SUPPLY_CHAIN_DATABASE_URL ||
+    process.env.SCM_DATABASE_URL ||
+    "",
   dbSsl: parseBoolean(process.env.DB_SSL, true),
   supabaseUrl:
     process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_URL ||
-    process.env.SUPABASE_URL ||
-    process.env.VITE_SUPABASE_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL ||
     "",
   supabaseAnonKey:
     process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     "",
 };

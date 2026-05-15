@@ -14,23 +14,50 @@ const ensureRestConfig = () => {
 };
 
 const handleResponse = async (response) => {
+  const text = await response.text();
+  
   if (response.ok) {
-    if (response.status === 204) {
+    if (response.status === 204 || !text.trim()) {
       return null;
     }
 
-    return response.json();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      return text;
+    }
   }
 
-  const body = await response.text();
-  throw new Error(body || `Supabase REST request failed with ${response.status}`);
+  let message = text;
+  let details = null;
+  let pgCode = null;
+
+  try {
+    const errorJson = JSON.parse(text);
+    message = errorJson.message || errorJson.error || text;
+    details = errorJson.details || errorJson.hint || null;
+    pgCode = errorJson.code || null; // Postgres error code e.g. "23505"
+  } catch (e) {
+    // Not JSON, use raw text
+  }
+
+  const err = createHttpError(
+    response.status === 404 ? 404 : 500,
+    message || `Supabase REST request failed with ${response.status}`,
+    details,
+  );
+  if (pgCode) err.code = pgCode;
+  throw err;
 };
 
 const buildOrdersSelect =
-  "po_id,po_no,supplier_name,status,created_at,paid_at,expected_delivery_date,preferred_communication";
+  "po_id,po_no,supplier_name,status,created_at,paid_at,expected_delivery_date,preferred_communication,approval_status,approved_by,approved_at,rejected_at,rejection_reason,is_late,customs_entry_date,customs_release_date,transit_status,reserved_at,expires_at,purchase_order_items(count)";
 
 const buildItemsSelect =
   "po_item_id,po_id,item_name,quantity";
+
+const buildStatusHistorySelect =
+  "history_id,po_id,status_name,changed_at,document_url,reason";
 
 export const restHealthCheck = async () => {
   ensureRestConfig();
@@ -164,6 +191,145 @@ export const listPurchaseOrderItemsRest = async (poId) => {
   url.searchParams.set("select", buildItemsSelect);
   url.searchParams.set("po_id", `eq.${poId}`);
   url.searchParams.set("order", "po_item_id.asc");
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(),
+  });
+
+  return handleResponse(response);
+};
+
+export const listPurchaseOrderStatusHistoryRest = async (poId) => {
+  ensureRestConfig();
+
+  const url = new URL(`${env.supabaseUrl}/rest/v1/po_status_history`);
+  url.searchParams.set("select", buildStatusHistorySelect);
+  url.searchParams.set("po_id", `eq.${poId}`);
+  url.searchParams.set("order", "changed_at.desc");
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(),
+  });
+
+  return handleResponse(response);
+};
+
+export const createPurchaseOrderStatusHistoryRest = async (payload) => {
+  ensureRestConfig();
+
+  const response = await fetch(`${env.supabaseUrl}/rest/v1/po_status_history`, {
+    method: "POST",
+    headers: {
+      ...buildHeaders(),
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await handleResponse(response);
+  return data[0] ?? null;
+};
+
+export const updatePurchaseOrderStatusHistoryRest = async (
+  historyId,
+  payload,
+) => {
+  ensureRestConfig();
+
+  const response = await fetch(
+    `${env.supabaseUrl}/rest/v1/po_status_history?history_id=eq.${historyId}`,
+    {
+      method: "PATCH",
+      headers: {
+        ...buildHeaders(),
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  const data = await handleResponse(response);
+  return data[0] ?? null;
+};
+
+export const runExpireReservationsRest = async () => {
+  ensureRestConfig();
+
+  const response = await fetch(`${env.supabaseUrl}/rest/v1/rpc/expire_reservations`, {
+    method: "POST",
+    headers: buildHeaders(),
+    body: JSON.stringify({}),
+  });
+
+  return handleResponse(response);
+};
+
+export const listExpiringSoonReservationsRest = async (beforeIso) => {
+  ensureRestConfig();
+
+  const url = new URL(`${env.supabaseUrl}/rest/v1/purchase_orders`);
+  url.searchParams.set(
+    "select",
+    "po_id,po_no,supplier_name,status,expires_at,reserved_at",
+  );
+  url.searchParams.set("expires_at", `lte.${beforeIso}`);
+  url.searchParams.set("status", "not.in.(Paid,Expired,Cancelled)");
+  url.searchParams.set("order", "expires_at.asc");
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(),
+  });
+
+  return handleResponse(response);
+};
+
+export const listExpiredReservationsRest = async () => {
+  ensureRestConfig();
+
+  const url = new URL(`${env.supabaseUrl}/rest/v1/purchase_orders`);
+  url.searchParams.set("select", buildOrdersSelect);
+  url.searchParams.set("status", "eq.Expired");
+  url.searchParams.set("order", "expires_at.desc");
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(),
+  });
+
+  return handleResponse(response);
+};
+
+export const getCurrentMonthlyBudgetRest = async (month, year) => {
+  ensureRestConfig();
+
+  const url = new URL(`${env.supabaseUrl}/rest/v1/monthly_budgets`);
+  url.searchParams.set("select", "allocated_amount,spent_amount,month,year");
+  url.searchParams.set("month", `eq.${month}`);
+  url.searchParams.set("year", `eq.${year}`);
+  url.searchParams.set("limit", "1");
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(),
+  });
+
+  const data = await handleResponse(response);
+  return data[0] ?? null;
+};
+
+export const listCustomsTrackedPurchaseOrdersRest = async () => {
+  ensureRestConfig();
+
+  const url = new URL(`${env.supabaseUrl}/rest/v1/purchase_orders`);
+  url.searchParams.set(
+    "select",
+    "po_id,po_no,supplier_name,customs_entry_date,customs_release_date,transit_status",
+  );
+  url.searchParams.set("customs_entry_date", "not.is.null");
+  url.searchParams.set("order", "customs_entry_date.asc");
 
   const response = await fetch(url, {
     method: "GET",

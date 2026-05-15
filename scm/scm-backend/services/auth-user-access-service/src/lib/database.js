@@ -6,10 +6,10 @@ const { Pool } = pg;
 
 let pool;
 
-export const hasDatabaseConfig = Boolean(env.databaseUrl);
 export const hasSupabaseRestConfig = Boolean(
-  env.supabaseUrl && env.supabaseAnonKey,
+  env.supabaseUrl && (env.supabaseAnonKey || env.supabaseServiceRoleKey),
 );
+export const hasDatabaseConfig = Boolean(env.databaseUrl || hasSupabaseRestConfig);
 
 export const getPool = () => {
   if (!hasDatabaseConfig) {
@@ -27,15 +27,7 @@ export const getPool = () => {
 };
 
 export const checkDatabaseHealth = async () => {
-  if (!hasDatabaseConfig) {
-    if (!hasSupabaseRestConfig) {
-      return {
-        configured: false,
-        connected: false,
-        message: "DATABASE_URL is not set",
-      };
-    }
-
+  if (hasSupabaseRestConfig) {
     try {
       await restHealthCheck();
       return {
@@ -55,6 +47,14 @@ export const checkDatabaseHealth = async () => {
         mode: "supabase-rest",
       };
     }
+  }
+
+  if (!env.databaseUrl) {
+    return {
+      configured: false,
+      connected: false,
+      message: "Identity Supabase configuration is not set",
+    };
   }
 
   try {

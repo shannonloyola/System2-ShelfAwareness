@@ -30,7 +30,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { toast } from "sonner";
-import { supabase, supabaseSCM } from "../../lib/supabase";
+import { supabase } from "../../lib/supabase";
 import {
   blockInvalidNumberKeys,
   isPhoneValid,
@@ -44,6 +44,20 @@ import {
   fetchSupplierScorecard as fetchSupplierScorecardFromService,
   fetchSuppliers,
 } from "../../lib/supplierService";
+import {
+  fetchPurchaseOrders as fetchPurchaseOrdersFromService,
+  fetchPurchaseOrderById,
+  fetchPurchaseOrderItems,
+  updatePurchaseOrder,
+  updatePurchaseOrderStatus,
+  createPurchaseOrder,
+  createPurchaseOrderItem,
+  updatePurchaseOrderItem,
+  deletePurchaseOrderItem,
+  fetchNextPurchaseOrderNumber,
+  importPurchaseOrder,
+} from "../../lib/procurementService";
+import { listCatalogProducts } from "../../lib/productCatalogService";
 import { CSVUploader } from "../CSVUploader";
 import type { CSVRow } from "../../lib/csvParser";
 import { 
@@ -316,10 +330,7 @@ export function InboundProcurement() {
 
   // Freight quotes state
   const [showQuotes, setShowQuotes] = useState(false);
-  const [quotes, setQuotes] = useState([
-    { id: "1", provider: "Nippon Yusen (NYK Line)", freightType: "Sea", cost: 350000, days: 14, winner: false },
-    { id: "2", provider: "Japan Airlines Cargo", freightType: "Air", cost: 620000, days: 4, winner: false }
-  ]);
+  const [quotes, setQuotes] = useState([]);
   const [newQuote, setNewQuote] = useState({ provider: "", freightType: "", cost: "", days: "" });
 
   const [loadingPOs, setLoadingPOs] = useState(false);
@@ -356,19 +367,10 @@ export function InboundProcurement() {
     }
 
     setCheckingSkus(true);
-    const { data, error } = await supabaseSCM
-      .from("products")
-      .select("sku")
-      .in("sku", uniqueSkus);
-
+    const data = await listCatalogProducts({ limit: 1000 });
     setCheckingSkus(false);
 
-    if (error) {
-      toast.error("Failed to validate SKUs", { description: error.message });
-      return;
-    }
-
-    const existing = new Set((data ?? []).map((row) => normalizeSku(row.sku || "")));
+    const existing = new Set(data.map((row) => normalizeSku(row.sku || "")));
     const mismatches = new Set(
       uniqueSkus.filter((sku) => !existing.has(sku)),
     );
@@ -432,105 +434,60 @@ export function InboundProcurement() {
 
   const fetchPurchaseOrders = useCallback(async () => {
     setLoadingPOs(true);
-    const { data, error } = await supabaseSCM
-      .from("purchase_orders")
-      .select(
-        "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication",
-      )
-      .order("created_at", { ascending: false });
-    setLoadingPOs(false);
-
-    if (error) {
+    try {
+      const data = await fetchPurchaseOrdersFromService();
+      setPoList(data);
+    } catch (error) {
       toast.error("Failed to load purchase orders", {
         description: toErrorMessage(error),
       });
       setPoList([]);
-      return;
+    } finally {
+      setLoadingPOs(false);
     }
-    setPoList(data ?? []);
   }, []);
 
   const fetchProducts = useCallback(async () => {
-    const { data, error } = await supabaseSCM
-      .from("products")
-      .select("sku, product_name, unit, barcode")
-      .order("product_name", { ascending: true });
-
-    if (error) {
+    try {
+      const data = await listCatalogProducts({ limit: 1000 });
+      setProducts(data as any);
+    } catch (error) {
       toast.error("Failed to load product master", {
         description: toErrorMessage(error),
       });
       setProducts([]);
-      return;
     }
-    setProducts(data ?? []);
   }, []);
 
   const fetchPOItems = useCallback(async (poId: string) => {
     setLoadingItems(true);
-    const { data, error } = await supabaseSCM
-      .from("purchase_order_items")
-      .select("po_item_id, po_id, item_name, quantity")
-      .eq("po_id", poId)
-      .order("po_item_id", { ascending: true });
-    setLoadingItems(false);
-
-    if (error) {
+    try {
+      const data = await fetchPurchaseOrderItems(poId);
+      setSelectedPOItems(data);
+    } catch (error) {
       toast.error("Failed to load purchase order items", {
         description: toErrorMessage(error),
       });
       setSelectedPOItems([]);
-      return;
+    } finally {
+      setLoadingItems(false);
     }
-    setSelectedPOItems(data ?? []);
   }, []);
 
   const generateUniquePONumber = useCallback(async () => {
-    const year = new Date().getFullYear();
-    const prefix = `PO-JP-${year}-`;
-
-    const { data, error } = await supabaseSCM
-      .from("purchase_orders")
-      .select("po_no")
-      .like("po_no", `${prefix}%`);
-
-    if (error) throw error;
-
-    const maxSuffix = (data ?? []).reduce((max, row) => {
-      const value = row.po_no ?? "";
-      const match = value.match(
-        new RegExp(`^${prefix}(\\d+)$`),
-      );
-      if (!match) return max;
-      const n = Number(match[1]);
-      if (Number.isNaN(n)) return max;
-      return Math.max(max, n);
-    }, 0);
-
-    return `${prefix}${String(maxSuffix + 1).padStart(4, "0")}`;
+    return fetchNextPurchaseOrderNumber();
   }, []);
 
   const updatePOHeader = useCallback(
     async (poId: string, status: string, resolvedSupplierName: string) => {
-      const { data, error } = await supabaseSCM
-        .from("purchase_orders")
-        .update({
-          po_no: poNo || null,
-          supplier_name: resolvedSupplierName || null,
-          expected_delivery_date: expectedDeliveryDate || null,
-          preferred_communication:
-            preferredCommunication || null,
-          status,
-        })
-        .eq("po_id", poId)
-        .select(
-          "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication",
-        )
-        .single();
-
-      if (error || !data)
-        throw error ?? new Error("Update failed");
-      return data as PurchaseOrderRow;
+      return updatePurchaseOrder(poId, {
+        po_no: poNo || null,
+        supplier_name: resolvedSupplierName || null,
+        expected_delivery_date: expectedDeliveryDate || null,
+        preferred_communication:
+          preferredCommunication || null,
+        status,
+      }) as Promise<PurchaseOrderRow>;
     },
     [
       expectedDeliveryDate,
@@ -552,42 +509,42 @@ export function InboundProcurement() {
       let target: PurchaseOrderRow;
       const supplier = await resolveSupplierDetails();
       if (selectedPO?.po_id) {
-        target = await updatePOHeader(
+        target = await updatePurchaseOrder(
           selectedPO.po_id,
-          DEFAULT_PO_STATUS,
-          supplier.supplier_name,
+          {
+            status: DEFAULT_PO_STATUS,
+            supplier_name: supplier.supplier_name,
+          }
         );
       } else {
         const generatedPoNo =
-          poNo || (await generateUniquePONumber());
+          poNo || (await fetchNextPurchaseOrderNumber());
         if (!poNo) setPoNo(generatedPoNo);
         const nowIso = new Date().toISOString();
-        const { data, error } = await supabaseSCM
-          .from("purchase_orders")
-          .insert([
-            {
-              po_no: generatedPoNo,
-              supplier_name: supplier.supplier_name,
-              status: DEFAULT_PO_STATUS,
-              created_at: nowIso,
-              paid_at: nowIso,
-              expected_delivery_date:
-                expectedDeliveryDate || null,
-              preferred_communication:
-                preferredCommunication || null,
-            },
-          ])
-          .select(
-            "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication",
-          )
-          .single();
-
-        if (error || !data)
-          throw error ?? new Error("Insert failed");
-        target = data as PurchaseOrderRow;
+        target = (await createPurchaseOrder({
+          po_no: generatedPoNo,
+          supplier_name: supplier.supplier_name,
+          status: DEFAULT_PO_STATUS,
+          created_at: nowIso,
+          paid_at: nowIso,
+          expected_delivery_date: expectedDeliveryDate || null,
+          preferred_communication:
+            preferredCommunication || null,
+        })) as PurchaseOrderRow;
       }
 
       setSelectedPO(target);
+      
+      // Sync local items
+      for (const item of selectedPOItems) {
+        if (item.po_id === "temporary") {
+          await createPurchaseOrderItem(target.po_id, {
+            item_name: item.item_name || "",
+            quantity: item.quantity || 0,
+          });
+        }
+      }
+
       await fetchPurchaseOrders();
       await fetchPOItems(target.po_id);
       toast.success("Saved to drafts", {
@@ -629,48 +586,45 @@ export function InboundProcurement() {
           poNo || (await generateUniquePONumber());
         if (!poNo) setPoNo(generatedPoNo);
         const nowIso = new Date().toISOString();
-        const { data, error } = await supabaseSCM
-          .from("purchase_orders")
-          .insert([
-            {
-              po_no: generatedPoNo,
-              supplier_name: supplier.supplier_name,
-              status: DEFAULT_PO_STATUS,
-              created_at: nowIso,
-              paid_at: nowIso,
-              expected_delivery_date:
-                expectedDeliveryDate || null,
-              preferred_communication:
-                preferredCommunication || null,
-            },
-          ])
-          .select(
-            "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication",
-          )
-          .single();
-
-        if (error || !data)
-          throw error ?? new Error("Insert failed");
+        
+        const data = await createPurchaseOrder({
+          po_no: generatedPoNo,
+          supplier_name: supplier.supplier_name,
+          status: DEFAULT_PO_STATUS,
+          created_at: nowIso,
+          paid_at: nowIso,
+          expected_delivery_date: expectedDeliveryDate || null,
+          preferred_communication: preferredCommunication || null,
+        }) as PurchaseOrderRow;
+        
         targetPoId = data.po_id;
-        setSelectedPO(data as PurchaseOrderRow);
+        setSelectedPO(data);
+
+        // Sync local items
+        for (const item of selectedPOItems) {
+          if (item.po_id === "temporary") {
+            await createPurchaseOrderItem(targetPoId, {
+              item_name: item.item_name || "",
+              quantity: item.quantity || 0,
+            });
+          }
+        }
       }
 
-      const { count, error: countError } = await supabaseSCM
-        .from("purchase_order_items")
-        .select("po_item_id", { count: "exact", head: true })
-        .eq("po_id", targetPoId);
-      if (countError) throw countError;
-      if (!count || count <= 0) {
+      const itemRows = await fetchPurchaseOrderItems(targetPoId);
+      if (!itemRows || itemRows.length === 0) {
         toast.error("Cannot send purchase order", {
           description: "Add at least one line item first",
         });
         return;
       }
 
-      const updated = await updatePOHeader(
+      const updated = await updatePurchaseOrder(
         targetPoId,
-        "Posted",
-        supplier.supplier_name,
+        {
+          status: "Posted",
+          supplier_name: supplier.supplier_name,
+        }
       );
       setSelectedPO(updated);
       await fetchPurchaseOrders();
@@ -737,16 +691,7 @@ export function InboundProcurement() {
           items: cleanedItems,
         };
 
-        const { data, error } = await supabaseSCM.rpc(
-          "bulk_import_po",
-          { p_payload: payload },
-        );
-        if (error) {
-          toast.error("Import failed", {
-            description: toErrorMessage(error),
-          });
-          return;
-        }
+        const data = await importPurchaseOrder(payload);
 
         toast.success("PO imported", {
           description: "Bulk items inserted via RPC.",
@@ -757,25 +702,22 @@ export function InboundProcurement() {
         // Attempt to select the newly created PO using returned UUID if present
         const newId = typeof data === "string" ? data : null;
         if (newId) {
-          const match = (
-            await supabaseSCM
-              .from("purchase_orders")
-              .select(
-                "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication, paid_at",
-              )
-              .eq("po_id", newId)
-              .single()
-          ).data as PurchaseOrderRow | null;
+          const match = await fetchPurchaseOrderById(newId);
           if (match) {
             if (!match.paid_at) {
-              await supabaseSCM
-                .from("purchase_orders")
-                .update({ paid_at: match.created_at })
-                .eq("po_id", newId);
-              match.paid_at = match.created_at as string;
+              const updated = await updatePurchaseOrder(
+                newId,
+                {
+                  status: match.status || DEFAULT_PO_STATUS,
+                  supplier_name: match.supplier_name || "",
+                  paid_at: match.created_at
+                }
+              );
+              setSelectedPO(updated);
+            } else {
+              setSelectedPO(match);
             }
-            setSelectedPO(match);
-            await fetchPOItems(match.po_id);
+            await fetchPOItems(newId);
             setIsEditingPO(false);
             return;
           }
@@ -809,12 +751,6 @@ export function InboundProcurement() {
       );
       if (!form) return;
 
-      if (!selectedPO?.po_id) {
-        toast.error("Cannot save line item", {
-          description: "Select a purchase order first",
-        });
-        return;
-      }
       if (!form.product) {
         toast.error("Cannot save line item", {
           description: "Product is required",
@@ -829,16 +765,31 @@ export function InboundProcurement() {
         return;
       }
 
+      if (!selectedPO?.po_id) {
+        const newItem: PurchaseOrderItemRow = {
+          po_item_id: `temp-${Date.now()}`,
+          po_id: "temporary",
+          item_name: form.product,
+          quantity: parsedQty,
+        };
+        setSelectedPOItems(prev => [...prev, newItem]);
+        setLineItemForms(prev => prev.filter(f => f.formId !== formId));
+        toast.success("Item added to local draft");
+        return;
+      }
+
       setAddingItem(true);
 
       let error: unknown = null;
       if (form.editingPoItemId) {
-        const result = await supabaseSCM
-          .from("purchase_order_items")
-          .update({ quantity: parsedQty })
-          .eq("po_id", selectedPO.po_id)
-          .eq("po_item_id", form.editingPoItemId);
-        error = result.error;
+        try {
+          await updatePurchaseOrderItem(selectedPO.po_id, form.editingPoItemId, {
+            item_name: form.product,
+            quantity: parsedQty,
+          });
+        } catch (err) {
+          error = err;
+        }
       } else {
         const duplicateExists = selectedPOItems.some(
           (item) =>
@@ -852,16 +803,14 @@ export function InboundProcurement() {
           });
           return;
         }
-        const result = await supabaseSCM
-          .from("purchase_order_items")
-          .insert([
-            {
-              po_id: selectedPO.po_id,
-              item_name: form.product,
-              quantity: parsedQty,
-            },
-          ]);
-        error = result.error;
+        try {
+          await createPurchaseOrderItem(selectedPO.po_id, {
+            item_name: form.product,
+            quantity: parsedQty,
+          });
+        } catch (err) {
+          error = err;
+        }
       }
       setAddingItem(false);
 
@@ -906,19 +855,16 @@ export function InboundProcurement() {
       if (!selectedPO?.po_id) return;
 
       setAddingItem(true);
-      const { error } = await supabaseSCM
-        .from("purchase_order_items")
-        .delete()
-        .eq("po_id", selectedPO.po_id)
-        .eq("po_item_id", form.editingPoItemId);
-      setAddingItem(false);
-
-      if (error) {
-        toast.error("Failed to delete line item", {
-          description: toErrorMessage(error),
-        });
-        return;
+      let error: unknown = null;
+      try {
+        await deletePurchaseOrderItem(
+          selectedPO.po_id,
+          form.editingPoItemId,
+        );
+      } catch (err) {
+        error = err;
       }
+      setAddingItem(false);
 
       toast.success("Line item deleted");
       setLineItemForms((prev) =>
@@ -990,25 +936,21 @@ export function InboundProcurement() {
         });
         return;
       }
-      const { data, error } = await supabaseSCM
-        .from("purchase_orders")
-        .update({ status: targetStatus })
-        .eq("po_id", selectedPO.po_id)
-        .select(
-          "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, preferred_communication",
-        )
-        .single();
-      if (error || !data) {
+      try {
+        const updated = await updatePurchaseOrder(
+          selectedPO.po_id,
+          { status: targetStatus }
+        );
+        setSelectedPO(updated as PurchaseOrderRow);
+        await fetchPurchaseOrders();
+        toast.success("Status updated", {
+          description: `${updated.po_no ?? "Purchase order"} is now ${targetStatus}.`,
+        });
+      } catch (error) {
         toast.error("Failed to update status", {
           description: toErrorMessage(error),
         });
-        return;
       }
-      setSelectedPO(data as PurchaseOrderRow);
-      await fetchPurchaseOrders();
-      toast.success("Status updated", {
-        description: `${data.po_no ?? "Purchase order"} is now ${targetStatus}.`,
-      });
     },
     [fetchPurchaseOrders, selectedPO, statusFlow],
   );
@@ -1348,7 +1290,7 @@ export function InboundProcurement() {
                     className="bg-[#00A3AD] hover:bg-[#0891B2] text-white rounded-lg"
                     onClick={async () => {
                       try {
-                        setPoNo(await generateUniquePONumber());
+                        setPoNo(await fetchNextPurchaseOrderNumber());
                         toast.success("P.O. Number Generated");
                       } catch (error) {
                         toast.error(

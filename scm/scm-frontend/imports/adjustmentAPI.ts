@@ -1,5 +1,3 @@
-import { supabaseFulfillment } from '../lib/supabase';
-
 export type ReasonCategory =
   | 'Damaged Goods'
   | 'Count Correction'
@@ -28,20 +26,25 @@ export interface StockAdjustment {
   created_at: string;
 }
 
-const buildSupabaseErrorMessage = (error: {
-  message?: string;
-  details?: string;
-  hint?: string;
-  code?: string;
-}) => {
-  const detailParts = [
-    error.message,
-    error.details,
-    error.hint,
-    error.code ? `Code: ${error.code}` : "",
-  ].filter(Boolean);
+const stockAdjustmentServiceBaseUrl =
+  process.env.NEXT_PUBLIC_STOCK_ADJUSTMENT_SERVICE_URL ||
+  process.env.VITE_STOCK_ADJUSTMENT_SERVICE_URL ||
+  "http://localhost:4008";
 
-  const combined = detailParts.join(" ");
+const parseError = async (response: Response) => {
+  const text = await response.text();
+  let combined = text;
+
+  try {
+    const json = JSON.parse(text) as {
+      error?: string;
+      details?: string | null;
+    };
+    combined = json.error || json.details || text;
+  } catch {
+    combined = text || `Request failed with status ${response.status}`;
+  }
+
   if (
     combined.toLowerCase().includes("nonnegative") ||
     combined.toLowerCase().includes("negative")
@@ -49,7 +52,7 @@ const buildSupabaseErrorMessage = (error: {
     return "Approval would make stock negative. Reduce the deduction or replenish stock first.";
   }
 
-  return combined || "Unexpected Supabase error";
+  return combined || "Unexpected service error";
 };
 
 export const REASON_CATEGORIES: ReasonCategory[] = [
@@ -62,37 +65,66 @@ export async function submitAdjustment(payload: {
   qty_before: number; qty_change: number; reason: string;
   reason_category: ReasonCategory; requested_by: string;
 }) {
-  const { data, error } = await supabaseFulfillment
-    .from('stock_adjustments')
-    .insert([{ 
-      ...payload, 
-      qty_after: payload.qty_before + payload.qty_change, 
-      status: 'pending',
-      movement_type: 'ADJUSTMENT'
-    }])
-    .select().single();
-  if (error) throw new Error(buildSupabaseErrorMessage(error));
-  return data as StockAdjustment;
+  const response = await fetch(
+    `${stockAdjustmentServiceBaseUrl}/stock-adjustments`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!response.ok) throw new Error(await parseError(response));
+  const parsed = (await response.json()) as { data: StockAdjustment };
+  return parsed.data;
 }
 
 export async function approveAdjustment(id: string, managerName: string) {
-  const { error } = await supabaseFulfillment.rpc('approve_stock_adjustment', {
-    p_adjustment_id: id, p_manager_name: managerName,
-  });
-  if (error) throw new Error(buildSupabaseErrorMessage(error));
+  const response = await fetch(
+    `${stockAdjustmentServiceBaseUrl}/stock-adjustments/${encodeURIComponent(id)}/approve`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ managerName }),
+    },
+  );
+  if (!response.ok) throw new Error(await parseError(response));
 }
 
 export async function rejectAdjustment(id: string, managerName: string, note: string) {
-  const { error } = await supabaseFulfillment.rpc('reject_stock_adjustment', {
-    p_adjustment_id: id, p_manager_name: managerName, p_rejection_note: note,
-  });
-  if (error) throw new Error(buildSupabaseErrorMessage(error));
+  const response = await fetch(
+    `${stockAdjustmentServiceBaseUrl}/stock-adjustments/${encodeURIComponent(id)}/reject`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ managerName, note }),
+    },
+  );
+  if (!response.ok) throw new Error(await parseError(response));
 }
 
 export async function fetchAdjustments(status?: AdjustmentStatus) {
-  let q = supabaseFulfillment.from('stock_adjustments').select('*').order('created_at', { ascending: false });
-  if (status) q = q.eq('status', status);
-  const { data, error } = await q;
-  if (error) throw new Error(buildSupabaseErrorMessage(error));
-  return data as StockAdjustment[];
+  const url = new URL(
+    `${stockAdjustmentServiceBaseUrl}/stock-adjustments`,
+  );
+  if (status) {
+    url.searchParams.set("status", status);
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+  if (!response.ok) throw new Error(await parseError(response));
+  const parsed = (await response.json()) as {
+    data: StockAdjustment[];
+  };
+  return parsed.data ?? [];
 }

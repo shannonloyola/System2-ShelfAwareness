@@ -5,7 +5,7 @@ DO $$
 DECLARE 
     r RECORD;
 BEGIN
-    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') 
+    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename != 'profiles') 
     LOOP
         EXECUTE 'ALTER TABLE public.' || quote_ident(r.tablename) || ' ENABLE ROW LEVEL SECURITY;';
     END LOOP;
@@ -19,7 +19,7 @@ DO $$
 DECLARE 
     r RECORD;
 BEGIN
-    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') 
+    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename != 'profiles') 
     LOOP
         EXECUTE 'CREATE POLICY "Owner full access on ' || r.tablename || '" ON public.' || quote_ident(r.tablename) || 
                 ' FOR ALL USING (public.get_my_role() = ''owner_president'');';
@@ -114,9 +114,36 @@ ON public.monthly_budgets FOR ALL
 USING (public.get_my_role() = 'finance_manager');
 
 -- ==========================================
--- 6. PRODUCT CATALOG (READ ONLY FOR ALL)
+-- 6. PRODUCT CATALOG & INVENTORY (UNBLOCKED FOR SERVICES)
 -- ==========================================
-CREATE POLICY "Anyone authenticated can view products" 
+-- Allow microservices (using anon key) to manage products and categories
+CREATE POLICY "Allow anon/auth to manage products" 
+ON public.products FOR ALL 
+TO anon, authenticated 
+USING (true) 
+WITH CHECK (true);
+
+CREATE POLICY "Allow anon/auth to manage product_categories" 
+ON public.product_categories FOR ALL 
+TO anon, authenticated 
+USING (true) 
+WITH CHECK (true);
+
+CREATE POLICY "Allow anon/auth to manage product_pricing" 
+ON public.product_pricing FOR ALL 
+TO anon, authenticated 
+USING (true) 
+WITH CHECK (true);
+
+CREATE POLICY "Allow anon/auth to manage inventory_on_hand" 
+ON public.inventory_on_hand FOR ALL 
+TO anon, authenticated 
+USING (true) 
+WITH CHECK (true);
+
+-- Ensure global read access
+DROP POLICY IF EXISTS "Anyone authenticated can view products" ON public.products;
+CREATE POLICY "Anyone can view products" 
 ON public.products FOR SELECT 
-TO authenticated 
+TO anon, authenticated 
 USING (true);

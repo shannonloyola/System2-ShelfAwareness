@@ -109,11 +109,10 @@ const loadLockedPricing = async () => {
     scmSupabase
       .from("product_pricing")
       .select(
-        "product_id, selling_price, is_active, effective_from, created_at",
+        "product_id, selling_price, is_active, effective_from",
       )
       .eq("is_active", true)
-      .order("effective_from", { ascending: false })
-      .order("created_at", { ascending: false }),
+      .order("effective_from", { ascending: false }),
     scmSupabase
       .from("v_latest_product_cost_price")
       .select("product_id, cost_price"),

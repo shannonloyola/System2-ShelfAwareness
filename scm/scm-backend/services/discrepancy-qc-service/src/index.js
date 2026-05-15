@@ -2,12 +2,14 @@ import express from "express";
 import { env } from "./config/env.js";
 import { checkDatabaseHealth, hasDatabaseConfig } from "./lib/database.js";
 import { grnQualityChecksRouter } from "./routes/grnQualityChecks.js";
+import { shipmentDiscrepanciesRouter } from "./routes/shipmentDiscrepancies.js";
 
 const app = express();
 
 app.use(express.json({ limit: "2mb" }));
 
 app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader(
@@ -38,10 +40,14 @@ app.get("/health", async (_req, res) => {
 });
 
 app.use("/grn-quality-checks", grnQualityChecksRouter);
+app.use("/shipment-discrepancies", shipmentDiscrepanciesRouter);
 
 app.use((error, _req, res, _next) => {
   const status = error.status || 500;
   const message = error.message || "Internal server error";
+
+  console.error(`[ERROR] ${status} - ${message}`);
+  if (error.stack) console.error(error.stack);
 
   res.status(status).json({
     error: message,

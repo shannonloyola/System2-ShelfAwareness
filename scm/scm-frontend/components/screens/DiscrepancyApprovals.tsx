@@ -25,8 +25,11 @@ import {
   SelectValue,
 } from "../ui/select";
 import { toast } from "sonner";
-import { qualityProjectId as projectId, qualityPublicAnonKey as publicAnonKey } from "@/utils/supabase/info";
-import { supabase } from "@/lib/supabase";
+import {
+  fetchDiscrepancyReportsSummary,
+  fetchShipmentDiscrepancies,
+  updateShipmentDiscrepancyDisposition,
+} from "@/lib/discrepancyQcService";
 import {
   Bar,
   BarChart,
@@ -58,8 +61,6 @@ type ShipmentDiscrepancy = {
   disposition?: "released" | "returned" | "scrapped" | null;
   [key: string]: unknown;
 };
-
-type QcInspectionRow = Record<string, unknown>;
 
 const normalizeStatus = (
   rawStatus: string | null | undefined,
@@ -120,6 +121,12 @@ export function DiscrepancyApprovals() {
     pass: 0,
     fail: 0,
   });
+  const [resolutionCountsState, setResolutionCountsState] = useState({
+    pending: 0,
+    in_review: 0,
+    resolved: 0,
+    rejected: 0,
+  });
   const [supplierDefects, setSupplierDefects] = useState<
     Array<{ name: string; defects: number; id: string }>
   >([]);
@@ -144,23 +151,11 @@ export function DiscrepancyApprovals() {
   const fetchDiscrepancies = async () => {
     setIsLoading(true);
     try {
-      const url =
-        `https://${projectId}.supabase.co/rest/v1/shipment_discrepancies` +
-        `?select=*` +
-        `&status=neq.approved` +
-        `&order=created_at.desc`;
-
-      const res = await fetch(url, {
-        headers: {
-          apikey: publicAnonKey,
-          Authorization: `Bearer ${publicAnonKey}`,
-          "Content-Type": "application/json",
-        },
-      });
-
-      if (!res.ok) throw new Error(await res.text());
-
-      const data = (await res.json()) as ShipmentDiscrepancy[];
+      // Fetch everything so summary counts are accurate
+      const data = (await fetchShipmentDiscrepancies({
+        excludeApproved: false,
+      })) as ShipmentDiscrepancy[];
+      console.log(`Fetched ${data.length} discrepancies`);
       setDiscrepancies(data);
       if (!selectedDetail && data.length > 0) {
         setSelectedDetail(data[0]);
@@ -194,34 +189,17 @@ export function DiscrepancyApprovals() {
     action: "released" | "returned" | "scrapped",
   ) => {
     if (!row?.id) return;
+    console.log(`Updating disposition for ${row.id} to ${action}`);
     setIsUpdatingId(row.id);
     try {
-      const payload = {
+      await updateShipmentDiscrepancyDisposition(row.id, action);
+      applyLocalUpdate(row.id, {
         disposition: action,
-      };
-
-      const res = await fetch(
-        `https://${projectId}.supabase.co/rest/v1/shipment_discrepancies?id=eq.${row.id}`,
-        {
-          method: "PATCH",
-          headers: {
-            apikey: publicAnonKey,
-            Authorization: `Bearer ${publicAnonKey}`,
-            "Content-Type": "application/json",
-            Prefer: "return=minimal",
-          },
-          body: JSON.stringify(payload),
-        },
-      );
-
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(errText);
-      }
-
-      applyLocalUpdate(row.id, payload);
+        status: "resolved",
+      });
+      loadReports(); // Refresh charts
       toast.success("Disposition updated", {
-        description: `Marked as ${action}.`,
+        description: `Marked as ${action} and resolved.`,
       });
     } catch (err) {
       toast.error("Failed to update disposition", {
@@ -232,64 +210,16 @@ export function DiscrepancyApprovals() {
       setIsUpdatingId(null);
     }
   };
+
   const loadReports = async () => {
     setIsReportsLoading(true);
     try {
-      const [qcRes, discrepanciesRes] = await Promise.all([
-        supabase.from("qc_inspections").select("*"),
-        supabase.from("shipment_discrepancies").select("*"),
-      ]);
-
-      if (qcRes.error) throw qcRes.error;
-      if (discrepanciesRes.error) throw discrepanciesRes.error;
-
-      const qcRows = (qcRes.data ?? []) as QcInspectionRow[];
-      const qcTotals = { pass: 0, fail: 0 };
-
-      qcRows.forEach((row) => {
-        const raw = (row.result ??
-          row.status ??
-          row.outcome ??
-          row.qc_status ??
-          row.decision ??
-          "") as string;
-        const value = String(raw).toLowerCase();
-        if (value.includes("pass")) qcTotals.pass += 1;
-        if (
-          value.includes("fail") ||
-          value.includes("reject")
-        ) {
-          qcTotals.fail += 1;
-        }
-      });
-
-      const discrepancyRows = (discrepanciesRes.data ??
-        []) as ShipmentDiscrepancy[];
-      const supplierMap = new Map<string, number>();
-
-      discrepancyRows.forEach((row) => {
-        const name =
-          (row["supplier_name"] as string | undefined) ??
-          (row["vendor_name"] as string | undefined) ??
-          (row["supplier"] as string | undefined) ??
-          (row["vendor"] as string | undefined) ??
-          row.reported_by ??
-          "Unknown Supplier";
-        const key = name || "Unknown Supplier";
-        supplierMap.set(key, (supplierMap.get(key) ?? 0) + 1);
-      });
-
-      const supplierData = Array.from(supplierMap.entries())
-        .map(([name, defects]) => ({ name, defects }))
-        .sort((a, b) => b.defects - a.defects)
-        .slice(0, 6)
-        .map((item, index) => ({
-          ...item,
-          id: `${item.name}-${index}`,
-        }));
-
-      setQcSummary(qcTotals);
-      setSupplierDefects(supplierData);
+      const summary = await fetchDiscrepancyReportsSummary();
+      setQcSummary(summary.qc_summary);
+      setSupplierDefects(summary.supplier_defects);
+      if (summary.resolution_counts) {
+        setResolutionCountsState(summary.resolution_counts);
+      }
     } catch (err) {
       toast.error("Failed to load quality reports", {
         description:
@@ -316,12 +246,16 @@ export function DiscrepancyApprovals() {
   const filteredDiscrepancies = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
     return discrepancies.filter((row) => {
-      if (
-        statusFilter !== "all" &&
-        normalizeStatus(row.status) !== statusFilter
-      ) {
-        return false;
+      const status = normalizeStatus(row.status);
+      
+      // Filter logic
+      if (statusFilter !== "all") {
+        if (status !== statusFilter) return false;
+      } else {
+        // Default view: hide resolved/approved items so they "go away" from the list
+        if (status === "resolved" || status === "approved") return false;
       }
+
       if (!keyword) return true;
       const haystack = [
         row.id,
@@ -387,8 +321,9 @@ export function DiscrepancyApprovals() {
     () => [
       { name: "Pass", count: qcSummary.pass },
       { name: "Fail", count: qcSummary.fail },
+      { name: "Resolved", count: resolutionCountsState.resolved },
     ],
-    [qcSummary],
+    [qcSummary, resolutionCountsState],
   );
 
   const exportTimestamp = useMemo(() => {
@@ -423,6 +358,7 @@ export function DiscrepancyApprovals() {
         body: [
           ["Pending", String(statusCounts.pending ?? 0)],
           ["In Review", String(statusCounts.in_review ?? 0)],
+          ["Resolved", String(statusCounts.resolved ?? 0)],
           ["Rejected", String(statusCounts.rejected ?? 0)],
           ["QC Pass", String(qcSummary.pass)],
           ["QC Fail", String(qcSummary.fail)],
@@ -540,6 +476,10 @@ export function DiscrepancyApprovals() {
         {
           metric: "In Review",
           value: statusCounts.in_review ?? 0,
+        },
+        {
+          metric: "Resolved",
+          value: statusCounts.resolved ?? 0,
         },
         {
           metric: "Rejected",
@@ -776,7 +716,7 @@ export function DiscrepancyApprovals() {
             )}
           </Card>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <Card className="bg-white border-[#111827]/10">
               <CardContent className="pt-6">
                 <div className="flex items-center gap-3">
@@ -807,6 +747,24 @@ export function DiscrepancyApprovals() {
                     </div>
                     <div className="text-sm text-[#6B7280]">
                       In Review
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white border-[#111827]/10">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-lg bg-[#10B981]/10 flex items-center justify-center">
+                    <Package className="w-6 h-6 text-[#10B981]" />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-[#111827]">
+                      {statusCounts.resolved ?? 0}
+                    </div>
+                    <div className="text-sm text-[#6B7280]">
+                      Resolved
                     </div>
                   </div>
                 </div>
@@ -1246,7 +1204,7 @@ export function DiscrepancyApprovals() {
                       )
                     }
                     disabled={
-                      isUpdatingId === selectedDetail.id
+                      isUpdatingId === selectedDetail.id || normalizeStatus(selectedDetail.status) === "resolved"
                     }
                   >
                     Release
@@ -1260,7 +1218,7 @@ export function DiscrepancyApprovals() {
                       )
                     }
                     disabled={
-                      isUpdatingId === selectedDetail.id
+                      isUpdatingId === selectedDetail.id || normalizeStatus(selectedDetail.status) === "resolved"
                     }
                   >
                     Return
@@ -1274,7 +1232,7 @@ export function DiscrepancyApprovals() {
                       )
                     }
                     disabled={
-                      isUpdatingId === selectedDetail.id
+                      isUpdatingId === selectedDetail.id || normalizeStatus(selectedDetail.status) === "resolved"
                     }
                   >
                     Scrap

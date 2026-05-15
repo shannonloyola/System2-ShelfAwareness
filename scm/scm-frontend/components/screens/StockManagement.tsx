@@ -56,7 +56,9 @@ import {
   type StockAdjustment,
   type ReasonCategory,
 } from "@/imports/adjustmentAPI";
-import { supabase, supabaseSCM, supabaseFulfillment } from "@/lib/supabase";
+import { supabaseFulfillment } from "@/lib/supabase";
+import { fetchInventoryItems } from "@/lib/inventoryService";
+import { listCatalogProducts } from "@/lib/productCatalogService";
 import MovementReport from "@/imports/movement-report";
 import ValuationReport from "@/imports/valuation-report";
 
@@ -95,93 +97,6 @@ interface BackorderAlertRow {
   pending_backorder_count: number | null;
   created_at: string;
 }
-
-const mockStock: StockItem[] = [
-  {
-    id: "1",
-    sku: "AMX-500",
-    name: "Amoxicillin 500mg",
-    location: "Main Warehouse Manila",
-    zone: "Zone A",
-    aisle: "A-01",
-    bin: "Bin 15",
-    currentStock: 12500,
-    minStock: 1000,
-    maxStock: 15000,
-    status: "healthy",
-    lastRestocked: "2026-02-15",
-  },
-  {
-    id: "2",
-    sku: "CET-10",
-    name: "Cetirizine 10mg",
-    location: "Main Warehouse Manila",
-    zone: "Zone A",
-    aisle: "A-03",
-    bin: "Bin 22",
-    currentStock: 320,
-    minStock: 1200,
-    maxStock: 5000,
-    status: "critical",
-    lastRestocked: "2026-01-10",
-  },
-  {
-    id: "3",
-    sku: "MET-500",
-    name: "Metformin 500mg",
-    location: "Main Warehouse Manila",
-    zone: "Zone A",
-    aisle: "A-05",
-    bin: "Bin 08",
-    currentStock: 850,
-    minStock: 800,
-    maxStock: 4000,
-    status: "low",
-    lastRestocked: "2026-02-01",
-  },
-  {
-    id: "4",
-    sku: "PAR-500",
-    name: "Paracetamol 500mg",
-    location: "Satellite Hub Quezon City",
-    zone: "Zone B",
-    aisle: "B-02",
-    bin: "Bin 45",
-    currentStock: 18200,
-    minStock: 1500,
-    maxStock: 10000,
-    status: "overstock",
-    lastRestocked: "2026-02-18",
-  },
-  {
-    id: "5",
-    sku: "IBU-400",
-    name: "Ibuprofen 400mg",
-    location: "Main Warehouse Manila",
-    zone: "Zone A",
-    aisle: "A-02",
-    bin: "Bin 18",
-    currentStock: 8900,
-    minStock: 800,
-    maxStock: 12000,
-    status: "healthy",
-    lastRestocked: "2026-02-12",
-  },
-  {
-    id: "6",
-    sku: "LOS-50",
-    name: "Losartan 50mg",
-    location: "Satellite Hub Makati",
-    zone: "Zone C",
-    aisle: "C-01",
-    bin: "Bin 03",
-    currentStock: 450,
-    minStock: 600,
-    maxStock: 3000,
-    status: "low",
-    lastRestocked: "2026-01-28",
-  },
-];
 
 const warehouseLocations = [
   "Main Warehouse Manila",
@@ -245,6 +160,9 @@ export function StockManagement() {
   >([]);
   const [backorderLoading, setBackorderLoading] =
     useState(false);
+  const [realStock, setRealStock] = useState<StockItem[]>([]);
+  const [isStockLoading, setIsStockLoading] = useState(false);
+  const [movementRefreshKey, setMovementRefreshKey] = useState(0);
 
   // Main tab state
   const [mainTab, setMainTab] = useState("inventory");
@@ -262,10 +180,17 @@ export function StockManagement() {
     useState<StockAdjustment | null>(null);
   const [managerName, setManagerName] = useState("");
   const [rejectNote, setRejectNote] = useState("");
+  const [requestError, setRequestError] = useState("");
+  const [transferForm, setTransferForm] = useState({
+    productId: "",
+    fromBinId: "",
+    toBinId: "",
+    qty: "",
+  });
+  const [bins, setBins] = useState<{ id: string; name: string }[]>([]);
   const [modalAction, setModalAction] = useState<
     "approve" | "reject" | null
   >(null);
-  const [requestError, setRequestError] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -306,7 +231,48 @@ export function StockManagement() {
       setBackorderLoading(false);
     };
 
+    const loadRealStock = async () => {
+      setIsStockLoading(true);
+      try {
+        const data = await fetchInventoryItems();
+        setRealStock(data.map(item => ({
+          id: item.productUuid || item.id, // Use UUID for backend operations
+          sku: item.sku,
+          name: item.name,
+          location: "Main Warehouse Manila",
+          zone: "Primary",
+          aisle: "-",
+          bin: "-",
+          currentStock: item.systemCount,
+          minStock: 1000,
+          maxStock: 20000,
+          status: item.status === "low" ? "low" : item.status === "zero" ? "critical" : "healthy",
+          lastRestocked: item.lastUpdated ? new Date(item.lastUpdated).toISOString().split('T')[0] : "N/A"
+        })));
+      } catch (err) {
+        console.error("Failed to load real stock:", err);
+      } finally {
+        setIsStockLoading(false);
+      }
+    };
+
+    const loadBins = async () => {
+      try {
+        const { data, error } = await supabaseFulfillment
+          .from("bins")
+          .select("id, name")
+          .order("name", { ascending: true });
+        if (!error && data) {
+          setBins(data);
+        }
+      } catch (err) {
+        console.error("Failed to load bins:", err);
+      }
+    };
+
+    void loadRealStock();
     void loadBackorderData();
+    void loadBins();
 
     const channel = supabaseFulfillment
       .channel("stock-management-backorder-alerts")
@@ -344,20 +310,23 @@ export function StockManagement() {
     if (mainTab === "adjustments") {
       setLoading(true);
       Promise.all([
-        supabaseFulfillment
-          .from("products")
-          .select(
-            "product_id, sku, product_name, inventory_on_hand",
-          )
-          .order("product_name")
-          .then(({ data }) => setProducts(data ?? [])),
+        listCatalogProducts({ limit: 500 }).then((data) =>
+          setProducts(
+            data.map((row) => ({
+              product_id: row.product_id,
+              sku: row.sku,
+              product_name: row.product_name,
+              inventory_on_hand: row.inventory_on_hand ?? 0,
+            })),
+          ),
+        ),
         fetchAdjustments().then(setAdjustments),
       ]).finally(() => setLoading(false));
     }
   }, [mainTab]);
 
   // Inventory filters
-  const filteredStock = mockStock.filter((item) => {
+  const filteredStock = realStock.filter((item) => {
     const keyword = searchTerm.trim().toLowerCase();
     const matchesSearch =
       keyword.length === 0 ||
@@ -371,11 +340,11 @@ export function StockManagement() {
     return matchesSearch && matchesLocation && matchesStatus;
   });
 
-  const lowStockItems = mockStock.filter(
+  const lowStockItems = realStock.filter(
     (item) =>
       item.status === "low" || item.status === "critical",
   );
-  const criticalItems = mockStock.filter(
+  const criticalItems = realStock.filter(
     (item) => item.status === "critical",
   );
   const backordersWithAge = useMemo(
@@ -416,13 +385,96 @@ export function StockManagement() {
     return <Package className="w-4 h-4" />;
   };
 
-  const handleStockTransfer = () => {
-    toast.success("Stock Transfer Initiated", {
-      description:
-        "Transfer request has been logged and will be processed",
-    });
-    setShowTransferDialog(false);
-    setSelectedItem(null);
+  const handleStockTransfer = async () => {
+    if (
+      !transferForm.productId ||
+      !transferForm.fromBinId ||
+      !transferForm.toBinId ||
+      !transferForm.qty
+    ) {
+      toast.error("Invalid Transfer", {
+        description: "Please fill all fields.",
+      });
+      return;
+    }
+
+    if (transferForm.fromBinId === transferForm.toBinId) {
+      toast.error("Invalid Transfer", {
+        description: "Source and destination locations must be different.",
+      });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const { data, error } = await supabaseFulfillment.rpc(
+        "transfer_stock",
+        {
+          p_product_id: transferForm.productId,
+          p_from_bin_id: transferForm.fromBinId,
+          p_to_bin_id: transferForm.toBinId,
+          p_qty: Number(transferForm.qty),
+          p_created_by: "System Admin",
+        },
+      );
+
+      if (error) {
+        console.error("RPC Error:", error);
+        throw new Error(error.message || "Database communication error");
+      }
+      
+      if (!data || data.success === false) {
+        throw new Error(data?.error || "The transfer was rejected by the warehouse validation rules.");
+      }
+
+      toast.success("Stock Transfer Successful", {
+        description: `${transferForm.qty} units moved. Log ID: ${data.log_id || "N/A"}`,
+      });
+      
+      setShowTransferDialog(false);
+      setTransferForm({
+        productId: "",
+        fromBinId: "",
+        toBinId: "",
+        qty: "",
+      });
+      
+      // Trigger movement report refresh
+      setMovementRefreshKey(prev => prev + 1);
+
+      // Refresh stock data
+      void (async () => {
+        setIsStockLoading(true);
+        try {
+          const stockData = await fetchInventoryItems();
+          setRealStock(stockData.map(item => ({
+            id: item.id,
+            sku: item.sku,
+            name: item.name,
+            location: "Main Warehouse Manila",
+            zone: "Primary",
+            aisle: "-",
+            bin: "-",
+            currentStock: item.systemCount,
+            minStock: 1000,
+            maxStock: 20000,
+            status: item.status === "low" ? "low" : item.status === "zero" ? "critical" : "healthy",
+            lastRestocked: item.lastUpdated ? new Date(item.lastUpdated).toISOString().split('T')[0] : "N/A"
+          })));
+        } catch (err) {
+          console.error("Failed to refresh stock:", err);
+        } finally {
+          setIsStockLoading(false);
+        }
+      })();
+
+    } catch (e: any) {
+      toast.error("Transfer Failed", {
+        description: e.message,
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   // Stock Adjustment handlers
@@ -894,7 +946,7 @@ export function StockManagement() {
                   </div>
                   <div>
                     <div className="text-2xl font-bold text-[#111827]">
-                      {mockStock.length}
+                      {realStock.length}
                     </div>
                     <div className="text-sm text-[#6B7280]">
                       Total SKUs Tracked
@@ -1171,16 +1223,39 @@ export function StockManagement() {
                         {item.location} • {item.zone} •{" "}
                         {item.aisle}
                       </div>
-                      <Button
-                        size="sm"
-                        className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
-                        onClick={() => {
-                          setSelectedItem(item);
-                          setShowTransferDialog(true);
-                        }}
-                      >
-                        Create P.O.
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/5"
+                          onClick={() => {
+                            setSelectedItem(item);
+                            setTransferForm(prev => ({
+                              ...prev,
+                              productId: item.id,
+                              fromBinId: bins[0]?.id || "",
+                              toBinId: bins[1]?.id || ""
+                            }));
+                            setShowTransferDialog(true);
+                          }}
+                        >
+                          <ArrowRightLeft className="w-3 h-3 mr-1" />
+                          Internal Transfer
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+                          onClick={() => {
+                            toast.info("Procurement Workflow", {
+                              description: `Navigating to Procurement to create P.O. for ${item.sku}...`
+                            });
+                            // Conceptually, this would navigate to the Procurement tab/screen
+                            // setMainTab("procurement"); // If procurement was a tab here
+                          }}
+                        >
+                          Create P.O.
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1279,19 +1354,26 @@ export function StockManagement() {
                           Stock Transfer Request
                         </DialogTitle>
                         <DialogDescription className="text-[#6B7280]">
-                          Transfer stock between warehouse
-                          locations
+                          Transfer stock between warehouse locations
                         </DialogDescription>
                       </DialogHeader>
                       <div className="space-y-4 py-4">
                         <div>
                           <Label>Product</Label>
-                          <Select>
-                            <SelectTrigger className="mt-2 border-[#111827]/10">
+                          <Select
+                            value={transferForm.productId}
+                            onValueChange={(v) =>
+                              setTransferForm((p) => ({
+                                ...p,
+                                productId: v,
+                              }))
+                            }
+                          >
+                            <SelectTrigger id="transfer-product-select" name="productId" className="mt-2 border-[#111827]/10">
                               <SelectValue placeholder="Select product..." />
                             </SelectTrigger>
                             <SelectContent>
-                              {mockStock.map((item) => (
+                              {realStock.map((item) => (
                                 <SelectItem
                                   key={item.id}
                                   value={item.id}
@@ -1302,41 +1384,84 @@ export function StockManagement() {
                             </SelectContent>
                           </Select>
                         </div>
-                        <div>
-                          <Label>From Location</Label>
-                          <Select>
-                            <SelectTrigger className="mt-2 border-[#111827]/10">
-                              <SelectValue placeholder="Select source..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {warehouseLocations.map((loc) => (
-                                <SelectItem
-                                  key={loc}
-                                  value={loc}
-                                >
-                                  {loc}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label>From Location (Bin)</Label>
+                            <Select
+                              value={transferForm.fromBinId}
+                              onValueChange={(v) =>
+                                setTransferForm((p) => ({
+                                  ...p,
+                                  fromBinId: v,
+                                }))
+                              }
+                            >
+                              <SelectTrigger className="mt-2 border-[#111827]/10">
+                                <SelectValue placeholder="Select source..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {bins.map((b) => (
+                                  <SelectItem
+                                    key={b.id}
+                                    value={b.id}
+                                  >
+                                    {b.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label>To Location (Bin)</Label>
+                            <Select
+                              value={transferForm.toBinId}
+                              onValueChange={(v) =>
+                                setTransferForm((p) => ({
+                                  ...p,
+                                  toBinId: v,
+                                }))
+                              }
+                            >
+                              <SelectTrigger id="transfer-to-bin-select" name="toBinId" className="mt-2 border-[#111827]/10">
+                                <SelectValue placeholder="Select destination..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {bins.map((b) => (
+                                  <SelectItem
+                                    key={b.id}
+                                    value={b.id}
+                                  >
+                                    {b.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        {/* DEBUG IDS */}
+                        <div className="bg-[#F8FAFC] p-2 rounded border border-[#CBD5E1] text-[10px] font-mono text-[#475569]">
+                          <div className="font-bold mb-1 uppercase">Technical Debug Info:</div>
+                          <div>PROD_ID: {transferForm.productId || "None"}</div>
+                          <div>FROM_BIN: {transferForm.fromBinId || "None"}</div>
+                          <div>TO_BIN: {transferForm.toBinId || "None"}</div>
                         </div>
                         <div>
-                          <Label>To Location</Label>
-                          <Select>
-                            <SelectTrigger className="mt-2 border-[#111827]/10">
-                              <SelectValue placeholder="Select destination..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {warehouseLocations.map((loc) => (
-                                <SelectItem
-                                  key={loc}
-                                  value={loc}
-                                >
-                                  {loc}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <Label>Quantity to Transfer</Label>
+                          <Input
+                            id="transfer-qty-input"
+                            name="qty"
+                            type="number"
+                            placeholder="0"
+                            className="mt-2 border-[#111827]/10"
+                            value={transferForm.qty}
+                            onChange={(e) =>
+                              setTransferForm((p) => ({
+                                ...p,
+                                qty: e.target.value,
+                              }))
+                            }
+                            onKeyDown={blockInvalidNumberKeys}
+                          />
                         </div>
                       </div>
                       <div className="flex gap-3 justify-end">
@@ -1351,9 +1476,10 @@ export function StockManagement() {
                         </Button>
                         <Button
                           onClick={handleStockTransfer}
+                          disabled={submitting}
                           className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
                         >
-                          Initiate Transfer
+                          {submitting ? "Processing…" : "Initiate Transfer"}
                         </Button>
                       </div>
                     </DialogContent>
@@ -1465,8 +1591,7 @@ export function StockManagement() {
                 Manual Stock Adjustment
               </h2>
               <p className="text-sm text-[#6B7280] mt-1">
-                Adjustments are saved as Pending until a Manager
-                approves
+                Adjustments are saved as Pending until a Manager approves
               </p>
             </div>
             {pendingCount > 0 && (
@@ -1480,7 +1605,6 @@ export function StockManagement() {
             )}
           </div>
 
-          {/* Adjustment Sub-tabs */}
           <div className="bg-[#F8FAFC] border border-[#E5E7EB] rounded-lg p-1 flex gap-1">
             {(["request", "pending", "history"] as const).map(
               (t) => (
@@ -1510,7 +1634,6 @@ export function StockManagement() {
             )}
           </div>
 
-          {/* REQUEST FORM */}
           {adjustmentTab === "request" && (
             <Card className="bg-white border-[#1A2B47]/10">
               <CardHeader className="bg-[#1A2B47]/5">
@@ -1519,7 +1642,6 @@ export function StockManagement() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6 space-y-6">
-                {/* Product Selection */}
                 <div className="space-y-2">
                   <Label className="text-[#1A2B47] font-medium">
                     Product{" "}
@@ -1550,7 +1672,6 @@ export function StockManagement() {
                   </Select>
                 </div>
 
-                {/* Stock Preview */}
                 {form.product_id > 0 && (
                   <div className="bg-[#F8FAFC] border border-[#E5E7EB] rounded-lg p-4 flex items-center gap-6">
                     <div>
@@ -1585,7 +1706,6 @@ export function StockManagement() {
                   </div>
                 )}
 
-                {/* Qty Change & Category */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label className="text-[#1A2B47] font-medium">
@@ -1646,7 +1766,6 @@ export function StockManagement() {
                   </div>
                 </div>
 
-                {/* Reason */}
                 <div className="space-y-2">
                   <Label className="text-[#1A2B47] font-medium">
                     Reason / Notes{" "}
@@ -1676,7 +1795,6 @@ export function StockManagement() {
                   </p>
                 </div>
 
-                {/* Requested By */}
                 <div className="space-y-2">
                   <Label className="text-[#1A2B47] font-medium">
                     Requested By{" "}
@@ -1690,7 +1808,6 @@ export function StockManagement() {
                   />
                 </div>
 
-                {/* Info + Submit */}
                 <div className="flex items-start gap-4">
                   <div className="flex-1 bg-[#00A3AD]/10 border border-[#00A3AD]/20 rounded-lg p-4 text-sm text-[#1A2B47]">
                     ⓘ This will be logged as{" "}
@@ -1717,7 +1834,6 @@ export function StockManagement() {
             </Card>
           )}
 
-          {/* PENDING APPROVALS */}
           {adjustmentTab === "pending" && (
             <Card className="bg-white border-[#1A2B47]/10">
               <CardHeader className="bg-[#F97316]/5">
@@ -1829,13 +1945,11 @@ export function StockManagement() {
             </Card>
           )}
 
-          {/* HISTORY */}
           {adjustmentTab === "history" && (
             <Card className="bg-white border-[#1A2B47]/10">
               <CardHeader className="bg-[#1A2B47]/5">
                 <CardTitle className="text-[#1A2B47] text-sm font-semibold uppercase tracking-wide">
-                  Adjustment History — logged as "Manual
-                  Adjustment"
+                  Adjustment History
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6">
@@ -1940,14 +2054,12 @@ export function StockManagement() {
           )}
         </TabsContent>
 
-        {/* MOVEMENT & VALUATION TAB */}
         <TabsContent value="movements" className="space-y-6">
-          <MovementReport />
+          <MovementReport key={movementRefreshKey} />
         </TabsContent>
 
-        {/* VALUATION REPORT TAB */}
         <TabsContent value="valuation" className="space-y-6">
-          <ValuationReport />
+          <ValuationReport key="valuation-report-v1" />
         </TabsContent>
       </Tabs>
     </div>

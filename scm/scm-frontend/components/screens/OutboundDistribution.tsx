@@ -1,19 +1,25 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { toast } from "sonner";
-import {
-  scmProjectId,
-  scmPublicAnonKey,
-  fulfillmentProjectId,
-  fulfillmentPublicAnonKey,
-} from "@/utils/supabase/info";
 import { useEffect, useMemo, useState } from "react";
 import { 
   Plus, 
-  TrendingUp
+  TrendingUp,
+  Search,
+  MoreVertical,
+  Calendar,
+  AlertCircle,
+  CheckCircle2,
+  Package,
+  Trash2,
+  Download,
+  CreditCard,
+  History,
+  Info
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
-import { supabaseFulfillment, supabaseSCM } from "@/lib/supabase";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   blockInvalidNumberKeys,
@@ -31,6 +37,18 @@ import {
   getFulfillmentUiState,
   triggerPdfDownload,
 } from "./outboundDistribution.helpers";
+import {
+  cancelDistributionOrder,
+  createDistributionOrder,
+  createDistributionPayment,
+  downloadDistributionInvoice,
+  fetchDistributionAvailableProducts,
+  fetchDistributionInventoryValueByCategory,
+  fetchDistributionInventoryValueTotal,
+  fetchDistributionInvoiceSummary,
+  fetchDistributionOrders,
+  updateDistributionOrderLines,
+} from "@/lib/distributionService";
 
 type RetailOrderLine = {
   line_uuid: string;
@@ -103,13 +121,6 @@ type InvoiceSummary = {
   payments: PaymentRecord[];
 };
 
-const retailerPerformance = [
-  { name: "Watsons", paid: 1250000, pending: 325000, status: "healthy" },
-  { name: "Mercury Drug", paid: 980000, pending: 485000, status: "healthy" },
-  { name: "Southstar Drug", paid: 450000, pending: 185000, status: "healthy" },
-  { name: "The Generics Pharmacy", paid: 280000, pending: 620000, status: "attention" },
-];
-
 export function OutboundDistribution() {
   const { role } = useAuth();
   const canEditPriority =
@@ -162,10 +173,6 @@ export function OutboundDistribution() {
   const [availableProducts, setAvailableProducts] = useState<
     AvailableProduct[]
   >([]);
-  const totalCategoryValue = inventoryValueByCategory.reduce(
-    (sum, cat) => sum + Number(cat.total_value_php ?? 0),
-    0,
-  );
 
   const formatPHP = (amount: number) =>
     new Intl.NumberFormat("en-PH", {
@@ -175,330 +182,144 @@ export function OutboundDistribution() {
       maximumFractionDigits: 2,
     }).format(amount);
 
+  const getPriorityRank = (priorityLevel: string | null) => {
+    if (priorityLevel === "Urgent") return 1;
+    if (priorityLevel === "High") return 2;
+    return 3;
+  };
+
   const buildInvoicePaymentNote = (orderNo: string, notes: string) =>
     [notes.trim(), `[Invoice:${orderNo}]`]
       .filter(Boolean)
       .join(" ")
       .trim();
 
-  const scmRestBaseUrl = `https://${scmProjectId}.supabase.co/rest/v1`;
-  const retailOrdersBaseUrl =
-    `https://${fulfillmentProjectId}.supabase.co/functions/v1/retail-orders`;
-
-  const scmRestHeaders = {
-    apikey: scmPublicAnonKey,
-    Authorization: `Bearer ${scmPublicAnonKey}`,
-    "Content-Type": "application/json",
-  };
-
-  const fulfillmentRestHeaders = {
-    apikey: fulfillmentPublicAnonKey,
-    Authorization: `Bearer ${fulfillmentPublicAnonKey}`,
-    "Content-Type": "application/json",
-  };
-
-  const fulfillmentFunctionHeaders = {
-    apikey: fulfillmentPublicAnonKey,
-    Authorization: `Bearer ${fulfillmentPublicAnonKey}`,
-    "Content-Type": "application/json",
-  };
-
-  const loadLockedPricingFallback = async () => {
-    const [productsRes, pricingRes, costRes] = await Promise.all([
-      fetch(
-        `${scmRestBaseUrl}/products?select=product_id,sku,product_name,unit_price&order=product_name.asc`,
-        {
-          method: "GET",
-          headers: scmRestHeaders,
-        },
-      ),
-      fetch(
-        `${scmRestBaseUrl}/product_pricing?select=product_id,selling_price,is_active,effective_from,created_at&is_active=eq.true&order=effective_from.desc,created_at.desc`,
-        {
-          method: "GET",
-          headers: scmRestHeaders,
-        },
-      ),
-      fetch(
-        `${scmRestBaseUrl}/v_latest_product_cost_price?select=product_id,cost_price`,
-        {
-          method: "GET",
-          headers: scmRestHeaders,
-        },
-      ),
-    ]);
-
-    if (!productsRes.ok) {
-      throw new Error(await productsRes.text());
-    }
-
-    if (!pricingRes.ok) {
-      throw new Error(await pricingRes.text());
-    }
-
-    if (!costRes.ok) {
-      throw new Error(await costRes.text());
-    }
-
-    const [products, pricingRows, costRows] = await Promise.all([
-      productsRes.json(),
-      pricingRes.json(),
-      costRes.json(),
-    ]);
-
-    const pricingByProductId = new Map<string, number>();
-    for (const row of Array.isArray(pricingRows) ? pricingRows : []) {
-      const productId = String(row.product_id);
-      if (!pricingByProductId.has(productId)) {
-        pricingByProductId.set(productId, Number(row.selling_price ?? 0));
-      }
-    }
-
-    const costByProductId = new Map<string, number>(
-      (Array.isArray(costRows) ? costRows : []).map((row: any) => [
-        String(row.product_id),
-        Number(row.cost_price ?? 0),
-      ]),
-    );
-
-    return (Array.isArray(products) ? products : []).map((product: any) => {
-      const productId = String(product.product_id);
-      return {
-        product_id: productId,
-        sku: product.sku,
-        product_name: product.product_name,
-        selling_price:
-          pricingByProductId.get(productId) ??
-          Number(product.unit_price ?? 0),
-        cost_price: costByProductId.get(productId) ?? 0,
-      };
-    });
-  };
-
   // Fetch Total Inventory Value
   useEffect(() => {
     const fetchTotalInventoryValue = async () => {
       try {
-        const url = `${scmRestBaseUrl}/v_total_inventory_value_php?select=total_inventory_value_php`;
-        const response = await fetch(url, {
-          method: "GET",
-          headers: scmRestHeaders,
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data && data.length > 0 && data[0].total_inventory_value_php !== null) {
-            setTotalInventoryValue(data[0].total_inventory_value_php);
-          }
-        } else {
-          console.error("Failed to fetch total inventory value:", await response.text());
-        }
+        const total = await fetchDistributionInventoryValueTotal();
+        setTotalInventoryValue(total);
       } catch (error) {
         console.error("Failed to fetch total inventory value:", error);
       }
     };
 
     fetchTotalInventoryValue();
-  }, [scmRestBaseUrl]);
+  }, []);
 
   // Fetch Inventory Value by Category
   useEffect(() => {
     const fetchInventoryValueByCategory = async () => {
       try {
-        const url = `${scmRestBaseUrl}/v_inventory_value_by_category_php?select=category_name,total_value_php&order=total_value_php.desc`;
-        const response = await fetch(url, {
-          method: "GET",
-          headers: scmRestHeaders,
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          setInventoryValueByCategory(data || []);
-        } else {
-          console.error("Failed to fetch inventory value by category:", await response.text());
-        }
+        const data = await fetchDistributionInventoryValueByCategory();
+        setInventoryValueByCategory(data || []);
       } catch (error) {
         console.error("Failed to fetch inventory value by category:", error);
       }
     };
 
     fetchInventoryValueByCategory();
-  }, [scmRestBaseUrl]);
+  }, []);
 
   const isLocked = (status: string) =>
     status === "dispatched" || status === "fulfilled";
 
   const fetchOrders = async () => {
     setLoading(true);
-    const { data, error } = await supabaseFulfillment
-      .from("retail_orders")
-      .select(`
-        order_uuid,
-        order_no,
-        retailer_name,
-        status,
-        total_amount,
-        payment_terms,
-        due_date,
-        notes,
-        created_at,
-        priority_level,
-        retail_order_lines (
-          line_uuid,
-          sku,
-          qty,
-          unit_price,
-          line_total,
-          qty_fulfilled,
-          qty_backordered
-        )
-      `)
-      .order("priority_rank", { ascending: true })
-      .order("created_at", { ascending: true });
+    try {
+      const ordersData = await fetchDistributionOrders();
+      const normalizedOrders = (((ordersData as RetailOrder[]) || [])).map((order) => ({
+        ...order,
+        total_amount: Number(order.total_amount ?? 0),
+        retail_order_lines: (order.retail_order_lines ?? []).map((line) => ({
+          ...line,
+          line_total: Number(
+            line.line_total ?? Number(line.qty ?? 0) * Number(line.unit_price ?? 0),
+          ),
+        })),
+      }));
 
-    if (error) {
-      toast.error("Failed to load orders", { description: error.message });
-    } else {
-      setOrders((data as RetailOrder[]) || []);
+      const sortedOrders = [ ...normalizedOrders ].sort((a, b) => {
+        const priorityDiff =
+          getPriorityRank(a.priority_level) -
+          getPriorityRank(b.priority_level);
+
+        if (priorityDiff !== 0) return priorityDiff;
+
+        return (
+          new Date(a.created_at ?? 0).getTime() -
+          new Date(b.created_at ?? 0).getTime()
+        );
+      });
+      setOrders(sortedOrders);
+    } catch (error) {
+      toast.error("Failed to load orders", {
+        description:
+          error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
+
+  const totalOutstanding = useMemo(() => 
+    orders
+      .filter(o => o.status === "placed" || o.status === "partially_fulfilled")
+      .reduce((sum, o) => sum + Number(o.total_amount || 0), 0)
+  , [orders]);
+
+  const totalCollected = useMemo(() => 
+    orders
+      .filter(o => o.status === "fulfilled")
+      .reduce((sum, o) => sum + Number(o.total_amount || 0), 0)
+  , [orders]);
+
+  const overdueCount = useMemo(() => 
+    orders
+      .filter(o => o.status !== "fulfilled" && o.status !== "cancelled" && o.due_date && new Date(o.due_date) < new Date())
+      .length
+  , [orders]);
+
+  const retailerCount = useMemo(() => new Set(orders.map(o => o.retailer_name)).size, [orders]);
 
   const fetchInvoiceSummary = async (order: RetailOrder) => {
     setLoadingInvoiceSummary(true);
-    const { data, error } = await supabaseSCM
-      .from("payments")
-      .select(
-        "id, supplier_name, amount, payment_date, payment_method, reference_no, notes, created_at",
-      )
-      .eq("supplier_name", order.retailer_name)
-      .ilike("notes", `%[Invoice:${order.order_no}]%`)
-      .order("payment_date", { ascending: false })
-      .order("created_at", { ascending: false });
-
-    setLoadingInvoiceSummary(false);
-
-    if (error) {
+    try {
+      const data = await fetchDistributionInvoiceSummary({
+        orderId: order.order_uuid,
+        retailerName: order.retailer_name,
+        orderNo: order.order_no ?? "",
+        orderTotal: Number(order.total_amount ?? 0),
+      });
+      setInvoiceSummary(data);
+    } catch (error) {
       toast.error("Failed to load invoice payment data", {
-        description: error.message,
+        description:
+          error instanceof Error ? error.message : "Unknown error",
       });
       setInvoiceSummary(null);
-      return;
+    } finally {
+      setLoadingInvoiceSummary(false);
     }
-
-    const payments = ((data as PaymentRecord[]) || []).map((payment) => ({
-      ...payment,
-      amount: Number(payment.amount ?? 0),
-    }));
-    const amountPaid = payments.reduce(
-      (sum, payment) => sum + Number(payment.amount ?? 0),
-      0,
-    );
-    const orderTotal = Number(order.total_amount ?? 0);
-
-    setInvoiceSummary({
-      orderTotal,
-      amountPaid,
-      remainingBalance: Number((orderTotal - amountPaid).toFixed(2)),
-      payments,
-    });
   };
 
   const fetchAvailableProducts = async () => {
-    const [pricingRes, inventoryRes, productMetaRes] =
-      await Promise.all([
-        fetch(`${retailOrdersBaseUrl}/pricing`, {
-          method: "GET",
-          headers: fulfillmentFunctionHeaders,
-        }),
-        fetch(
-          `https://${fulfillmentProjectId}.supabase.co/rest/v1/inventory_on_hand?select=product_id,qty_on_hand`,
-          {
-            method: "GET",
-            headers: fulfillmentRestHeaders,
-          },
+    try {
+      const rows = await fetchDistributionAvailableProducts();
+      setAvailableProducts(
+        (rows as AvailableProduct[]).sort((a, b) =>
+          a.product_name.localeCompare(b.product_name),
         ),
-        fetch(
-          `${scmRestBaseUrl}/products?select=product_id,product_uuid,sku`,
-          {
-            method: "GET",
-            headers: scmRestHeaders,
-          },
-        ),
-      ]);
-
-    let serverProducts: any[] = [];
-
-    if (pricingRes.ok) {
-      const pricingPayload = await pricingRes.json();
-      serverProducts = Array.isArray(pricingPayload?.products)
-        ? pricingPayload.products
-        : [];
-    } else {
-      try {
-        serverProducts = await loadLockedPricingFallback();
-      } catch (fallbackError) {
-        toast.error("Failed to load locked pricing", {
-          description:
-            fallbackError instanceof Error
-              ? fallbackError.message
-              : "Retail pricing sources are unavailable.",
-        });
-        return;
-      }
-    }
-
-    if (!inventoryRes.ok) {
+      );
+    } catch (error) {
       toast.error("Failed to load fulfillment inventory", {
-        description: await inventoryRes.text(),
+        description:
+          error instanceof Error
+            ? error.message
+            : "Fulfillment inventory source is unavailable.",
       });
-      return;
     }
-
-    if (!productMetaRes.ok) {
-      toast.error("Failed to load product metadata", {
-        description: await productMetaRes.text(),
-      });
-      return;
-    }
-
-    const [inventoryRows, productMetaRows] = await Promise.all([
-      inventoryRes.json(),
-      productMetaRes.json(),
-    ]);
-
-    const inventoryByProductUuid = new Map<string, number>(
-      (Array.isArray(inventoryRows) ? inventoryRows : []).map((row: any) => [
-        String(row.product_id),
-        Number(row.qty_on_hand ?? 0),
-      ]),
-    );
-
-    const productUuidBySku = new Map<string, string>(
-      (Array.isArray(productMetaRows) ? productMetaRows : []).map((row: any) => [
-        String(row.sku),
-        String(row.product_uuid),
-      ]),
-    );
-
-    setAvailableProducts(
-      (serverProducts.map((product: any) => {
-        const productUuid = productUuidBySku.get(String(product.sku));
-        return {
-          product_id: String(product.product_id),
-          sku: product.sku,
-          product_name: product.product_name,
-          current_stock:
-            (productUuid
-              ? inventoryByProductUuid.get(productUuid)
-              : undefined) ?? 0,
-          selling_price: Number(product.selling_price ?? 0),
-          cost_price: Number(product.cost_price ?? 0),
-        };
-      }) as AvailableProduct[]).sort((a, b) =>
-        a.product_name.localeCompare(b.product_name),
-      ),
-    );
   };
 
   const lineAvailability = useMemo(() => {
@@ -583,14 +404,15 @@ export function OutboundDistribution() {
         return;
       }
 
-      const { error } = await supabaseFulfillment
-        .from("retail_order_lines")
-        .update({ qty: parsedQty })
-        .eq("order_uuid", selectedOrder.order_uuid)
-        .eq("sku", line.sku);
-
-      if (error) {
-        toast.error("Failed to save changes", { description: error.message });
+      try {
+        await updateDistributionOrderLines(selectedOrder.order_uuid, [
+          { sku: line.sku, qty: parsedQty },
+        ]);
+      } catch (error) {
+        toast.error("Failed to save changes", {
+          description:
+            error instanceof Error ? error.message : "Unknown error",
+        });
         setSavingEdit(false);
         return;
       }
@@ -631,23 +453,24 @@ export function OutboundDistribution() {
     }
     setCancellingOrder(true);
 
-    const { data, error } = await supabaseFulfillment
-      .rpc("cancel_retail_order", { p_order_uuid: selectedOrder.order_uuid });
-
-    setCancellingOrder(false);
-
-    if (error || !data?.success) {
-      toast.error("Order Cancellation Failed", {
-        description: data?.error || error?.message,
+    try {
+      await cancelDistributionOrder(
+        selectedOrder.order_uuid,
+        cancelReason.trim(),
+      );
+      setIsCancelModalOpen(false);
+      toast.success("Order Cancelled", {
+        description: "Stock has been returned to the warehouse pool.",
       });
-      return;
+      fetchOrders();
+    } catch (error) {
+      toast.error("Order Cancellation Failed", {
+        description:
+          error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setCancellingOrder(false);
     }
-
-    setIsCancelModalOpen(false);
-    toast.success("Order Cancelled", {
-      description: "Stock has been returned to the warehouse pool.",
-    });
-    fetchOrders();
   };
 
   const addLine = () =>
@@ -660,26 +483,7 @@ export function OutboundDistribution() {
     setDownloadingInvoiceId(order.order_uuid);
 
     try {
-      const response = await fetch(
-        `${retailOrdersBaseUrl}/orders/${order.order_uuid}/invoice`,
-        {
-          method: "GET",
-          headers: {
-            apikey: fulfillmentPublicAnonKey,
-            Authorization: `Bearer ${fulfillmentPublicAnonKey}`,
-          },
-        },
-      );
-
-      if (!response.ok) {
-        const text = await response.text();
-        toast.error("Failed to download invoice", {
-          description: text || "Request failed",
-        });
-        return;
-      }
-
-      const blob = await response.blob();
+      const blob = await downloadDistributionInvoice(order.order_uuid);
       triggerPdfDownload({
         blob,
         filename: `${order.order_no ?? "invoice"}.pdf`,
@@ -717,38 +521,38 @@ export function OutboundDistribution() {
 
     setSavingPayment(true);
 
-    const { error } = await supabaseSCM.from("payments").insert({
-      supplier_name: selectedPaymentOrder.retailer_name,
-      amount,
-      payment_date: paymentForm.paymentDate,
-      payment_method: paymentForm.paymentMethod || "Check",
-      reference_no: paymentForm.reference.trim(),
-      notes: buildInvoicePaymentNote(
-        selectedPaymentOrder.order_no ?? "invoice",
-        paymentForm.notes,
-      ),
-    });
-
-    setSavingPayment(false);
-
-    if (error) {
-      toast.error("Failed to log payment", {
-        description: error.message,
+    try {
+      await createDistributionPayment({
+        supplier_name: selectedPaymentOrder.retailer_name,
+        amount,
+        payment_date: paymentForm.paymentDate,
+        payment_method: paymentForm.paymentMethod || "Check",
+        reference_no: paymentForm.reference.trim(),
+        notes: buildInvoicePaymentNote(
+          selectedPaymentOrder.order_no ?? "invoice",
+          paymentForm.notes,
+        ),
       });
-      return;
+
+      toast.success("Payment logged", {
+        description: "Invoice balance has been refreshed.",
+      });
+
+      setPaymentForm((prev) => ({
+        ...prev,
+        amount: "",
+        notes: "",
+      }));
+
+      await fetchInvoiceSummary(selectedPaymentOrder);
+    } catch (error) {
+      toast.error("Failed to log payment", {
+        description:
+          error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setSavingPayment(false);
     }
-
-    toast.success("Payment logged", {
-      description: "Invoice balance has been refreshed.",
-    });
-
-    setPaymentForm((prev) => ({
-      ...prev,
-      amount: "",
-      notes: "",
-    }));
-
-    await fetchInvoiceSummary(selectedPaymentOrder);
   };
 
   const removeLine = (idx: number) =>
@@ -785,10 +589,8 @@ export function OutboundDistribution() {
 
     setSubmitting(true);
 
-    const response = await fetch(`${retailOrdersBaseUrl}/orders`, {
-      method: "POST",
-      headers: fulfillmentFunctionHeaders,
-      body: JSON.stringify({
+    try {
+      const payload = await createDistributionOrder({
         retailer_name: newOrder.retailerName,
         branch_suffix: newOrder.branchSuffix || null,
         payment_terms: newOrder.paymentTerms || null,
@@ -799,55 +601,48 @@ export function OutboundDistribution() {
           sku: line.sku.trim(),
           qty: Number(line.qty),
         })),
-      }),
-    });
+      });
 
-    const payload = await response.json().catch(() => null);
+      const fulfillment = (payload?.fulfillment ||
+        {}) as FulfillmentResult;
 
-    if (!response.ok) {
+      if (fulfillment.error) {
+        toast.error("Order saved but fulfillment failed", {
+          description: fulfillment.error,
+        });
+        setSubmitting(false);
+        return;
+      }
+
+      const fulfillmentUiState = getFulfillmentUiState(fulfillment);
+      toast.success(
+        fulfillmentUiState.toastTitle,
+        {
+          description: fulfillmentUiState.toastDescription,
+        },
+      );
+
+      setNewOrder({
+        retailerName: "",
+        branchSuffix: "",
+        paymentTerms: "",
+        orderChannel: "",
+        dueDate: "",
+        notes: "",
+        priorityLevel: "",
+        lines: [{ sku: "", qty: "1" }],
+      });
+      setShowLogForm(false);
+      fetchOrders();
+      fetchAvailableProducts();
+    } catch (error) {
       toast.error("Failed to create order", {
         description:
-          response.status === 404
-            ? "The retail-orders edge function is not deployed in this Supabase project."
-            : payload?.error || payload?.message || "Request failed",
+          error instanceof Error ? error.message : "Request failed",
       });
+    } finally {
       setSubmitting(false);
-      return;
     }
-
-    const fulfillment = (payload?.fulfillment ||
-      {}) as FulfillmentResult;
-
-    if (fulfillment.error) {
-      toast.error("Order saved but fulfillment failed", {
-        description: fulfillment.error,
-      });
-      setSubmitting(false);
-      return;
-    }
-
-    const fulfillmentUiState = getFulfillmentUiState(fulfillment);
-    toast.success(
-      fulfillmentUiState.toastTitle,
-      {
-        description: fulfillmentUiState.toastDescription,
-      },
-    );
-
-    setNewOrder({
-      retailerName: "",
-      branchSuffix: "",
-      paymentTerms: "",
-      orderChannel: "",
-      dueDate: "",
-      notes: "",
-      priorityLevel: "",
-        lines: [{ sku: "", qty: "1" }],
-    });
-    setShowLogForm(false);
-    setSubmitting(false);
-    fetchOrders();
-    fetchAvailableProducts();
   };
 
   useEffect(() => {
@@ -857,7 +652,6 @@ export function OutboundDistribution() {
 
   return (
     <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl lg:text-4xl font-semibold mb-2 text-[#111827]">
@@ -874,9 +668,7 @@ export function OutboundDistribution() {
         </Button>
       </div>
 
-      {/* Payment Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {/* Total Inventory Value (PHP) - NEW KPI */}
         <Card className="bg-white border-[#111827]/10 shadow-sm">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-[#6B7280]">Total Inventory Value (PHP)</CardTitle>
@@ -897,19 +689,19 @@ export function OutboundDistribution() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold mb-1 text-[#F97316]">
-              ₱1.6M
+              {formatPHP(totalOutstanding)}
             </div>
-            <p className="text-xs text-[#6B7280]">Across 8 retailers</p>
+            <p className="text-xs text-[#6B7280]">Across {retailerCount} retailers</p>
           </CardContent>
         </Card>
 
         <Card className="bg-white border-[#111827]/10 shadow-sm">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-[#6B7280]">Collected (Feb)</CardTitle>
+            <CardTitle className="text-sm font-medium text-[#6B7280]">Collected (Current)</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold mb-1 text-[#00A3AD]">
-              ₱2.9M
+              {formatPHP(totalCollected)}
             </div>
             <p className="text-xs font-medium text-[#00A3AD]">+18% vs last month</p>
           </CardContent>
@@ -921,7 +713,7 @@ export function OutboundDistribution() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold mb-1 text-[#F97316]">
-              3
+              {overdueCount}
             </div>
             <p className="text-xs font-medium text-[#F97316]">Requires follow-up</p>
           </CardContent>
@@ -1019,715 +811,406 @@ export function OutboundDistribution() {
                 >
                   <option value="">Select priority...</option>
                   <option value="Normal">Normal</option>
-                  <option value="Urgent">Urgent</option>
                   <option value="High">High</option>
+                  <option value="Urgent">Urgent</option>
                 </select>
               </div>
             )}
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">Order Lines</label>
-            {/* Header row for order line fields - improved alignment */}
-            <div className="flex gap-2 mb-1 pl-1">
-              <div className="flex-1 flex justify-start">
-                <span className="text-xs text-gray-500">SKU</span>
-              </div>
-              <div className="w-20 flex justify-center">
-                <span className="text-xs text-gray-500">Quantity</span>
-              </div>
-              <div className="w-28 flex justify-center">
-                <span className="text-xs text-gray-500">Unit Price</span>
-              </div>
-              <div className="w-8" />
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-gray-700">Order Items</label>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={addLine}
+                className="text-xs border-teal-600 text-teal-600 hover:bg-teal-50"
+              >
+                + Add Item
+              </Button>
             </div>
-            {newOrder.lines.map((line, idx) => (
-              <div key={idx} className="space-y-1">
-                <div className="flex items-center gap-2">
-                <select
-                  value={line.sku}
-                  onChange={(event) => updateLine(idx, "sku", event.target.value)}
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
-                >
-                  <option value="">Select SKU...</option>
-                  {availableProducts.map((product) => (
-                    <option key={product.sku} value={product.sku}>
-                      {product.sku} - {product.product_name} (stock: {product.current_stock}, locked price: {formatPHP(product.selling_price)})
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  placeholder="Quantity"
-                  value={line.qty}
-                  onChange={(event) =>
-                    updateLine(
-                      idx,
-                      "qty",
-                      sanitizeIntegerInput(event.target.value),
-                    )
-                  }
-                  onKeyDown={(event) =>
-                    blockInvalidNumberKeys(event)
-                  }
-                  className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-400"
-                />
-                <input
-                  type="text"
-                  readOnly
-                  placeholder="Locked"
-                  value={
-                    line.sku
-                      ? formatPHP(
-                          availableProducts.find((product) => product.sku === line.sku)
-                            ?.selling_price ?? 0,
-                        )
-                      : ""
-                  }
-                  className="w-28 border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-center text-gray-600 cursor-not-allowed"
-                  title="Locked selling price from the server"
-                />
-                {newOrder.lines.length > 1 && (
-                  <button
-                    onClick={() => removeLine(idx)}
-                    className="text-red-400 hover:text-red-600 text-sm"
-                  >
-                    ✕
-                  </button>
-                )}
-                </div>
-                {lineAvailability[idx]?.sku && (
-                  <div
-                    className={`text-xs ${
-                      lineAvailability[idx].isShort
-                        ? "text-amber-700"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    Available: {lineAvailability[idx].available} unit(s)
-                    {lineAvailability[idx].isShort
-                      ? ` | Backorder on submit: ${lineAvailability[idx].shortage}`
-                      : " | Fully allocatable"}
+            <div className="space-y-2">
+              {newOrder.lines.map((line, idx) => (
+                <div key={idx} className="flex gap-2 items-end">
+                  <div className="flex-1 space-y-1">
+                    <select
+                      value={line.sku}
+                      onChange={(e) => updateLine(idx, "sku", e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                    >
+                      <option value="">Select product...</option>
+                      {availableProducts.map((p) => (
+                        <option key={p.sku} value={p.sku}>
+                          {p.product_name} ({p.sku}) - ₱{p.selling_price.toLocaleString()} [Stock: {p.current_stock}]
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                )}
-              </div>
-            ))}
-            <button onClick={addLine} className="text-sm text-teal-600 hover:underline mt-1">
-              + Add Line
-            </button>
-            <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
-              Estimated total from locked server pricing for display only:{" "}
-              <span className="font-semibold text-[#1A2B47]">
-                {formatPHP(estimatedOrderTotal)}
-              </span>
+                  <div className="w-24 space-y-1">
+                    <input
+                      type="number"
+                      placeholder="Qty"
+                      min="1"
+                      value={line.qty}
+                      onChange={(e) => updateLine(idx, "qty", e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                    />
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeLine(idx)}
+                    disabled={newOrder.lines.length === 1}
+                    className="text-gray-400 hover:text-red-500"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              ))}
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              onClick={() => setShowLogForm(false)}
-              className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={logOrder}
-              disabled={submitting}
-              className="px-4 py-2 rounded-lg text-sm bg-teal-600 text-white font-medium hover:bg-teal-700 disabled:opacity-50"
-            >
-              {submitting ? "Logging..." : "Log Order"}
-            </button>
+          <div className="pt-4 border-t flex items-center justify-between">
+            <div className="text-sm">
+              <span className="text-gray-500">Estimated Total: </span>
+              <span className="font-bold text-gray-900">₱{estimatedOrderTotal.toLocaleString()}</span>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setShowLogForm(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={logOrder}
+                disabled={submitting}
+                className="bg-teal-600 hover:bg-teal-700 text-white"
+              >
+                {submitting ? "Logging..." : "Create Order"}
+              </Button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Orders List */}
-      <Card className="bg-white border-[#111827]/10 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-[#111827] font-semibold">
-            Retailer Orders
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)} className="w-full">
-            <TabsList className="grid w-full grid-cols-4 mb-4">
-              <TabsTrigger value="All">All</TabsTrigger>
-              <TabsTrigger value="Paid">Paid</TabsTrigger>
-              <TabsTrigger value="Pending">Pending</TabsTrigger>
-              <TabsTrigger value="Delayed">Delayed</TabsTrigger>
-            </TabsList>
-            {["All", "Paid", "Pending", "Delayed"].map((tab) => (
-              <TabsContent key={tab} value={tab} className="space-y-3">
-                {loading ? (
-                  <p className="text-sm text-gray-400 py-8 text-center">Loading orders...</p>
-                ) : filteredOrders.length === 0 ? (
-                  <p className="text-sm text-gray-400 py-8 text-center">No orders found.</p>
-                ) : (
-                  filteredOrders.map((order) => (
-                    <div key={order.order_uuid} className="border rounded-xl p-4 space-y-3 bg-white shadow-sm">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-2">
-                          <div>
-                            <p className="font-semibold text-gray-800">{order.retailer_name}</p>
-                            <p className="text-xs text-gray-400">
-                              {order.order_no} · {new Date(order.created_at).toLocaleString()}
-                            </p>
+      {/* Tabs */}
+      <Tabs defaultValue="All" onValueChange={(v) => setActiveTab(v as any)}>
+        <TabsList className="bg-transparent border-b border-gray-200 w-full justify-start rounded-none h-auto p-0 gap-8">
+          {["All", "Paid", "Pending", "Delayed"].map((tab) => (
+            <TabsTrigger
+              key={tab}
+              value={tab}
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-[#00A3AD] data-[state=active]:bg-transparent data-[state=active]:text-[#00A3AD] pb-4 px-0 font-medium transition-all"
+            >
+              {tab}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <TabsContent value={activeTab} className="mt-6">
+          <div className="bg-white rounded-xl shadow-sm border border-[#111827]/10 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-[#F8FAFC] border-b border-[#111827]/10">
+                  <tr>
+                    <th className="px-6 py-4 font-semibold text-[#111827]">Order #</th>
+                    <th className="px-6 py-4 font-semibold text-[#111827]">Retailer</th>
+                    <th className="px-6 py-4 font-semibold text-[#111827]">Status</th>
+                    <th className="px-6 py-4 font-semibold text-[#111827]">Amount</th>
+                    <th className="px-6 py-4 font-semibold text-[#111827]">Terms</th>
+                    <th className="px-6 py-4 font-semibold text-[#111827]">Due Date</th>
+                    <th className="px-6 py-4 font-semibold text-[#111827] text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#111827]/5">
+                  {loading ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-12 text-center text-[#6B7280]">
+                        Loading orders...
+                      </td>
+                    </tr>
+                  ) : filteredOrders.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-12 text-center text-[#6B7280]">
+                        No orders found.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredOrders.map((order) => (
+                      <tr key={order.order_uuid} className="hover:bg-[#F8FAFC] transition-colors">
+                        <td className="px-6 py-4 font-medium text-[#111827]">
+                          {order.order_no}
+                          <div className="text-[10px] text-[#6B7280] font-mono mt-0.5">
+                            {order.order_uuid.slice(0, 8)}
                           </div>
-                          {order.priority_level === "Urgent" && (
-                            <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-100 text-red-700 border border-red-300">
-                              Urgent
+                        </td>
+                        <td className="px-6 py-4 text-[#111827] font-medium">
+                          {order.retailer_name}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColor[order.status]}`}>
+                            {order.status.replace("_", " ")}
+                          </span>
+                          {order.priority_level && order.priority_level !== "Normal" && (
+                            <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              order.priority_level === "Urgent" ? "bg-red-100 text-red-700" : "bg-orange-100 text-orange-700"
+                            }`}>
+                              {order.priority_level.toUpperCase()}
                             </span>
                           )}
-                        </div>
-                        <span className={`text-xs font-medium px-2 py-1 rounded-full ${statusColor[order.status] || "bg-gray-100 text-gray-500"}`}>
-                          {order.status.replace("_", " ")}
-                        </span>
-                      </div>
+                        </td>
+                        <td className="px-6 py-4 font-semibold text-[#111827]">
+                          {formatPHP(order.total_amount)}
+                        </td>
+                        <td className="px-6 py-4 text-[#6B7280]">
+                          {order.payment_terms || "N/A"}
+                        </td>
+                        <td className="px-6 py-4 text-[#6B7280]">
+                          {order.due_date ? new Date(order.due_date).toLocaleDateString() : "N/A"}
+                        </td>
+                        <td className="px-6 py-4 text-right space-x-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openPaymentModal(order)}
+                            className="text-[#00A3AD] hover:bg-[#00A3AD]/10"
+                            title="Payments"
+                          >
+                            <CreditCard className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => generateInvoice(order)}
+                            disabled={downloadingInvoiceId === order.order_uuid}
+                            className="text-[#6B7280] hover:bg-gray-100"
+                            title="Invoice"
+                          >
+                            <Download className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openEditModal(order)}
+                            disabled={isLocked(order.status)}
+                            className="text-[#6B7280] hover:bg-gray-100 disabled:opacity-30"
+                            title="Edit"
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openCancelModal(order)}
+                            disabled={isLocked(order.status) || order.status === "cancelled"}
+                            className="text-red-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-30"
+                            title="Cancel"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
 
-                      <div className="grid grid-cols-4 gap-2 text-sm">
-                        <div>
-                          <p className="text-gray-400 text-xs">Items</p>
-                          <p className="font-medium">{order.retail_order_lines.length}</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-400 text-xs">Total</p>
-                          <p className="font-medium">
-                            ₱{Number(order.total_amount).toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-400 text-xs">Terms</p>
-                          <p className="font-medium">{order.payment_terms || "N/A"}</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-400 text-xs">Due Date</p>
-                          <p className="font-medium">{order.due_date ? new Date(order.due_date).toLocaleDateString() : "N/A"}</p>
-                        </div>
-                      </div>
-
-                      {order.notes && (
-                        <p className="text-xs text-gray-500 italic">📝 {order.notes}</p>
-                      )}
-
-                      {(order.retail_order_lines || []).length > 0 && (
-                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                          <div className="space-y-2">
-                            {order.retail_order_lines.map((line) => (
-                              <div
-                                key={line.line_uuid}
-                                className="flex items-center justify-between gap-4 text-xs text-gray-600"
-                              >
-                                <span className="font-mono font-semibold text-gray-800">
-                                  {line.sku}
-                                </span>
-                                <span>Ordered: {line.qty}</span>
-                                <span className="text-emerald-700">
-                                  Fulfilled: {line.qty_fulfilled ?? 0}
-                                </span>
-                                <span
-                                  className={
-                                    Number(line.qty_backordered ?? 0) > 0
-                                      ? "text-amber-700 font-medium"
-                                      : "text-gray-500"
-                                  }
-                                >
-                                  Backorder: {line.qty_backordered ?? 0}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="flex items-center gap-2 pt-1">
-                        <button
-                          onClick={() => void generateInvoice(order)}
-                          disabled={downloadingInvoiceId === order.order_uuid}
-                          className="px-3 py-1.5 rounded border text-sm font-medium transition-colors border-teal-400 text-teal-600 hover:bg-teal-50 disabled:border-gray-200 disabled:text-gray-400 disabled:bg-gray-50 disabled:cursor-not-allowed"
-                        >
-                          {downloadingInvoiceId === order.order_uuid
-                            ? "Downloading..."
-                            : "Generate Invoice"}
-                        </button>
-                        <button
-                          onClick={() => void openPaymentModal(order)}
-                          className="px-3 py-1.5 rounded border text-sm font-medium transition-colors border-emerald-400 text-emerald-700 hover:bg-emerald-50"
-                        >
-                          Log Payment
-                        </button>
-                        <button
-                          onClick={() => openEditModal(order)}
-                          disabled={isLocked(order.status)}
-                          className={`px-3 py-1.5 rounded border text-sm font-medium transition-colors ${
-                            isLocked(order.status)
-                              ? "border-gray-200 text-gray-300 cursor-not-allowed bg-gray-50"
-                              : "border-blue-400 text-blue-600 hover:bg-blue-50"
-                          }`}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => openCancelModal(order)}
-                          disabled={isLocked(order.status)}
-                          className={`px-3 py-1.5 rounded border text-sm font-medium transition-colors ${
-                            isLocked(order.status)
-                              ? "border-gray-200 text-gray-300 cursor-not-allowed bg-gray-50"
-                              : "border-orange-400 text-orange-500 hover:bg-orange-50"
-                          }`}
-                        >
-                          Cancel Order
-                        </button>
-                        {isLocked(order.status) && (
-                          <span className="text-xs text-gray-400 italic">Locked — {order.status}</span>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </TabsContent>
-            ))}
-          </Tabs>
-        </CardContent>
-      </Card>
-
-      <Dialog
-        open={isPaymentModalOpen}
-        onOpenChange={(open) => {
-          setIsPaymentModalOpen(open);
-          if (!open) {
-            setSelectedPaymentOrder(null);
-            setInvoiceSummary(null);
-          }
-        }}
-      >
+      {/* Edit Modal */}
+      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="text-[#111827]">
-              Log Retailer Payment
+            <DialogTitle>Edit Order Lines: {selectedOrder?.order_no}</DialogTitle>
+            <DialogDescription>
+              Adjust quantities for the selected order. Note that fulfillment status may reset.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {editLines.map((line, idx) => (
+              <div key={idx} className="flex items-center gap-4">
+                <div className="flex-1">
+                  <Label className="text-xs text-gray-500">Product SKU</Label>
+                  <p className="font-medium">{line.sku}</p>
+                </div>
+                <div className="w-32">
+                  <Label className="text-xs text-gray-500">Quantity</Label>
+                  <Input
+                    type="number"
+                    value={line.qty}
+                    onChange={(e) => {
+                      const newLines = [...editLines];
+                      newLines[idx].qty = e.target.value;
+                      setEditLines(newLines);
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setIsEditModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={saveEdit}
+              disabled={savingEdit}
+              className="bg-teal-600 text-white hover:bg-teal-700"
+            >
+              {savingEdit ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cancel Modal */}
+      <Dialog open={isCancelModalOpen} onOpenChange={setIsCancelModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-red-600">Cancel Order {selectedOrder?.order_no}</DialogTitle>
+            <DialogDescription>
+              This action cannot be undone. All reserved stock will be returned to the pool.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-2">
+            <Label>Reason for cancellation <span className="text-red-500">*</span></Label>
+            <Input
+              placeholder="e.g. Customer changed mind, payment failed..."
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setIsCancelModalOpen(false)}>
+              Back
+            </Button>
+            <Button
+              onClick={confirmCancel}
+              disabled={cancellingOrder}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              {cancellingOrder ? "Cancelling..." : "Confirm Cancellation"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Payment Modal */}
+      <Dialog open={isPaymentModalOpen} onOpenChange={setIsPaymentModalOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CreditCard className="w-5 h-5 text-teal-600" />
+              Invoice Payment Management
             </DialogTitle>
-            <DialogDescription className="text-[#6B7280]">
-              Record partial or full check payments and refresh the invoice
-              balance immediately.
+            <DialogDescription>
+              Log collection payments and track the remaining balance for {selectedPaymentOrder?.retailer_name}.
             </DialogDescription>
           </DialogHeader>
 
-          {selectedPaymentOrder && (
-            <div className="space-y-5">
-              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-4">
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <div className="text-xs text-[#6B7280]">Retailer</div>
-                    <div className="font-semibold text-[#111827]">
-                      {selectedPaymentOrder.retailer_name}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-[#6B7280]">Invoice</div>
-                    <div className="font-semibold text-[#111827]">
-                      {selectedPaymentOrder.order_no}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-[#6B7280]">Order Total</div>
-                    <div className="font-semibold text-[#111827]">
-                      {formatPHP(invoiceSummary?.orderTotal ?? selectedPaymentOrder.total_amount ?? 0)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-[#6B7280]">Remaining Balance</div>
-                    <div className="font-semibold text-[#F97316]">
-                      {formatPHP(
-                        invoiceSummary?.remainingBalance ??
-                          selectedPaymentOrder.total_amount ??
-                          0,
-                      )}
-                    </div>
-                  </div>
+          {loadingInvoiceSummary ? (
+            <div className="py-12 text-center text-gray-500">Loading summary...</div>
+          ) : (
+            <div className="space-y-6 py-4">
+              {/* Balances */}
+              <div className="grid grid-cols-3 gap-4">
+                <div className="p-4 bg-gray-50 rounded-lg border">
+                  <p className="text-xs text-gray-500 font-medium">Order Total</p>
+                  <p className="text-xl font-bold">{formatPHP(invoiceSummary?.orderTotal ?? 0)}</p>
                 </div>
-                {loadingInvoiceSummary && (
-                  <p className="mt-3 text-xs text-[#6B7280]">
-                    Refreshing invoice balance...
-                  </p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-gray-700">
-                    Amount
-                  </label>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    inputMode="decimal"
-                    value={paymentForm.amount}
-                    onChange={(event) =>
-                      setPaymentForm((prev) => ({
-                        ...prev,
-                        amount: sanitizeDecimalInput(
-                          event.target.value,
-                          2,
-                        ),
-                      }))
-                    }
-                    onKeyDown={(event) =>
-                      blockInvalidNumberKeys(event, {
-                        allowDecimal: true,
-                      })
-                    }
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                  />
+                <div className="p-4 bg-teal-50 rounded-lg border border-teal-100">
+                  <p className="text-xs text-teal-600 font-medium">Amount Paid</p>
+                  <p className="text-xl font-bold text-teal-700">{formatPHP(invoiceSummary?.amountPaid ?? 0)}</p>
                 </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-gray-700">
-                    Payment Date
-                  </label>
-                  <input
-                    type="date"
-                    value={paymentForm.paymentDate}
-                    onChange={(event) =>
-                      setPaymentForm((prev) => ({
-                        ...prev,
-                        paymentDate: event.target.value,
-                      }))
-                    }
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-gray-700">
-                    Payment Method
-                  </label>
-                  <select
-                    value={paymentForm.paymentMethod}
-                    onChange={(event) =>
-                      setPaymentForm((prev) => ({
-                        ...prev,
-                        paymentMethod: event.target.value,
-                      }))
-                    }
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                  >
-                    <option value="Check">Check</option>
-                    <option value="Bank Transfer">Bank Transfer</option>
-                    <option value="Cash">Cash</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-gray-700">
-                    Reference / Check No.
-                  </label>
-                  <input
-                    type="text"
-                    value={paymentForm.reference}
-                    onChange={(event) =>
-                      setPaymentForm((prev) => ({
-                        ...prev,
-                        reference: event.target.value,
-                      }))
-                    }
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                  />
-                </div>
-                <div className="space-y-1 col-span-2">
-                  <label className="text-sm font-medium text-gray-700">
-                    Notes
-                  </label>
-                  <textarea
-                    value={paymentForm.notes}
-                    onChange={(event) =>
-                      setPaymentForm((prev) => ({
-                        ...prev,
-                        notes: event.target.value,
-                      }))
-                    }
-                    rows={3}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                    placeholder="Optional payment notes"
-                  />
+                <div className="p-4 bg-orange-50 rounded-lg border border-orange-100">
+                  <p className="text-xs text-orange-600 font-medium">Remaining Balance</p>
+                  <p className="text-xl font-bold text-orange-700">{formatPHP(invoiceSummary?.remainingBalance ?? 0)}</p>
                 </div>
               </div>
 
-              <div className="rounded-lg border border-[#E5E7EB] p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <div className="font-semibold text-[#111827]">
-                    Applied Payments
-                  </div>
-                  <div className="text-sm text-[#6B7280]">
-                    Paid: {formatPHP(invoiceSummary?.amountPaid ?? 0)}
+              <div className="grid grid-cols-2 gap-8">
+                {/* Payment History */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold flex items-center gap-2">
+                    <History className="w-4 h-4 text-gray-400" />
+                    Payment History
+                  </h3>
+                  <div className="border rounded-lg overflow-hidden max-h-[300px] overflow-y-auto">
+                    {invoiceSummary?.payments.length === 0 ? (
+                      <div className="p-8 text-center text-xs text-gray-400">No payments logged yet.</div>
+                    ) : (
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-gray-50 border-b">
+                          <tr>
+                            <th className="px-3 py-2">Date</th>
+                            <th className="px-3 py-2 text-right">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {invoiceSummary?.payments.map((p) => (
+                            <tr key={p.id} className="hover:bg-gray-50">
+                              <td className="px-3 py-2">{new Date(p.payment_date).toLocaleDateString()}</td>
+                              <td className="px-3 py-2 text-right font-medium">{formatPHP(p.amount)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
                   </div>
                 </div>
 
-                {invoiceSummary && invoiceSummary.payments.length > 0 ? (
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {invoiceSummary.payments.map((payment) => (
-                      <div
-                        key={payment.id}
-                        className="flex items-center justify-between rounded-lg bg-[#F8FAFC] px-3 py-2 text-sm"
-                      >
-                        <div>
-                          <div className="font-medium text-[#111827]">
-                            {payment.payment_method ?? "Payment"} |{" "}
-                            {payment.reference_no ?? "No ref"}
-                          </div>
-                          <div className="text-xs text-[#6B7280]">
-                            {new Date(payment.payment_date).toLocaleDateString()}
-                          </div>
-                        </div>
-                        <div className="font-semibold text-emerald-700">
-                          {formatPHP(Number(payment.amount ?? 0))}
-                        </div>
-                      </div>
-                    ))}
+                {/* New Payment Form */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-semibold flex items-center gap-2">
+                    <Plus className="w-4 h-4 text-teal-600" />
+                    Log New Collection
+                  </h3>
+                  
+                  <div className="space-y-3 p-4 bg-gray-50 rounded-lg border">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Amount Collected (PHP) <span className="text-red-500">*</span></Label>
+                      <Input
+                        type="number"
+                        placeholder="0.00"
+                        value={paymentForm.amount}
+                        onChange={(e) => setPaymentForm({...paymentForm, amount: sanitizeDecimalInput(e.target.value)})}
+                        onKeyDown={blockInvalidNumberKeys}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Payment Date <span className="text-red-500">*</span></Label>
+                      <Input
+                        type="date"
+                        value={paymentForm.paymentDate}
+                        onChange={(e) => setPaymentForm({...paymentForm, paymentDate: e.target.value})}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Reference # / Check # <span className="text-red-500">*</span></Label>
+                      <Input
+                        placeholder="e.g. CHK-9902"
+                        value={paymentForm.reference}
+                        onChange={(e) => setPaymentForm({...paymentForm, reference: e.target.value})}
+                      />
+                    </div>
+                    <Button
+                      className="w-full bg-teal-600 hover:bg-teal-700 text-white"
+                      onClick={submitPayment}
+                      disabled={savingPayment || !paymentForm.amount}
+                    >
+                      {savingPayment ? "Processing..." : "Confirm Payment"}
+                    </Button>
                   </div>
-                ) : (
-                  <p className="text-sm text-[#6B7280]">
-                    No payments logged for this invoice yet.
-                  </p>
-                )}
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setIsPaymentModalOpen(false)}
-                  className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50"
-                >
-                  Close
-                </button>
-                <button
-                  onClick={() => void submitPayment()}
-                  disabled={savingPayment}
-                  className="px-4 py-2 rounded-lg text-sm bg-emerald-600 text-white font-medium hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  {savingPayment ? "Saving..." : "Save Payment"}
-                </button>
+                </div>
               </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
-
-      {/* Payment Tracker */}
-      <Card className="bg-white border-[#111827]/10 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-[#111827] font-semibold">
-            Payment Health Tracker
-          </CardTitle>
-          <p className="text-sm text-[#6B7280]">Monitor retailer payment performance</p>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {retailerPerformance.map((retailer) => (
-              <div key={retailer.name} className="p-4 rounded-lg bg-[#F8FAFC] border border-[#E5E7EB]">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="font-semibold text-[#111827]">{retailer.name}</div>
-                  <div className={`flex items-center gap-1 text-sm font-medium ${
-                    retailer.status === "healthy" ? "text-[#00A3AD]" : "text-[#F97316]"
-                  }`}>
-                    <TrendingUp className="w-4 h-4" />
-                    {retailer.status === "healthy" ? "Healthy" : "Needs Attention"}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 mb-3">
-                  <div>
-                    <div className="text-xs text-[#6B7280] mb-1 font-medium">Paid (YTD)</div>
-                    <div className="text-lg font-bold text-[#00A3AD]">
-                      ₱{(retailer.paid / 1000).toFixed(0)}K
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-[#6B7280] mb-1 font-medium">Outstanding</div>
-                    <div className="text-lg font-bold" style={{ color: retailer.status === "healthy" ? "#6B7280" : "#F97316" }}>
-                      ₱{(retailer.pending / 1000).toFixed(0)}K
-                    </div>
-                  </div>
-                </div>
-
-                {/* Payment Health Bar */}
-                <div className="h-2 bg-[#E5E7EB] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#00A3AD] transition-all"
-                    style={{ width: `${(retailer.paid / (retailer.paid + retailer.pending)) * 100}%` }}
-                  />
-                </div>
-                <div className="text-xs text-[#6B7280] mt-1 font-medium">
-                  {((retailer.paid / (retailer.paid + retailer.pending)) * 100).toFixed(0)}% collected
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Inventory Value by Category - NEW SECTION */}
-      <Card className="bg-white border-[#111827]/10 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-[#111827] font-semibold">
-            Inventory Value by Category
-          </CardTitle>
-          <p className="text-sm text-[#6B7280]">Stock value distribution across product categories</p>
-        </CardHeader>
-        <CardContent>
-          {inventoryValueByCategory.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[#E5E7EB]">
-                    <th className="text-left py-3 px-4 text-sm font-semibold text-[#6B7280]">Category</th>
-                    <th className="text-right py-3 px-4 text-sm font-semibold text-[#6B7280]">Total Value (PHP)</th>
-                    <th className="text-right py-3 px-4 text-sm font-semibold text-[#6B7280]">Percentage</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {inventoryValueByCategory.map((category, index) => {
-                    const categoryValue = Number(category.total_value_php ?? 0);
-                    const percentage = totalCategoryValue > 0 ? (categoryValue / totalCategoryValue) * 100 : 0;
-                    
-                    return (
-                      <tr key={index} className="border-b border-[#E5E7EB] hover:bg-[#F8FAFC] transition-colors">
-                        <td className="py-3 px-4 text-[#111827] font-medium">{category.category_name || "Uncategorized"}</td>
-                        <td className="py-3 px-4 text-right text-[#111827] font-semibold">
-                          {formatPHP(categoryValue)}
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <div className="w-16 h-2 bg-[#E5E7EB] rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-[#00A3AD]"
-                                style={{ width: `${percentage}%` }}
-                              />
-                            </div>
-                            <span className="text-sm text-[#6B7280] font-medium w-12 text-right">
-                              {percentage.toFixed(1)}%
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t-2 border-[#1A2B47]">
-                    <td className="py-3 px-4 text-[#1A2B47] font-bold">Total</td>
-                    <td className="py-3 px-4 text-right text-[#1A2B47] font-bold">
-                      {formatPHP(totalCategoryValue)}
-                    </td>
-                    <td className="py-3 px-4 text-right text-[#1A2B47] font-bold">100%</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-[#6B7280]">
-              No category data available
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {isEditModalOpen && selectedOrder && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg space-y-4">
-            <h2 className="text-lg font-semibold text-gray-800">Edit Order</h2>
-            <p className="text-sm text-gray-500">
-              Modify quantities below. Only available before dispatch.
-            </p>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {editLines.map((line, idx) => (
-                <div key={line.sku ?? idx} className="flex items-center justify-between gap-4 border rounded-lg px-3 py-2">
-                  <span className="text-sm font-medium text-gray-700">{line.sku}</span>
-                   <input
-                     type="number"
-                     min={1}
-                     step={1}
-                     inputMode="numeric"
-                     pattern="[0-9]*"
-                     value={line.qty}
-                     onChange={(event) => {
-                       const updated = [...editLines];
-                       updated[idx] = {
-                         ...line,
-                         qty: sanitizeIntegerInput(
-                           event.target.value,
-                         ),
-                       };
-                       setEditLines(updated);
-                     }}
-                     onKeyDown={(event) =>
-                       blockInvalidNumberKeys(event)
-                     }
-                     className="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
-                   />
-                </div>
-              ))}
-              {editLines.length === 0 && (
-                <p className="text-sm text-gray-400 text-center py-4">No line items found.</p>
-              )}
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setIsEditModalOpen(false)}
-                className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50"
-              >
-                Close
-              </button>
-              <button
-                onClick={saveEdit}
-                disabled={savingEdit}
-                className="px-4 py-2 rounded-lg text-sm bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-50"
-              >
-                {savingEdit ? "Saving..." : "Save Changes"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isCancelModalOpen && selectedOrder && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md space-y-4">
-            <h2 className="text-lg font-semibold text-gray-800">Cancel Order</h2>
-            <p className="text-sm text-gray-500">
-              This will release all reserved stock back to the warehouse pool. This cannot be undone.
-            </p>
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-gray-700">
-                Cancellation Reason <span className="text-red-500">*</span>
-              </label>
-              <textarea
-                value={cancelReason}
-                onChange={(event) => setCancelReason(event.target.value)}
-                placeholder="e.g. Customer requested cancellation..."
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none h-24 focus:outline-none focus:ring-2 focus:ring-red-400"
-              />
-              {!cancelReason.trim() && (
-                <p className="text-xs text-red-400">This field is required.</p>
-              )}
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setIsCancelModalOpen(false)}
-                className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50"
-              >
-                Back
-              </button>
-              <button
-                onClick={confirmCancel}
-                disabled={cancellingOrder || !cancelReason.trim()}
-                className="px-4 py-2 rounded-lg text-sm bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {cancellingOrder ? "Cancelling..." : "Confirm Cancel"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

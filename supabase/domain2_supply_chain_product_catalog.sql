@@ -374,3 +374,39 @@ begin
   end if;
 end;
 $$;
+
+-- ==========================================
+-- ADDED FOR SPRINT 6: BUDGETS & ANALYTICS
+-- ==========================================
+
+create table if not exists public.monthly_budgets (
+  budget_id bigint generated always as identity primary key,
+  month integer not null check (month between 1 and 12),
+  year integer not null,
+  allocated_amount numeric not null,
+  spent_amount numeric not null default 0,
+  created_at timestamptz default now()
+);
+
+create or replace view public.stuck_at_customs_view as
+select 
+  po_id, 
+  po_no, 
+  supplier_name, 
+  customs_entry_date, 
+  transit_status
+from public.purchase_orders
+where transit_status = 'Stuck at Customs' 
+   or (customs_entry_date < now() - interval '5 days' and customs_release_date is null);
+
+create or replace view public.v_total_inventory_value_php as
+select coalesce(sum(inventory_on_hand * unit_price), 0) as total_inventory_value_php
+from public.products;
+
+create or replace view public.v_inventory_value_by_category_php as
+select 
+  category as category_name,
+  sum(inventory_on_hand * unit_price) as total_value_php
+from public.products
+group by category;
+

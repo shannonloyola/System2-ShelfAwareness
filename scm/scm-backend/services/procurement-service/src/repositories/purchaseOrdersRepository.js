@@ -1,11 +1,19 @@
 import {
+  createPurchaseOrderStatusHistoryRest,
   createPurchaseOrderItemRest,
   createPurchaseOrderRest,
   deletePurchaseOrderItemRest,
   deletePurchaseOrderRest,
   getPurchaseOrderByIdRest,
+  getCurrentMonthlyBudgetRest,
+  listCustomsTrackedPurchaseOrdersRest,
   listPurchaseOrderItemsRest,
+  listPurchaseOrderStatusHistoryRest,
   listPurchaseOrdersRest,
+  listExpiredReservationsRest,
+  listExpiringSoonReservationsRest,
+  runExpireReservationsRest,
+  updatePurchaseOrderStatusHistoryRest,
   updatePurchaseOrderItemRest,
   updatePurchaseOrderRest,
 } from "../lib/supabaseRest.js";
@@ -20,7 +28,23 @@ const poSelect = `
   created_at,
   paid_at,
   expected_delivery_date,
-  preferred_communication
+  preferred_communication,
+  approval_status,
+  approved_by,
+  approved_at,
+  rejected_at,
+  rejection_reason,
+  is_late,
+  customs_entry_date,
+  customs_release_date,
+  transit_status,
+  reserved_at,
+  expires_at,
+  (
+    SELECT COUNT(*)
+    FROM purchase_order_items poi
+    WHERE poi.po_id = purchase_orders.po_id
+  )::int AS item_count
 `;
 
 const poItemSelect = `
@@ -28,6 +52,15 @@ const poItemSelect = `
   po_id,
   item_name,
   quantity
+`;
+
+const poStatusHistorySelect = `
+  history_id,
+  po_id,
+  status_name,
+  changed_at,
+  document_url,
+  reason
 `;
 
 const mapPO = (row) => ({
@@ -39,6 +72,20 @@ const mapPO = (row) => ({
   paid_at: row.paid_at,
   expected_delivery_date: row.expected_delivery_date,
   preferred_communication: row.preferred_communication,
+  approval_status: row.approval_status,
+  approved_by: row.approved_by,
+  approved_at: row.approved_at,
+  rejected_at: row.rejected_at,
+  rejection_reason: row.rejection_reason,
+  is_late: row.is_late,
+  customs_entry_date: row.customs_entry_date,
+  customs_release_date: row.customs_release_date,
+  transit_status: row.transit_status,
+  reserved_at: row.reserved_at,
+  expires_at: row.expires_at,
+  item_count: Array.isArray(row.purchase_order_items)
+    ? Number(row.purchase_order_items[0]?.count ?? 0)
+    : Number(row.item_count ?? 0),
 });
 
 const mapPOItem = (row) => ({
@@ -48,11 +95,21 @@ const mapPOItem = (row) => ({
   quantity: row.quantity,
 });
 
+const mapPOStatusHistory = (row) => ({
+  history_id: row.history_id,
+  po_id: row.po_id,
+  status_name: row.status_name,
+  changed_at: row.changed_at,
+  document_url: row.document_url ?? null,
+  reason: row.reason ?? null,
+});
+
 const useRestFallback = () => !hasDatabaseConfig && hasSupabaseRestConfig;
 
 export const listPurchaseOrders = async ({ limit, offset, search, status }) => {
   if (useRestFallback()) {
-    return listPurchaseOrdersRest({ limit, offset, search, status });
+    const rows = await listPurchaseOrdersRest({ limit, offset, search, status });
+    return (rows || []).map(mapPO);
   }
 
   const pool = getPool();
@@ -122,7 +179,7 @@ export const getPurchaseOrderById = async (poId) => {
 
 export const listPurchaseOrderItems = async (poId) => {
   if (useRestFallback()) {
-    return listPurchaseOrderItemsRest(poId);
+    return (await listPurchaseOrderItemsRest(poId)).map(mapPOItem);
   }
 
   const pool = getPool();
@@ -139,6 +196,27 @@ export const listPurchaseOrderItems = async (poId) => {
   return result.rows.map(mapPOItem);
 };
 
+export const listPurchaseOrderStatusHistory = async (poId) => {
+  if (useRestFallback()) {
+    return (await listPurchaseOrderStatusHistoryRest(poId)).map(
+      mapPOStatusHistory,
+    );
+  }
+
+  const pool = getPool();
+  const result = await pool.query(
+    `
+      SELECT ${poStatusHistorySelect}
+      FROM po_status_history
+      WHERE po_id = $1
+      ORDER BY changed_at DESC
+    `,
+    [poId],
+  );
+
+  return result.rows.map(mapPOStatusHistory);
+};
+
 export const generateNextPONumber = async () => {
   const year = new Date().getFullYear();
   const prefix = `PO-JP-${year}-`;
@@ -150,7 +228,7 @@ export const generateNextPONumber = async () => {
     status: "",
   });
 
-  const maxSuffix = purchaseOrders.reduce((max, row) => {
+  const maxSuffix = (purchaseOrders || []).reduce((max, row) => {
     const value = row.po_no ?? "";
     const match = value.match(new RegExp(`^${prefix}(\\d+)$`));
     if (!match) return max;
@@ -162,51 +240,84 @@ export const generateNextPONumber = async () => {
   return `${prefix}${String(maxSuffix + 1).padStart(4, "0")}`;
 };
 
-export const createPurchaseOrder = async (payload) => {
-  const resolvedPayload = {
-    po_no: payload.po_no || (await generateNextPONumber()),
-    supplier_name: payload.supplier_name,
-    status: payload.status || "Draft",
-    created_at: payload.created_at || new Date().toISOString(),
-    paid_at:
-      payload.paid_at === undefined
-        ? new Date().toISOString()
-        : payload.paid_at,
-    expected_delivery_date: payload.expected_delivery_date ?? null,
-    preferred_communication: payload.preferred_communication ?? null,
-  };
-
-  if (useRestFallback()) {
-    return createPurchaseOrderRest(resolvedPayload);
-  }
-
-  const pool = getPool();
-  const result = await pool.query(
-    `
-      INSERT INTO purchase_orders (
-        po_no,
-        supplier_name,
-        status,
-        created_at,
-        paid_at,
-        expected_delivery_date,
-        preferred_communication
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING ${poSelect}
-    `,
-    [
-      resolvedPayload.po_no,
-      resolvedPayload.supplier_name,
-      resolvedPayload.status,
-      resolvedPayload.created_at,
-      resolvedPayload.paid_at,
-      resolvedPayload.expected_delivery_date,
-      resolvedPayload.preferred_communication,
-    ],
+const isDuplicatePoNumber = (error) => {
+  if (!error) return false;
+  const msg = error.message || "";
+  // Supabase REST surfaces Postgres error codes in the parsed message JSON
+  return (
+    error.code === "23505" ||
+    msg.includes("23505") ||
+    msg.includes("purchase_orders_po_no_key") ||
+    (error.details && String(error.details).includes("purchase_orders_po_no_key"))
   );
+};
 
-  return mapPO(result.rows[0]);
+export const createPurchaseOrder = async (payload) => {
+  const MAX_RETRIES = 3;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    // Always regenerate the PO number on retry to avoid the duplicate
+    const po_no =
+      attempt === 1
+        ? payload.po_no || (await generateNextPONumber())
+        : await generateNextPONumber();
+
+    const resolvedPayload = {
+      po_no,
+      supplier_name: payload.supplier_name,
+      status: payload.status || "Draft",
+      created_at: payload.created_at || new Date().toISOString(),
+      paid_at:
+        payload.paid_at === undefined
+          ? new Date().toISOString()
+          : payload.paid_at,
+      expected_delivery_date: payload.expected_delivery_date ?? null,
+      preferred_communication: payload.preferred_communication ?? null,
+    };
+
+    try {
+      if (useRestFallback()) {
+        const po = await createPurchaseOrderRest(resolvedPayload);
+        return mapPO(po);
+      }
+
+      const pool = getPool();
+      const result = await pool.query(
+        `
+          INSERT INTO purchase_orders (
+            po_no,
+            supplier_name,
+            status,
+            created_at,
+            paid_at,
+            expected_delivery_date,
+            preferred_communication
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          RETURNING ${poSelect}
+        `,
+        [
+          resolvedPayload.po_no,
+          resolvedPayload.supplier_name,
+          resolvedPayload.status,
+          resolvedPayload.created_at,
+          resolvedPayload.paid_at,
+          resolvedPayload.expected_delivery_date,
+          resolvedPayload.preferred_communication,
+        ],
+      );
+
+      return mapPO(result.rows[0]);
+    } catch (error) {
+      if (isDuplicatePoNumber(error) && attempt < MAX_RETRIES) {
+        console.warn(
+          `[procurement] PO number conflict on attempt ${attempt} (${resolvedPayload.po_no}), retrying...`,
+        );
+        continue;
+      }
+      throw error;
+    }
+  }
 };
 
 export const updatePurchaseOrder = async (poId, payload) => {
@@ -226,6 +337,11 @@ export const updatePurchaseOrder = async (poId, payload) => {
     paid_at: "paid_at",
     expected_delivery_date: "expected_delivery_date",
     preferred_communication: "preferred_communication",
+    approval_status: "approval_status",
+    approved_by: "approved_by",
+    approved_at: "approved_at",
+    rejected_at: "rejected_at",
+    rejection_reason: "rejection_reason",
   };
 
   const updates = [];
@@ -260,6 +376,266 @@ export const updatePurchaseOrder = async (poId, payload) => {
   }
 
   return mapPO(row);
+};
+
+export const updatePurchaseOrderApproval = async (poId, payload) => {
+  const nextStatus = String(payload.approval_status || "Pending").toLowerCase();
+  const nowIso = new Date().toISOString();
+
+  return updatePurchaseOrder(poId, {
+    approval_status: payload.approval_status,
+    approved_by: payload.approved_by ?? null,
+    approved_at: nextStatus === "approved" ? nowIso : null,
+    rejected_at: nextStatus === "rejected" ? nowIso : null,
+    rejection_reason: nextStatus === "rejected" ? payload.rejection_reason : null,
+  });
+};
+
+export const appendPurchaseOrderStatusHistory = async (poId, payload) => {
+  const resolvedPayload = {
+    po_id: poId,
+    status_name: payload.status_name,
+    changed_at: payload.changed_at ?? new Date().toISOString(),
+    document_url: payload.document_url ?? null,
+    reason: payload.reason ?? null,
+  };
+
+  if (useRestFallback()) {
+    const row = await createPurchaseOrderStatusHistoryRest(resolvedPayload);
+    return mapPOStatusHistory(row);
+  }
+
+  const pool = getPool();
+  const result = await pool.query(
+    `
+      INSERT INTO po_status_history (
+        po_id,
+        status_name,
+        changed_at,
+        document_url,
+        reason
+      )
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING ${poStatusHistorySelect}
+    `,
+    [
+      resolvedPayload.po_id,
+      resolvedPayload.status_name,
+      resolvedPayload.changed_at,
+      resolvedPayload.document_url,
+      resolvedPayload.reason,
+    ],
+  );
+
+  return mapPOStatusHistory(result.rows[0]);
+};
+
+export const updateLatestPurchaseOrderDocument = async (poId, payload) => {
+  const [latestHistory] = await listPurchaseOrderStatusHistory(poId);
+  const targetHistory =
+    latestHistory ??
+    (await appendPurchaseOrderStatusHistory(poId, {
+      status_name: payload.status_name || "Pending Supplier Confirmation",
+    }));
+
+  if (useRestFallback()) {
+    const row = await updatePurchaseOrderStatusHistoryRest(
+      targetHistory.history_id,
+      {
+        document_url: payload.document_url,
+      },
+    );
+    return mapPOStatusHistory(row);
+  }
+
+  const pool = getPool();
+  const result = await pool.query(
+    `
+      UPDATE po_status_history
+      SET document_url = $1
+      WHERE history_id = $2
+      RETURNING ${poStatusHistorySelect}
+    `,
+    [payload.document_url, targetHistory.history_id],
+  );
+
+  return mapPOStatusHistory(result.rows[0]);
+};
+
+export const updatePurchaseOrderEta = async (poId, payload) => {
+  if (!useRestFallback()) {
+    const pool = getPool();
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const poResult = await client.query(
+        `
+          UPDATE purchase_orders
+          SET expected_delivery_date = $1
+          WHERE po_id = $2
+          RETURNING ${poSelect}
+        `,
+        [payload.expected_delivery_date, poId],
+      );
+
+      const row = poResult.rows[0];
+      if (!row) {
+        throw createHttpError(404, "Purchase order not found");
+      }
+
+      await client.query(
+        `
+          INSERT INTO po_status_history (
+            po_id,
+            status_name,
+            changed_at,
+            reason
+          )
+          VALUES ($1, $2, $3, $4)
+        `,
+        [poId, "ETA Updated", new Date().toISOString(), payload.reason],
+      );
+
+      await client.query("COMMIT");
+      return mapPO(row);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  const po = await updatePurchaseOrderRest(poId, {
+    expected_delivery_date: payload.expected_delivery_date,
+  });
+  if (!po) {
+    throw createHttpError(404, "Purchase order not found");
+  }
+
+  await createPurchaseOrderStatusHistoryRest({
+    po_id: poId,
+    status_name: "ETA Updated",
+    changed_at: new Date().toISOString(),
+    reason: payload.reason,
+  });
+
+  return mapPO(po);
+};
+
+export const listExpiringSoonReservations = async () => {
+  const beforeIso = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+
+  if (useRestFallback()) {
+    return await listExpiringSoonReservationsRest(beforeIso);
+  }
+
+  const pool = getPool();
+  const result = await pool.query(
+    `
+      SELECT po_id, po_no, supplier_name, status, expires_at, reserved_at
+      FROM purchase_orders
+      WHERE status NOT IN ('Paid', 'Expired', 'Cancelled')
+        AND expires_at IS NOT NULL
+        AND expires_at <= $1
+      ORDER BY expires_at ASC
+    `,
+    [beforeIso],
+  );
+
+  return result.rows;
+};
+
+export const listExpiredReservations = async () => {
+  if (useRestFallback()) {
+    return await listExpiredReservationsRest();
+  }
+
+  const pool = getPool();
+  const result = await pool.query(
+    `
+      SELECT ${poSelect}
+      FROM purchase_orders
+      WHERE status = 'Expired'
+      ORDER BY expires_at DESC
+    `,
+  );
+
+  return result.rows.map(mapPO);
+};
+
+export const runExpirationCheck = async () => {
+  if (useRestFallback()) {
+    return await runExpireReservationsRest();
+  }
+
+  const pool = getPool();
+  const result = await pool.query(`SELECT * FROM expire_reservations()`);
+  return result.rows;
+};
+
+export const getCurrentMonthlyBudget = async () => {
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const year = now.getFullYear();
+
+  if (useRestFallback()) {
+    return await getCurrentMonthlyBudgetRest(month, year);
+  }
+
+  const pool = getPool();
+  const result = await pool.query(
+    `
+      SELECT allocated_amount, spent_amount, month, year
+      FROM monthly_budgets
+      WHERE month = $1 AND year = $2
+      LIMIT 1
+    `,
+    [month, year],
+  );
+
+  return result.rows[0] ?? null;
+};
+
+export const listCustomsDelays = async () => {
+  let rows;
+
+  if (useRestFallback()) {
+    rows = await listCustomsTrackedPurchaseOrdersRest();
+  } else {
+    const pool = getPool();
+    const result = await pool.query(
+      `
+        SELECT
+          po_id,
+          po_no,
+          supplier_name,
+          customs_entry_date,
+          customs_release_date,
+          transit_status
+        FROM purchase_orders
+        WHERE customs_entry_date IS NOT NULL
+        ORDER BY customs_entry_date ASC
+      `,
+    );
+    rows = result.rows;
+  }
+
+  return rows.filter((row) => {
+    const transitStatus = row.transit_status ?? "";
+    const entryDate = row.customs_entry_date
+      ? new Date(row.customs_entry_date)
+      : null;
+    const ageInDays = entryDate
+      ? (Date.now() - entryDate.getTime()) / (1000 * 60 * 60 * 24)
+      : 0;
+
+    return (
+      transitStatus === "Stuck at Customs" ||
+      (Boolean(entryDate) && !row.customs_release_date && ageInDays > 5)
+    );
+  });
 };
 
 export const createPurchaseOrderItem = async (poId, payload) => {
@@ -361,7 +737,7 @@ export const importPurchaseOrder = async (payload) => {
           quantity: item.quantity,
         });
       }
-      return po;
+      return mapPO(po);
     } catch (error) {
       await deletePurchaseOrderRest(po.po_id);
       throw error;

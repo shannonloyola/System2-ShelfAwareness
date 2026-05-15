@@ -58,6 +58,11 @@ import JsBarcode from "jsbarcode";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import {
+  createCatalogProduct,
+  deleteCatalogProduct,
+  updateCatalogProduct,
+} from "@/lib/productCatalogService";
+import {
   scmProjectId,
   scmPublicAnonKey,
   fulfillmentProjectId,
@@ -1050,45 +1055,11 @@ export function ProductMaster() {
       }
       let inserted = 0;
       for (const row of rowsToInsert) {
-        const response = await fetch(
-          `${scmRestBaseUrl}/products?select=product_id,product_uuid`,
-          {
-            method: "POST",
-            headers: {
-              ...scmHeaders,
-              Prefer: "return=representation",
-            },
-            body: JSON.stringify(row),
-          },
-        );
-        if (!response.ok) {
-          const rawError = await response.text();
-          const parsedError = parseSupabaseError(rawError);
-          const fallback =
-            parsedError?.message ||
-            parsedError?.hint ||
-            parsedError?.details ||
-            rawError;
-          throw new Error(
-            toProductValidationMessage(parsedError, fallback),
-          );
-        }
-        const insertedRows = await response.json();
-        const insertedProductId = insertedRows?.[0]?.product_id;
-        const insertedProductUuid =
-          insertedRows?.[0]?.product_uuid;
-        if (insertedProductId) {
-          await patchCategoryDisplay(
-            String(insertedProductId),
-            row.category,
-          );
-        }
-        if (insertedProductUuid) {
-          await syncInventoryOnHand(
-            String(insertedProductUuid),
-            Number(row.inventory_on_hand ?? 0),
-          );
-        }
+        await createCatalogProduct({
+          ...row,
+          cost_price: Number(row.unit_price ?? 0),
+          currency_code: "PHP",
+        });
         inserted += 1;
       }
 
@@ -1291,51 +1262,12 @@ export function ProductMaster() {
         unit_price: nextUnitPrice,
         inventory_on_hand:
           parseInt(editFormData.currentStock || "0", 10) || 0,
+        cost_price: nextCostPrice,
       };
 
-      const updateRes = await fetch(
-        `${scmRestBaseUrl}/products?product_id=eq.${selectedProduct.id}`,
-        {
-          method: "PATCH",
-          headers: {
-            ...scmHeaders,
-            Prefer: "return=minimal",
-          },
-          body: JSON.stringify(payload),
-        },
-      );
-      if (!updateRes.ok) {
-        const errorData = await updateRes.text();
-        const parsedError = parseSupabaseError(errorData);
-        const fallbackErrorMessage =
-          parsedError?.message ||
-          parsedError?.hint ||
-          parsedError?.details ||
-          errorData;
-        throw new Error(
-          toProductValidationMessage(
-            parsedError,
-            fallbackErrorMessage,
-          ),
-        );
-      }
-      await patchCategoryDisplay(
-        selectedProduct.id,
-        getCategoryText(resolvedUpdateCategoryId),
-      );
-
-      if (selectedProduct.product_uuid) {
-        await syncInventoryOnHand(
-          selectedProduct.product_uuid,
-          parseInt(editFormData.currentStock || "0", 10) || 0,
-        );
-      }
+      await updateCatalogProduct(selectedProduct.id, payload);
 
       const nextCurrency = editFormData.currencyCode.trim();
-      const actor = await resolvePricingActor();
-      addDebugLog("info", "Resolved pricing actor for update", {
-        actor,
-      });
       const previousUnitPrice = Number(
         selectedProduct.unitPrice ?? 0,
       );
@@ -1349,16 +1281,10 @@ export function ProductMaster() {
         previousUnitPrice !== nextUnitPrice ||
         previousCostPrice !== nextCostPrice ||
         previousCurrency !== nextCurrency;
-      const numericProductId = Number(selectedProduct.id);
-      if (priceChanged && !Number.isNaN(numericProductId)) {
-        await upsertProductPricingHistory(
-          numericProductId,
-          nextUnitPrice,
-          nextCurrency,
-          {
-            actor,
-            costPrice: nextCostPrice,
-          },
+      if (priceChanged) {
+        addDebugLog(
+          "info",
+          "Pricing changes handled by product catalog service update",
         );
       }
 
@@ -1388,55 +1314,9 @@ export function ProductMaster() {
         `Deleting product: ${selectedProduct.name} (ID: ${selectedProduct.id})`,
       );
 
-      // Delete from products table
-      const deleteRes = await fetch(
-        `${scmRestBaseUrl}/products?product_id=eq.${selectedProduct.id}`,
-        {
-          method: "DELETE",
-          headers: {
-            ...scmHeaders,
-            Prefer: "return=minimal",
-          },
-        },
-      );
-
-      if (!deleteRes.ok) {
-        const errorText = await deleteRes.text();
-        addDebugLog(
-          "error",
-          `Delete failed (${deleteRes.status})`,
-          errorText,
-        );
-        throw new Error(errorText || "Delete failed");
-      }
+      await deleteCatalogProduct(selectedProduct.id);
 
       addDebugLog("success", "Product deleted from database");
-
-      // Optionally delete related inventory records
-      if (selectedProduct.product_uuid) {
-        try {
-          await fetch(
-            `${fulfillmentRestBaseUrl}/inventory_on_hand?product_id=eq.${encodeURIComponent(selectedProduct.product_uuid)}`,
-            {
-              method: "DELETE",
-              headers: {
-                ...fulfillmentHeaders,
-                Prefer: "return=minimal",
-              },
-            },
-          );
-          addDebugLog(
-            "success",
-            "Related inventory records cleaned up",
-          );
-        } catch (invError) {
-          addDebugLog(
-            "warning",
-            "Inventory cleanup failed (non-critical)",
-            invError,
-          );
-        }
-      }
 
       await refreshProductAndPricing();
       setShowDeleteDialog(false);
@@ -1531,7 +1411,7 @@ export function ProductMaster() {
     setIsSubmitting(true);
     addDebugLog(
       "info",
-      "Starting product submission via Supabase REST API",
+      "Starting product submission via product catalog service",
     );
 
     try {
@@ -1560,109 +1440,33 @@ export function ProductMaster() {
       setLastPayload(productPayload);
       addDebugLog(
         "info",
-        "Payload mapped to public.products schema",
+        "Payload mapped to product catalog service schema",
         productPayload,
       );
 
-      const apiUrl = `${scmRestBaseUrl}/products`;
-      addDebugLog(
-        "info",
-        `POST request to Supabase REST API: ${apiUrl}`,
-      );
+      const createdProduct = await createCatalogProduct({
+        ...productPayload,
+        cost_price: nextCostPrice,
+      });
 
-      const response = await fetch(
-        `${apiUrl}?select=product_id,product_uuid`,
-        {
-          method: "POST",
-          headers: {
-            ...scmHeaders,
-            Prefer: "return=representation",
-          },
-          body: JSON.stringify(productPayload),
-        },
-      );
-
-      addDebugLog(
-        "info",
-        `HTTP Status: ${response.status} ${response.statusText}`,
-      );
-
-      if (response.status !== 201) {
-        const errorData = await response.text();
-
-        const parsedError = parseSupabaseError(errorData);
-        const fallbackErrorMessage =
-          parsedError?.message ||
-          parsedError?.hint ||
-          parsedError?.details ||
-          errorData;
-        const errorMessage = toProductValidationMessage(
-          parsedError,
-          fallbackErrorMessage,
-        );
-
-        setLastResponse({
-          error: true,
-          status: response.status,
-          statusText: response.statusText,
-          rawError: errorData,
-          parsedError: parsedError,
-          data: errorMessage,
-        });
-        addDebugLog(
-          "error",
-          `API Error Response (${response.status})`,
-          { rawError: errorData, parsedError },
-        );
-        throw new Error(errorMessage);
-      }
-
-      const insertedRows = await response.json();
-      const insertedProductId = insertedRows?.[0]?.product_id;
-      const insertedProductUuid = insertedRows?.[0]?.product_uuid;
-      if (insertedProductId) {
-        await patchCategoryDisplay(
-          String(insertedProductId),
-          getCategoryText(resolvedCategoryId),
-        );
-        const numericProductId = Number(insertedProductId);
-        if (!Number.isNaN(numericProductId)) {
-          const actor = await resolvePricingActor();
-          addDebugLog("info", "Resolved pricing actor for create", {
-            actor,
-          });
-          await upsertProductPricingHistory(
-            numericProductId,
-            nextUnitPrice,
-            formData.currencyCode || "PHP",
-            {
-              costPrice: nextCostPrice,
-              actor,
-            },
-          );
-        }
-      }
-      if (insertedProductUuid) {
-        await syncInventoryOnHand(
-          String(insertedProductUuid),
-          parseInt(formData.currentStock || "0", 10) || 0,
-        );
-      }
+      setLastResponse({
+        success: true,
+        data: createdProduct,
+      });
+      addDebugLog("info", "Product catalog service response", {
+        product_id: createdProduct?.product_id,
+        product_uuid: createdProduct?.product_uuid,
+      });
 
       addDebugLog(
         "success",
-        "Product inserted successfully (HTTP 201)",
+        "Product inserted successfully via product catalog service",
       );
       addDebugLog(
         "info",
         "Refreshing product list from database...",
       );
       await refreshProductAndPricing();
-      setLastResponse({
-        success: true,
-        message: "Product created and table refreshed",
-      });
-
       toast.success("Product Added Successfully", {
         description: `${formData.productName} (${generatedSKU}) has been saved to the database`,
       });

@@ -1,5 +1,6 @@
 import { 
-  TrendingUp, 
+  TrendingUp,
+  TrendingDown, 
   DollarSign, 
   Package, 
   CheckCircle,
@@ -8,61 +9,102 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useEffect, useState, useMemo } from "react";
+import { fetchInventoryItems } from "@/lib/inventoryService";
+import { fetchDistributionInventoryValueTotal, fetchDistributionOrders } from "@/lib/distributionService";
+import { fetchPurchaseOrders } from "@/lib/procurementService";
 import { fetchBackendHealth, type BackendHealthResponse } from "@/lib/backend-api";
+import {
+  fetchCurrentMonthlyBudget,
+  fetchCustomsDelays as fetchCustomsDelayRows,
+} from "@/lib/procurementService";
 
-const supplyChainSteps = [
-  { id: 1, label: "P.O. Created", status: "complete", count: 12 },
-  { id: 2, label: "Supplier Confirmed (JP)", status: "complete", count: 12 },
-  { id: 3, label: "In-Transit: Air/Sea", status: "active", count: 8 },
-  { id: 4, label: "Receiving", status: "pending", count: 4 },
-  { id: 5, label: "Local Dispatch", status: "pending", count: 2 },
-  { id: 6, label: "Retailer Received", status: "pending", count: 0 },
-  { id: 7, label: "Payment Settled", status: "pending", count: 0 },
-];
+import { supabaseFulfillment } from "@/lib/supabase";
 
-const inventoryData = [
-  { sku: "Amoxicillin 500mg", units: 12500, value: 625000, status: "healthy" },
-  { sku: "Paracetamol 500mg", units: 18200, value: 364000, status: "healthy" },
-  { sku: "Ibuprofen 400mg", units: 8900, value: 445000, status: "healthy" },
-  { sku: "Cetirizine 10mg", units: 3200, value: 192000, status: "low" },
-  { sku: "Losartan 50mg", units: 6700, value: 536000, status: "healthy" },
-  { sku: "Metformin 500mg", units: 1800, value: 144000, status: "low" },
-];
+// supplyChainSteps removed
 
-const statCards = [
-  {
-    title: "Total Assets",
-    value: "₱2.3M",
-    change: "+12.5%",
-    icon: DollarSign,
-    color: "#00A3AD"
-  },
-  {
-    title: "Payments Pending",
-    value: "₱485K",
-    change: "3 Overdue",
-    icon: AlertCircle,
-    color: "#F97316"
-  },
-  {
-    title: "Shipments from Japan",
-    value: "8 Active",
-    change: "ETA: 3-7 days",
-    icon: Package,
-    color: "#00A3AD"
-  },
-  {
-    title: "Fulfillment Rate",
-    value: "94.2%",
-    change: "+2.1%",
-    icon: CheckCircle,
-    color: "#00A3AD"
-  },
-];
+// inventoryData removed
+
+// statCards removed
 
 export function GlobalDashboard() {
+  const [realInventory, setRealInventory] = useState([]);
+  const [totalAssets, setTotalAssets] = useState(0);
+  const [orders, setOrders] = useState([]);
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [backordersCount, setBackordersCount] = useState(0);
+
+  useEffect(() => {
+    const loadDashboardData = async () => {
+      try {
+        const [inv, assets, distOrders, poData, backordersRes] = await Promise.all([
+          fetchInventoryItems(),
+          fetchDistributionInventoryValueTotal(),
+          fetchDistributionOrders(),
+          fetchPurchaseOrders(),
+          supabaseFulfillment.from("v_backorder_aging").select("*", { count: 'exact', head: true })
+        ]);
+        setRealInventory(inv || []);
+        setTotalAssets(assets || 0);
+        setOrders(distOrders || []);
+        setPurchaseOrders(poData || []);
+        setBackordersCount(backordersRes.count || 0);
+      } catch (err) {
+        console.error("Dashboard fetch error:", err);
+      }
+    };
+    loadDashboardData();
+
+    // Subscribe to backorder changes for real-time updates
+    const channel = supabaseFulfillment
+      .channel("dashboard-real-time")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "backorders" },
+        () => loadDashboardData()
+      )
+      .subscribe();
+
+    return () => {
+      void supabaseFulfillment.removeChannel(channel);
+    };
+  }, []);
+
+  const pendingPaymentsValue = useMemo(() => 
+    orders
+      .filter(o => o.status === "placed" || o.status === "partially_fulfilled")
+      .reduce((sum, o) => sum + Number(o.total_amount || 0), 0)
+  , [orders]);
+
+  const overdueCount = useMemo(() => 
+    orders
+      .filter(o => o.status !== "fulfilled" && o.status !== "cancelled" && o.due_date && new Date(o.due_date) < new Date())
+      .length
+  , [orders]);
+
+  const inTransitCount = useMemo(() => 
+    purchaseOrders.filter(po => po.status === "In-Transit").length
+  , [purchaseOrders]);
+
+  const lowStockCount = useMemo(() => 
+    realInventory.filter(item => item.status === "low" || item.status === "zero").length
+  , [realInventory]);
+
+  const inventoryChartData = useMemo(() => 
+    realInventory.map(item => ({
+      sku: item.sku,
+      units: item.systemCount,
+      value: item.systemCount * 50, // Mock unit value for chart if not available
+      status: (item.status === "low" || item.status === "zero") ? "low" : "healthy"
+    })).slice(0, 10)
+  , [realInventory]);
+
+  const formatPHP = (amount) =>
+    new Intl.NumberFormat("en-PH", {
+      style: "currency",
+      currency: "PHP",
+    }).format(amount);
+
   const [allocatedAmount, setAllocatedAmount] = useState(0);
   const [spentAmount, setSpentAmount] = useState(0);
   const [customsDelays, setCustomsDelays] = useState<any[]>([]);
@@ -72,54 +114,48 @@ export function GlobalDashboard() {
   const [backendError, setBackendError] = useState<string | null>(null);
 
   useEffect(() => {
-  const fetchMonthlyBudget = async () => {
-    const now = new Date();
-    const month = now.getMonth() + 1;
-    const year = now.getFullYear();
+    const fetchMonthlyBudget = async () => {
+      try {
+        const data = await fetchCurrentMonthlyBudget();
+        if (data) {
+          setAllocatedAmount(data.allocated_amount || 0);
+          setSpentAmount(data.spent_amount || 0);
+        }
+      } catch {
+        setAllocatedAmount(0);
+        setSpentAmount(0);
+      }
+    };
 
-    const { data, error } = await supabase
-      .from("monthly_budgets")
-      .select("allocated_amount, spent_amount")
-      .eq("month", month)
-      .eq("year", year)
-      .single();
+    const fetchCustomsDelays = async () => {
+      setCustomsLoading(true);
+      try {
+        const data = await fetchCustomsDelayRows();
+        setCustomsDelays(data);
+      } catch {
+        setCustomsDelays([]);
+      } finally {
+        setCustomsLoading(false);
+      }
+    };
 
-    if (!error && data) {
-      setAllocatedAmount(data.allocated_amount || 0);
-      setSpentAmount(data.spent_amount || 0);
-    }
-  };
+    const loadBackendHealth = async () => {
+      try {
+        const data = await fetchBackendHealth();
+        setBackendHealth(data);
+        setBackendError(null);
+      } catch (error) {
+        setBackendHealth(null);
+        setBackendError(
+          error instanceof Error ? error.message : "Backend unavailable",
+        );
+      }
+    };
 
-  const fetchCustomsDelays = async () => {
-    setCustomsLoading(true);
-    const { data, error } = await supabase
-      .from("stuck_at_customs_view")
-      .select("po_id, po_no, supplier_name, customs_entry_date, transit_status")
-      .order("customs_entry_date", { ascending: true });
-
-    if (!error && data) {
-      setCustomsDelays(data);
-    }
-    setCustomsLoading(false);
-  };
-
-  const loadBackendHealth = async () => {
-    try {
-      const data = await fetchBackendHealth();
-      setBackendHealth(data);
-      setBackendError(null);
-    } catch (error) {
-      setBackendHealth(null);
-      setBackendError(
-        error instanceof Error ? error.message : "Backend unavailable",
-      );
-    }
-  };
-
-  fetchMonthlyBudget();
-  fetchCustomsDelays();
-  void loadBackendHealth();
-}, []);
+    void fetchMonthlyBudget();
+    void fetchCustomsDelays();
+    void loadBackendHealth();
+  }, []);
 
     const budgetUsedPercent =
     allocatedAmount > 0 ? (spentAmount / allocatedAmount) * 100 : 0;
@@ -142,6 +178,18 @@ export function GlobalDashboard() {
         ? "bg-yellow-500"
         : "bg-green-500";
   
+
+  const supplyChainSteps = useMemo(() => [
+    { id: 1, label: "P.O. Created", status: purchaseOrders.length > 0 ? "complete" : "pending", count: purchaseOrders.length },
+    { id: 2, label: "Supplier Confirmed", status: purchaseOrders.some(po => po.status === "Confirmed") ? "complete" : "pending", count: purchaseOrders.filter(po => po.status === "Confirmed").length },
+    { id: 3, label: "In-Transit: Air/Sea", status: purchaseOrders.some(po => po.status === "In-Transit") ? "active" : "pending", count: purchaseOrders.filter(po => po.status === "In-Transit").length },
+    { id: 4, label: "Receiving", status: purchaseOrders.some(po => po.status === "Receiving") ? "pending" : "pending", count: purchaseOrders.filter(po => po.status === "Receiving").length },
+    { id: 5, label: "Local Dispatch", status: orders.some(o => o.status === "partially_fulfilled") ? "pending" : "pending", count: orders.filter(o => o.status === "partially_fulfilled").length },
+    { id: 6, label: "Retailer Received", status: orders.some(o => o.status === "fulfilled") ? "pending" : "pending", count: orders.filter(o => o.status === "fulfilled").length },
+    { id: 7, label: "Payment Settled", status: "pending", count: 0 },
+  ], [purchaseOrders, orders]);
+
+
   return (
     <div className="p-4 lg:p-8 space-y-8 bg-[#F8FAFC]">
       {/* Header */}
@@ -188,25 +236,61 @@ export function GlobalDashboard() {
       </Card>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map((stat) => (
-          <Card key={stat.title} className="bg-white border-[#111827]/10 hover:shadow-md transition-all">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          <Card className="bg-white border-[#111827]/10 hover:shadow-md transition-all">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-[#6B7280]">
-                {stat.title}
-              </CardTitle>
-              <stat.icon className="w-5 h-5" style={{ color: stat.color }} />
+              <CardTitle className="text-sm font-medium text-[#6B7280]">Total Assets</CardTitle>
+              <DollarSign className="w-5 h-5 text-[#00A3AD]" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-semibold mb-1 text-[#111827]">
-                {stat.value}
-              </div>
-              <p className="text-xs font-medium" style={{ color: stat.color }}>
-                {stat.change}
-              </p>
+              <div className="text-2xl font-semibold mb-1 text-[#111827]">{formatPHP(totalAssets)}</div>
+              <p className="text-xs font-medium text-[#00A3AD]">Live inventory valuation</p>
             </CardContent>
           </Card>
-        ))}
+
+          <Card className="bg-white border-[#111827]/10 hover:shadow-md transition-all">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-[#6B7280]">Shipments from Japan</CardTitle>
+              <Package className="w-5 h-5 text-[#00A3AD]" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold mb-1 text-[#111827]">{inTransitCount} Active</div>
+              <p className="text-xs font-medium text-[#00A3AD]">In-Transit status</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white border-[#111827]/10 hover:shadow-md transition-all">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-[#6B7280]">Pending Backorders</CardTitle>
+              <AlertCircle className="w-5 h-5 text-[#F97316]" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold mb-1 text-[#111827]">{backordersCount}</div>
+              <p className="text-xs font-medium text-[#F97316]">Retailer waitlist</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white border-[#111827]/10 hover:shadow-md transition-all">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-[#6B7280]">Low Stock SKUs</CardTitle>
+              <TrendingDown className="w-5 h-5 text-[#DC2626]" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold mb-1 text-[#111827]">{lowStockCount}</div>
+              <p className="text-xs font-medium text-[#DC2626]">Replenishment required</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white border-[#111827]/10 hover:shadow-md transition-all">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-[#6B7280]">Payments Pending</CardTitle>
+              <DollarSign className="w-5 h-5 text-[#F97316]" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold mb-1 text-[#111827]">{formatPHP(pendingPaymentsValue)}</div>
+              <p className="text-xs font-medium text-[#F97316]">{overdueCount} Overdue</p>
+            </CardContent>
+          </Card>
       </div>
       
       {/* Monthly Procurement Budget */}
@@ -364,7 +448,7 @@ export function GlobalDashboard() {
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={inventoryData}>
+            <BarChart data={inventoryChartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
               <XAxis 
                 dataKey="sku" 
@@ -384,7 +468,7 @@ export function GlobalDashboard() {
                 }}
               />
               <Bar dataKey="units" radius={[8, 8, 0, 0]}>
-                {inventoryData.map((entry) => (
+                {inventoryChartData.map((entry) => (
                   <Cell 
                     key={`cell-${entry.sku}`} 
                     fill={entry.status === 'low' ? '#D1D5DB' : '#1A2B47'} 
@@ -407,7 +491,7 @@ export function GlobalDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {inventoryData.map((item) => (
+                {inventoryChartData.map((item) => (
                   <tr key={item.sku} className="border-b border-[#E5E7EB] hover:bg-[#F8FAFC] transition-colors">
                     <td className="py-3 px-4 text-[#111827] font-medium">{item.sku}</td>
                     <td className="py-3 px-4 text-right text-[#111827]">{item.units.toLocaleString()}</td>

@@ -47,16 +47,21 @@ const ensureRestConfig = () => {
 };
 
 const handleResponse = async (response) => {
+  const text = await response.text();
+  
   if (response.ok) {
-    if (response.status === 204) {
+    if (response.status === 204 || !text.trim()) {
       return null;
     }
 
-    return response.json();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      return text;
+    }
   }
 
-  const body = await response.text();
-  throw new Error(body || `Supabase REST request failed with ${response.status}`);
+  throw new Error(text || `Supabase REST request failed with ${response.status}`);
 };
 
 export const restHealthCheck = async () => {

@@ -2,21 +2,34 @@ import express from "express";
 import { hasDatabaseConfig, hasSupabaseRestConfig } from "../lib/database.js";
 import { asyncHandler, createHttpError } from "../lib/http.js";
 import {
+  validateApprovalPayload,
   parsePagination,
+  validateDocumentPayload,
   validateBulkImportPayload,
+  validateEtaPayload,
   validatePurchaseOrderItemPayload,
   validatePurchaseOrderPayload,
   validateStatusTransition,
 } from "../lib/validation.js";
 import {
+  appendPurchaseOrderStatusHistory,
   createPurchaseOrder,
   createPurchaseOrderItem,
   deletePurchaseOrderItem,
   generateNextPONumber,
+  getCurrentMonthlyBudget,
   getPurchaseOrderById,
   importPurchaseOrder,
+  listCustomsDelays,
+  listExpiredReservations,
+  listExpiringSoonReservations,
   listPurchaseOrderItems,
+  listPurchaseOrderStatusHistory,
   listPurchaseOrders,
+  runExpirationCheck,
+  updateLatestPurchaseOrderDocument,
+  updatePurchaseOrderApproval,
+  updatePurchaseOrderEta,
   updatePurchaseOrder,
   updatePurchaseOrderItem,
 } from "../repositories/purchaseOrdersRepository.js";
@@ -36,6 +49,46 @@ purchaseOrdersRouter.use((req, _res, next) => {
 
   next();
 });
+
+purchaseOrdersRouter.get(
+  "/dashboard/monthly-budget/current",
+  asyncHandler(async (_req, res) => {
+    const budget = await getCurrentMonthlyBudget();
+    res.json({ data: budget });
+  }),
+);
+
+purchaseOrdersRouter.get(
+  "/dashboard/customs-delays",
+  asyncHandler(async (_req, res) => {
+    const rows = await listCustomsDelays();
+    res.json({ data: rows });
+  }),
+);
+
+purchaseOrdersRouter.get(
+  "/reservations/expiring-soon",
+  asyncHandler(async (_req, res) => {
+    const rows = await listExpiringSoonReservations();
+    res.json({ data: rows });
+  }),
+);
+
+purchaseOrdersRouter.get(
+  "/reservations/expired",
+  asyncHandler(async (_req, res) => {
+    const rows = await listExpiredReservations();
+    res.json({ data: rows });
+  }),
+);
+
+purchaseOrdersRouter.post(
+  "/reservations/expire",
+  asyncHandler(async (_req, res) => {
+    const result = await runExpirationCheck();
+    res.json({ data: result ?? [] });
+  }),
+);
 
 purchaseOrdersRouter.get(
   "/next-number",
@@ -91,6 +144,56 @@ purchaseOrdersRouter.patch(
     });
     const purchaseOrder = await updatePurchaseOrder(req.params.id, payload);
     res.json({ data: purchaseOrder });
+  }),
+);
+
+purchaseOrdersRouter.patch(
+  "/:id/approval",
+  asyncHandler(async (req, res) => {
+    const payload = validateApprovalPayload(req.body);
+    const purchaseOrder = await updatePurchaseOrderApproval(
+      req.params.id,
+      payload,
+    );
+    res.json({ data: purchaseOrder });
+  }),
+);
+
+purchaseOrdersRouter.patch(
+  "/:id/eta",
+  asyncHandler(async (req, res) => {
+    const payload = validateEtaPayload(req.body);
+    const purchaseOrder = await updatePurchaseOrderEta(req.params.id, payload);
+    res.json({ data: purchaseOrder });
+  }),
+);
+
+purchaseOrdersRouter.get(
+  "/:id/history",
+  asyncHandler(async (req, res) => {
+    const history = await listPurchaseOrderStatusHistory(req.params.id);
+    res.json({ data: history });
+  }),
+);
+
+purchaseOrdersRouter.post(
+  "/:id/history",
+  asyncHandler(async (req, res) => {
+    const payload = req.body ?? {};
+    if (!payload.status_name) {
+      payload.status_name = "Pending Supplier Confirmation";
+    }
+    const history = await appendPurchaseOrderStatusHistory(req.params.id, payload);
+    res.status(201).json({ data: history });
+  }),
+);
+
+purchaseOrdersRouter.patch(
+  "/:id/history/latest-document",
+  asyncHandler(async (req, res) => {
+    const payload = validateDocumentPayload(req.body);
+    const history = await updateLatestPurchaseOrderDocument(req.params.id, payload);
+    res.json({ data: history });
   }),
 );
 

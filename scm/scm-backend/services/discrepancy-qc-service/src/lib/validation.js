@@ -31,3 +31,22 @@ export const validateQualityCheckPayload = (payload) => {
     photo_url: normalizeNullableString(body.photo_url),
   };
 };
+
+export const validateShipmentDiscrepancyUpdatePayload = (payload) => {
+  const disposition = normalizeNullableString(payload?.disposition);
+
+  if (!disposition) {
+    throw createHttpError(400, "disposition is required");
+  }
+
+  if (!["released", "returned", "scrapped"].includes(disposition)) {
+    throw createHttpError(
+      400,
+      "disposition must be released, returned, or scrapped",
+    );
+  }
+
+  return {
+    disposition,
+  };
+};

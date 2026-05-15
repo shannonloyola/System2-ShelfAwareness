@@ -30,7 +30,11 @@ authRouter.get(
   "/role",
   asyncHandler(async (req, res) => {
     const { userId, email } = req.query;
-    const result = await getUserRole({ userId, email });
+    const authorization = req.headers.authorization?.trim();
+    const accessToken = authorization?.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length)
+      : null;
+    const result = await getUserRole({ userId, email, accessToken });
     res.json(result);
   }),
 );

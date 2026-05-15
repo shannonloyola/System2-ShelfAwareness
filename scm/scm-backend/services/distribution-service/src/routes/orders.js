@@ -70,13 +70,13 @@ ordersRouter.get(
     const orderNo = String(req.query.order_no || "").trim();
     const orderTotal = Number(req.query.order_total ?? 0);
 
-    if (!retailerName || !orderNo) {
-      throw createHttpError(400, "retailer_name and order_no are required");
+    if (!retailerName) {
+      throw createHttpError(400, "retailer_name is required");
     }
 
     const result = await listOrderPayments({
       retailerName,
-      orderNo,
+      orderNo,   // may be empty — repository handles gracefully
       orderTotal,
     });
     res.json({ data: result });

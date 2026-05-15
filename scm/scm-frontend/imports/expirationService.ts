@@ -1,70 +1,34 @@
-import { supabaseSCM } from "../lib/supabase";
+import {
+  fetchExpiredReservations,
+  fetchExpiringReservations,
+  runReservationExpiration,
+  updatePurchaseOrder,
+} from "@/lib/procurementService";
 
-// ── Manually trigger expiration check (calls the Postgres function) ──
 export async function runExpirationCheck() {
-  const { data, error } = await supabaseSCM.rpc(
-    "expire_reservations",
-  );
-  if (error) throw new Error(error.message);
-  return data as {
-    expired_po_id: string;
-    po_no: string;
-    released_qty: number;
-    product_id: number;
-  }[];
+  return runReservationExpiration();
 }
 
-// ── Reserve stock when a PO is created ──
 export async function reserveStock(
-  productId: number,
-  qty: number,
+  _productId: number,
+  _qty: number,
 ) {
-  const { error } = await supabaseSCM.rpc(
-    "reserve_product_stock",
-    {
-      p_product_id: productId,
-      p_qty: qty,
-    },
+  throw new Error(
+    "reserveStock is not available from the frontend. Route this through a backend inventory workflow.",
   );
-  if (error) throw new Error(error.message);
 }
 
-// ── Mark PO as paid — clears reservation, confirms stock deduction ──
 export async function markPOPaid(poId: string) {
-  const { error } = await supabaseSCM
-    .from("purchase_orders")
-    .update({
-      status: "Paid",
-      paid_at: new Date().toISOString(),
-    })
-    .eq("po_id", poId);
-  if (error) throw new Error(error.message);
+  return updatePurchaseOrder(poId, {
+    status: "Paid",
+    paid_at: new Date().toISOString(),
+  });
 }
 
-// ── Fetch all expiring soon (within next 2 hours) ──
 export async function fetchExpiringSoon() {
-  const twoHoursFromNow = new Date(
-    Date.now() + 2 * 60 * 60 * 1000,
-  ).toISOString();
-  const { data, error } = await supabaseSCM
-    .from("purchase_orders")
-    .select(
-      "po_id, po_no, supplier_name, status, expires_at, reserved_at",
-    )
-    .not("status", "in", '("Paid","Expired","Cancelled")')
-    .lte("expires_at", twoHoursFromNow)
-    .order("expires_at", { ascending: true });
-  if (error) throw new Error(error.message);
-  return data ?? [];
+  return fetchExpiringReservations();
 }
 
-// ── Fetch all currently expired unpaid POs ──
 export async function fetchExpiredPOs() {
-  const { data, error } = await supabaseSCM
-    .from("purchase_orders")
-    .select("*")
-    .eq("status", "Expired")
-    .order("expires_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  return data ?? [];
+  return fetchExpiredReservations();
 }

@@ -22,13 +22,18 @@ const ensureRestConfig = () => {
 };
 
 const handleResponse = async (response) => {
+  const text = await response.text();
+  
   if (response.ok) {
-    if (response.status === 204) return null;
-    return response.json();
+    if (response.status === 204 || !text.trim()) return null;
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      return text;
+    }
   }
 
-  const body = await response.text();
-  throw new Error(body || `Supabase REST request failed with ${response.status}`);
+  throw new Error(text || `Supabase REST request failed with ${response.status}`);
 };
 
 const mapProductRow = (row, inventoryByProductId = new Map()) => {
@@ -81,7 +86,8 @@ const syncInventoryOnHandRest = async (productKey, quantity) => {
       headers,
     },
   );
-  const existingRows = existingRes.ok ? await existingRes.json() : [];
+  const existingText = existingRes.ok ? await existingRes.text() : "";
+  const existingRows = existingText.trim() ? JSON.parse(existingText) : [];
 
   if (existingRows.length > 0) {
     const row = existingRows[0];
@@ -110,7 +116,8 @@ const syncInventoryOnHandRest = async (productKey, quantity) => {
     },
   );
   if (binLookup.ok) {
-    const rows = await binLookup.json();
+    const text = await binLookup.text();
+    const rows = text.trim() ? JSON.parse(text) : [];
     binId = rows?.[0]?.bin_id ?? null;
   }
 
@@ -123,7 +130,8 @@ const syncInventoryOnHandRest = async (productKey, quantity) => {
       },
     );
     if (binsTableLookup.ok) {
-      const rows = await binsTableLookup.json();
+      const text = await binsTableLookup.text();
+      const rows = text.trim() ? JSON.parse(text) : [];
       binId = rows?.[0]?.id ?? null;
     }
   }
@@ -387,13 +395,23 @@ export const createProductRest = async (payload) => {
   }
 
   const productKey = row.product_uuid || row.product_id;
-  await syncInventoryOnHandRest(productKey, Number(payload.inventory_on_hand ?? 0));
-  await upsertProductPricingRest({
-    product_id: row.product_id,
-    selling_price: payload.unit_price ?? 0,
-    cost_price: payload.cost_price ?? 0,
-    currency_code: payload.currency_code ?? "PHP",
-  });
+  
+  try {
+    await syncInventoryOnHandRest(productKey, Number(payload.inventory_on_hand ?? 0));
+  } catch (error) {
+    console.warn(`[SYNC WARNING] Could not initialize stock for product ${productKey}:`, error.message);
+  }
+
+  try {
+    await upsertProductPricingRest({
+      product_id: row.product_id,
+      selling_price: payload.unit_price ?? 0,
+      cost_price: payload.cost_price ?? 0,
+      currency_code: payload.currency_code ?? "PHP",
+    });
+  } catch (error) {
+    console.warn(`[SYNC WARNING] Could not initialize pricing for product ${productKey}:`, error.message);
+  }
 
   return mapProductRow(row);
 };
@@ -450,21 +468,29 @@ export const updateProductRest = async (productId, payload) => {
       ? Number(payload.inventory_on_hand)
       : Number(current.inventory_on_hand ?? 0);
   const productKey = row.product_uuid || row.product_id;
-  await syncInventoryOnHandRest(productKey, stockQty);
+  try {
+    await syncInventoryOnHandRest(productKey, stockQty);
+  } catch (error) {
+    console.warn(`[SYNC WARNING] Could not update stock for product ${productKey}:`, error.message);
+  }
 
-  await upsertProductPricingRest({
-    product_id: row.product_id,
-    selling_price:
-      payload.unit_price !== undefined
-        ? payload.unit_price
-        : row.unit_price,
-    cost_price:
-      payload.cost_price !== undefined ? payload.cost_price : 0,
-    currency_code:
-      payload.currency_code !== undefined
-        ? payload.currency_code
-        : row.currency_code,
-  });
+  try {
+    await upsertProductPricingRest({
+      product_id: row.product_id,
+      selling_price:
+        payload.unit_price !== undefined
+          ? payload.unit_price
+          : row.unit_price,
+      cost_price:
+        payload.cost_price !== undefined ? payload.cost_price : 0,
+      currency_code:
+        payload.currency_code !== undefined
+          ? payload.currency_code
+          : row.currency_code,
+    });
+  } catch (error) {
+    console.warn(`[SYNC WARNING] Could not update pricing for product ${row.product_id}:`, error.message);
+  }
 
   return mapProductRow({
     ...row,

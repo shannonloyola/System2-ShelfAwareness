@@ -59,3 +59,85 @@ export const saveGrnQualityChecksRest = async (payload) => {
     saved: true,
   };
 };
+
+export const listShipmentDiscrepanciesRest = async ({
+  excludeApproved = false,
+} = {}) => {
+  ensureRestConfig();
+
+  const url = new URL(`${env.supabaseUrl}/rest/v1/shipment_discrepancies`);
+  url.searchParams.set("select", "*");
+  url.searchParams.set("order", "created_at.desc");
+
+  if (excludeApproved) {
+    url.searchParams.set("status", "not.in.(approved,resolved,rejected)");
+  }
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(),
+  });
+
+  return handleResponse(response);
+};
+
+export const updateShipmentDiscrepancyRest = async (id, payload) => {
+  ensureRestConfig();
+
+  const response = await fetch(
+    `${env.supabaseUrl}/rest/v1/shipment_discrepancies?id=eq.${id}`,
+    {
+      method: "PATCH",
+      headers: {
+        ...buildHeaders(),
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  const data = await handleResponse(response);
+  return data[0] ?? null;
+};
+
+export const listQualityChecksRest = async () => {
+  ensureRestConfig();
+
+  const url = new URL(`${env.supabaseUrl}/rest/v1/grn_quality_checks`);
+  url.searchParams.set("select", "*");
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(),
+  });
+
+  return handleResponse(response);
+};
+
+export const resolveDiscrepancyRest = async (id, disposition, resolvedBy = "qc_inspector") => {
+  ensureRestConfig();
+
+  const payload = await handleResponse(
+    await fetch(`${env.supabaseUrl}/rest/v1/rpc/resolve_discrepancy`, {
+      method: "POST",
+      headers: buildHeaders(),
+      body: JSON.stringify({
+        p_discrepancy_id: id,
+        p_disposition: disposition,
+        p_resolved_by: resolvedBy,
+      }),
+    }),
+  );
+
+  if (payload?.success === false) {
+    throw new Error(payload.error ?? "resolve_discrepancy returned success: false");
+  }
+
+  // Fetch the updated row to return it
+  const response = await fetch(`${env.supabaseUrl}/rest/v1/shipment_discrepancies?id=eq.${id}`, {
+    method: "GET",
+    headers: buildHeaders(),
+  });
+  const data = await handleResponse(response);
+  return data[0] ?? null;
+};

@@ -48,7 +48,9 @@ const TYPE_COLORS: Record<string, string> = {
   "Manual Adjustment": "#D97706",
   RESERVATION_EXPIRED: "#DC2626",
   ADJUSTMENT: "#EA580C",
+  STOCK_ADJUSTMENT: "#EA580C",
   DISPATCH: "#BE185D",
+  "STOCK TRANSFER": "#00A3AD",
 };
 
 export default function MovementReport() {
@@ -361,6 +363,14 @@ export default function MovementReport() {
         )}
       </div>
       <p style={{ fontSize: 12, color: "#9CA3AF", marginTop: 8 }}>Showing {filteredMovements.length} movements.</p>
+
+      {/* DEBUG SECTION */}
+      <div style={{ marginTop: 40, padding: 16, background: "#F3F4F6", borderRadius: 8, border: "1px dashed #D1D5DB" }}>
+        <h4 style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", textTransform: "uppercase", marginBottom: 8 }}>Live Audit Monitor (Latest 5 Records - Raw)</h4>
+        <pre style={{ fontSize: 10, color: "#374151", overflow: "auto", maxHeight: 150 }}>
+          {JSON.stringify(movements.slice(0, 5), null, 2)}
+        </pre>
+      </div>
     </div>
   );
 }

@@ -55,7 +55,7 @@ export const listOrdersRest = async () => {
   const [orders, lines] = await Promise.all([
     handleResponse(
       await fetch(
-        `${env.fulfillmentSupabaseUrl}/rest/v1/retail_orders?select=*&order=created_at.asc`,
+        `${env.fulfillmentSupabaseUrl}/rest/v1/retail_orders?select=*`,
         {
           method: "GET",
           headers: buildHeaders(),
@@ -328,14 +328,17 @@ export const getInvoiceRest = async (orderId) => {
 export const listOrderPaymentsRest = async ({ retailerName, orderNo, orderTotal }) => {
   ensureRestConfig();
 
+  // Build query — only add notes filter when orderNo is known
+  let query = `${env.fulfillmentSupabaseUrl}/rest/v1/payments?select=id,supplier_name,amount,payment_date,payment_method,reference_no,notes,created_at&supplier_name=eq.${encodeURIComponent(retailerName)}&order=payment_date.desc`;
+  if (orderNo) {
+    query += `&notes=ilike.*${encodeURIComponent(`[Invoice:${orderNo}]`)}*`;
+  }
+
   const rows = await handleResponse(
-    await fetch(
-      `${env.fulfillmentSupabaseUrl}/rest/v1/payments?select=id,supplier_name,amount,payment_date,payment_method,reference_no,notes,created_at&supplier_name=eq.${encodeURIComponent(retailerName)}&notes=ilike.*${encodeURIComponent(`[Invoice:${orderNo}]`)}*&order=payment_date.desc&order=created_at.desc`,
-      {
-        method: "GET",
-        headers: buildHeaders(),
-      },
-    ),
+    await fetch(query, {
+      method: "GET",
+      headers: buildHeaders(),
+    }),
   );
 
   const payments = mapPayments(Array.isArray(rows) ? rows : []);

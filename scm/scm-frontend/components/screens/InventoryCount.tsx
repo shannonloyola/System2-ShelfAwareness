@@ -24,6 +24,7 @@ import {
 
 interface Product {
   id: number | string;
+  product_id?: string;
   sku: string;
   product_name: string;
   barcode: string | null;
@@ -50,7 +51,7 @@ export default function InventoryCount() {
   const [mobileCountDrafts, setMobileCountDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [countedBy] = useState("Warehouse Staff"); // Could be made dynamic
+  const [countedBy] = useState("Warehouse Staff");
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [bulkCounts, setBulkCounts] = useState<CSVRow[]>([]);
 
@@ -62,9 +63,14 @@ export default function InventoryCount() {
 
   const loadRecentCounts = async () => {
     try {
-      // Table 'physical_counts' does not exist yet in schema
-      // Gracefully handle by setting empty array
-      setRecentCounts([]);
+      const { data, error } = await supabaseFulfillment
+        .from("physical_counts")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      if (error) throw error;
+      setRecentCounts(data || []);
     } catch (error: any) {
       console.error("Error loading recent counts:", error);
     }
@@ -75,27 +81,13 @@ export default function InventoryCount() {
     try {
       const { data, error } = await supabaseFulfillment
         .from("products")
-        .select("product_id,sku,product_name,barcode,inventory_on_hand")
-        .order("product_name", { ascending: true })
-        .limit(100);
+        .select("*")
+        .limit(50);
 
-      if (error) {
-        throw error;
-      }
-
-      const normalized = (data ?? []).map((row: any) => ({
-        id: row.product_id ?? row.id ?? "",
-        sku: String(row.sku ?? "N/A"),
-        product_name: String(row.product_name ?? "Unknown Product"),
-        barcode: (row.barcode as string | null) ?? null,
-        inventory_on_hand: Number(row.inventory_on_hand ?? 0),
-      }));
-      setShelfItems(normalized);
+      if (error) throw error;
+      setShelfItems(data || []);
     } catch (error: any) {
-      toast.error("Could not load shelf items", {
-        description: error.message,
-      });
-      setShelfItems([]);
+      console.error("Error loading shelf items:", error);
     } finally {
       setLoadingShelfItems(false);
     }
@@ -103,39 +95,42 @@ export default function InventoryCount() {
 
   const saveCountForProduct = async (
     product: Product,
-    rawCount: string,
-    options?: { clearMainForm?: boolean },
+    countStr: string,
+    options?: { clearMainForm?: boolean }
   ) => {
-    const count = parseInt(rawCount);
-    if (rawCount === "") {
-      toast.error("Please enter a count");
-      return false;
-    }
+    const count = parseInt(countStr);
     if (isNaN(count) || count < 0) {
-      toast.error("Count cannot be negative", {
-        description: "Please enter a valid count (0 or above)",
-      });
+      toast.error("Please enter a valid count");
       return false;
     }
 
     setLoading(true);
     try {
-      const mockData: PhysicalCount = {
-        id: `count-${Date.now()}`,
-        product_id: product.id,
-        sku: product.sku,
-        product_name: product.product_name,
-        physical_count: count,
-        counted_by: countedBy,
-        created_at: new Date().toISOString(),
-      };
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData.user?.id;
+
+      const { data, error } = await supabaseFulfillment
+        .from("physical_counts")
+        .insert({
+          product_id: String(product.product_id ?? product.id),
+          sku: product.sku,
+          product_name: product.product_name,
+          physical_count: count,
+          counted_by: countedBy,
+          created_by: userId,
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
 
       toast.success("Saved", {
         description: `${product.product_name} - Count: ${count}`,
         icon: <CheckCircle2 className="w-5 h-5 text-[#00A3AD]" />,
       });
 
-      setRecentCounts((prev) => [mockData, ...prev.slice(0, 4)]);
+      setRecentCounts((prev) => [data, ...prev.slice(0, 19)]);
 
       if (options?.clearMainForm !== false) {
         setSelectedProduct(null);
@@ -178,7 +173,7 @@ export default function InventoryCount() {
       }
 
       setSelectedProduct(data);
-      setPhysicalCount(""); // Reset count for new product
+      setPhysicalCount("");
       toast.success("Product found!", {
         description: data.product_name,
         icon: <CheckCircle2 className="w-5 h-5 text-[#00A3AD]" />,
@@ -195,7 +190,6 @@ export default function InventoryCount() {
 
   const handleScanClick = () => {
     setScanning(true);
-    // Simulate camera preview - in production, integrate with a barcode scanner library
     toast.info("Camera scanning not implemented yet", {
       description: "Please use manual barcode input for now",
     });
@@ -256,13 +250,11 @@ export default function InventoryCount() {
     let successCount = 0;
     let errorCount = 0;
 
-    // Get current user for created_by field
     const { data: userData } = await supabase.auth.getUser();
     const userId = userData.user?.id;
 
     for (const row of bulkCounts) {
       try {
-        // Find product by SKU
         const { data, error } = await supabaseFulfillment
           .from("products")
           .select("*")
@@ -271,12 +263,9 @@ export default function InventoryCount() {
 
         if (error || !data) {
           errorCount++;
-          console.warn(`Product not found for SKU: ${row.sku}`);
           continue;
         }
 
-        // Save the count to physical_counts table (or your actual table)
-        // Including created_by and import_source metadata
         const countPayload = {
           product_id: data.product_id ?? data.id,
           sku: row.sku,
@@ -284,40 +273,25 @@ export default function InventoryCount() {
           physical_count: row.qty,
           counted_by: countedBy,
           created_by: userId,
-          import_source: 'csv_import',  // ← triggers the note stamp automatically
+          import_source: 'csv_import',
           created_at: new Date().toISOString(),
         };
 
-        // Note: Uncomment this when physical_counts table exists
-        // const { error: insertError } = await supabase
-        //   .from("physical_counts")
-        //   .insert(countPayload);
-        // 
-        // if (insertError) {
-        //   errorCount++;
-        //   console.error(`Error saving count for SKU ${row.sku}:`, insertError);
-        //   continue;
-        // }
-
-        // For now, create mock data for UI display
-        const mockData: PhysicalCount = {
-          id: `count-${Date.now()}-${row.sku}`,
-          product_id: data.product_id ?? data.id,
-          sku: row.sku,
-          product_name: data.product_name,
-          physical_count: row.qty,
-          counted_by: countedBy,
-          created_at: new Date().toISOString(),
-        };
-
-        setRecentCounts((prev) => [mockData, ...prev.slice(0, 19)]);
+        const { error: insertError } = await supabaseFulfillment
+          .from("physical_counts")
+          .insert(countPayload);
+        
+        if (insertError) {
+          errorCount++;
+          continue;
+        }
         successCount++;
       } catch (err) {
         errorCount++;
-        console.error(`Error processing SKU ${row.sku}:`, err);
       }
     }
 
+    await loadRecentCounts();
     setLoading(false);
     setBulkCounts([]);
     setShowBulkUpload(false);
@@ -340,7 +314,6 @@ export default function InventoryCount() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <div className="mb-6 md:mb-8">
           <div className="flex items-center justify-between">
             <div>
@@ -361,7 +334,6 @@ export default function InventoryCount() {
           </div>
         </div>
 
-        {/* Bulk CSV Upload Section */}
         {showBulkUpload && (
           <Card className="mb-6 border-2 border-[#F97316]/30 shadow-xl">
             <CardHeader className="bg-gradient-to-r from-[#F97316] to-[#EA580C]">
@@ -402,7 +374,6 @@ export default function InventoryCount() {
           </Card>
         )}
 
-        {/* Simplified Mobile Shelf Counting */}
         <div className="lg:hidden mb-6">
           <Card className="border-2 border-[#1A2B47]/10 shadow-lg">
             <CardHeader className="bg-gradient-to-r from-[#1A2B47] to-[#1A2B47]/90">
@@ -477,11 +448,8 @@ export default function InventoryCount() {
           </Card>
         </div>
 
-        {/* Desktop: Two-column layout / Mobile: Single column */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
-          {/* Main Panel - Left/Center */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Scan Section */}
             <Card className="border-2 border-[#1A2B47]/10 shadow-lg">
               <CardHeader className="bg-gradient-to-r from-[#1A2B47] to-[#1A2B47]/90">
                 <CardTitle className="text-white flex items-center gap-2">
@@ -490,7 +458,6 @@ export default function InventoryCount() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6 space-y-4">
-                {/* Scan Button */}
                 <Button
                   onClick={handleScanClick}
                   disabled={scanning || loading}
@@ -500,7 +467,6 @@ export default function InventoryCount() {
                   {scanning ? "Scanning..." : "Scan with Camera"}
                 </Button>
 
-                {/* Manual Barcode Input */}
                 <div className="relative">
                   <Label htmlFor="barcode" className="text-sm font-medium text-slate-700 mb-2 block">
                     Or enter barcode manually
@@ -533,7 +499,6 @@ export default function InventoryCount() {
               </CardContent>
             </Card>
 
-            {/* Item Details Card - Only show when product is selected */}
             {selectedProduct && (
               <Card className="border-2 border-[#00A3AD] shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-300">
                 <CardHeader className="bg-gradient-to-r from-[#00A3AD] to-[#0891B2]">
@@ -575,7 +540,6 @@ export default function InventoryCount() {
               </Card>
             )}
 
-            {/* Physical Count Input - Only show when product is selected */}
             {selectedProduct && (
               <Card className="border-2 border-[#1A2B47]/10 shadow-lg animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <CardHeader>
@@ -612,7 +576,6 @@ export default function InventoryCount() {
                     />
                   </div>
 
-                  {/* Save Button */}
                   <Button
                     onClick={handleSaveCount}
                     disabled={!canSave || loading}
@@ -625,7 +588,6 @@ export default function InventoryCount() {
               </Card>
             )}
 
-            {/* Empty State - Show when no product selected */}
             {!selectedProduct && (
               <Card className="border-2 border-dashed border-slate-300 bg-slate-50">
                 <CardContent className="py-16 text-center">
@@ -638,7 +600,6 @@ export default function InventoryCount() {
             )}
           </div>
 
-          {/* Recent Counts Panel - Right */}
           <div className="lg:col-span-1">
             <Card className="border-2 border-[#1A2B47]/10 shadow-lg sticky top-8">
               <CardHeader className="bg-gradient-to-r from-[#1A2B47] to-[#1A2B47]/90">
@@ -654,7 +615,7 @@ export default function InventoryCount() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {recentCounts.map((count, index) => (
+                    {recentCounts.map((count) => (
                       <div
                         key={count.id}
                         className="p-4 bg-white border border-slate-200 rounded-lg hover:shadow-md transition-shadow"

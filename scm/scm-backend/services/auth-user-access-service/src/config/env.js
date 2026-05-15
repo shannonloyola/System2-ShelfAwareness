@@ -33,23 +33,30 @@ const parseBoolean = (value, fallback) => {
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 4014),
-  databaseUrl: process.env.DATABASE_URL || "",
+  databaseUrl:
+    process.env.IDENTITY_DATABASE_URL ||
+    process.env.SUPABASE_IDENTITY_DATABASE_URL ||
+    "",
   dbSsl: parseBoolean(process.env.DB_SSL, true),
-  // Identity Project (Auth)
+
+  // Identity project
   supabaseUrl: (
+    process.env.IDENTITY_SUPABASE_URL ||
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    process.env.SUPABASE_URL ||
-    process.env.VITE_SUPABASE_URL ||
     ""
   ).trim(),
   supabaseAnonKey: (
+    process.env.IDENTITY_SUPABASE_ANON_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
+    ""
+  ).trim(),
+  supabaseServiceRoleKey: (
+    process.env.IDENTITY_SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
     ""
   ).trim(),
 
-  // Supply‑Chain Project (Operational data)
+  // Supply-chain project
   scmSupabaseUrl: (
     process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_URL ||
     "https://wbktqkjdsqrvqxxtitsg.supabase.co"

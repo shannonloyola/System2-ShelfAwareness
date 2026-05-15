@@ -18,6 +18,12 @@ const buildHeaders = () => ({
   "Content-Type": "application/json",
 });
 
+const buildScmHeaders = () => ({
+  apikey: env.scmSupabaseAnonKey,
+  Authorization: `Bearer ${env.scmSupabaseAnonKey}`,
+  "Content-Type": "application/json",
+});
+
 const ensureRestConfig = () => {
   if (!env.fulfillmentSupabaseUrl || !env.fulfillmentSupabaseAnonKey) {
     throw new Error("FULFILLMENT_SUPABASE_URL or FULFILLMENT_SUPABASE_ANON_KEY is not set");
@@ -105,23 +111,31 @@ const pickBinId = async () => {
 export const restHealthCheck = async () => {
   ensureRestConfig();
 
-  const response = await fetch(
-    `${env.fulfillmentSupabaseUrl}/rest/v1/products?select=product_id&limit=1`,
-    {
+  const [productResponse, inventoryResponse] = await Promise.all([
+    fetch(`${env.scmSupabaseUrl}/rest/v1/products?select=product_id&limit=1`, {
       method: "GET",
-      headers: buildHeaders(),
-    },
-  );
+      headers: buildScmHeaders(),
+    }),
+    fetch(
+      `${env.fulfillmentSupabaseUrl}/rest/v1/inventory_on_hand?select=product_id&limit=1`,
+      {
+        method: "GET",
+        headers: buildHeaders(),
+      },
+    ),
+  ]);
 
-  if (!response.ok) {
-    throw new Error(`Supabase REST health check failed with ${response.status}`);
+  if (!productResponse.ok || !inventoryResponse.ok) {
+    throw new Error(
+      `Supabase REST health check failed with products=${productResponse.status}, inventory=${inventoryResponse.status}`,
+    );
   }
 };
 
 export const listInventoryRest = async ({ limit, offset, search }) => {
   ensureRestConfig();
 
-  const productsUrl = new URL(`${env.fulfillmentSupabaseUrl}/rest/v1/products`);
+  const productsUrl = new URL(`${env.scmSupabaseUrl}/rest/v1/products`);
   productsUrl.searchParams.set("select", productSelect);
   productsUrl.searchParams.set("order", "product_name.asc");
   productsUrl.searchParams.set("limit", String(limit));
@@ -138,7 +152,7 @@ export const listInventoryRest = async ({ limit, offset, search }) => {
     handleResponse(
       await fetch(productsUrl, {
         method: "GET",
-        headers: buildHeaders(),
+        headers: buildScmHeaders(),
       }),
     ),
     handleResponse(
@@ -156,10 +170,10 @@ export const getInventoryItemRest = async (productId) => {
   ensureRestConfig();
 
   const productRes = await fetch(
-    `${env.fulfillmentSupabaseUrl}/rest/v1/products?select=${productSelect}&product_id=eq.${encodeURIComponent(productId)}&limit=1`,
+    `${env.scmSupabaseUrl}/rest/v1/products?select=${productSelect}&product_id=eq.${encodeURIComponent(productId)}&limit=1`,
     {
       method: "GET",
-      headers: buildHeaders(),
+      headers: buildScmHeaders(),
     },
   );
   const products = await handleResponse(productRes);
@@ -259,11 +273,11 @@ export const receiveScanRest = async ({
 
   await handleResponse(
     await fetch(
-      `${env.fulfillmentSupabaseUrl}/rest/v1/products?product_id=eq.${encodeURIComponent(product_id)}`,
+      `${env.scmSupabaseUrl}/rest/v1/products?product_id=eq.${encodeURIComponent(product_id)}`,
       {
         method: "PATCH",
         headers: {
-          ...headers,
+          ...buildScmHeaders(),
           Prefer: "return=minimal",
         },
         body: JSON.stringify({

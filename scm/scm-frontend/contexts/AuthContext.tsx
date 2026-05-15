@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 import { normalizeAppRole, type AppRole } from "@/lib/rbac";
+import { authUserAccessServiceUrl } from "@/utils/supabase/info";
 export type { AppRole } from "@/lib/rbac";
 
 interface AuthContextType {
@@ -12,8 +13,7 @@ interface AuthContextType {
   isLoading: boolean;
 }
 
-const AUTH_SERVICE_URL =
-  process.env.NEXT_PUBLIC_AUTH_USER_ACCESS_SERVICE_URL || "http://localhost:4014";
+const AUTH_SERVICE_URL = authUserAccessServiceUrl;
 const ROLE_LOOKUP_TIMEOUT_MS = 8000;
 const ROLE_CACHE_PREFIX = "shelf-awareness-role:";
 
@@ -153,8 +153,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const timeoutId = window.setTimeout(() => {
         controller.abort();
       }, ROLE_LOOKUP_TIMEOUT_MS);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
 
       const response = await fetch(`${AUTH_SERVICE_URL}/auth/role?${params.toString()}`, {
+        headers: accessToken
+          ? {
+              Authorization: `Bearer ${accessToken}`,
+            }
+          : undefined,
         signal: controller.signal,
       });
       window.clearTimeout(timeoutId);

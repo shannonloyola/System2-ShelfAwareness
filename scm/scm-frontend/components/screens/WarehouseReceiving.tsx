@@ -51,14 +51,17 @@ import {
   RadioGroupItem,
 } from "../ui/radio-group";
 import { toast } from "sonner";
-import {
-  fulfillmentProjectId as projectId,
-  fulfillmentPublicAnonKey as publicAnonKey,
-  scmProjectId,
-  scmPublicAnonKey,
-} from "@/utils/supabase/info";
 import { postGRN } from "@/utils/postGRN";
-import { supabase, supabaseSCM, supabaseFulfillment } from "@/lib/supabase";
+import { supabase, supabaseFulfillment } from "@/lib/supabase";
+import {
+  fetchBackorderAlerts,
+  fetchInventoryItems,
+  receiveInventoryScan,
+} from "@/lib/inventoryService";
+import {
+  saveGrnDraft,
+  scheduleWarehouseDelivery,
+} from "@/lib/warehouseReceivingService";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -248,76 +251,8 @@ export function WarehouseReceiving() {
   const fetchInventory = useCallback(async () => {
     setLoadingInventory(true);
     try {
-      const fulfillmentBaseUrl = `https://${projectId}.supabase.co/rest/v1`;
-      const fulfillmentHeaders = {
-        apikey: publicAnonKey,
-        Authorization: `Bearer ${publicAnonKey}`,
-      };
-      const scmBaseUrl = `https://${scmProjectId}.supabase.co/rest/v1`;
-      const scmHeaders = {
-        apikey: scmPublicAnonKey,
-        Authorization: `Bearer ${scmPublicAnonKey}`,
-      };
-
-      const productsRes = await fetch(
-        `${scmBaseUrl}/products?select=product_id,product_uuid,sku,barcode,product_name,unit,reserved_stock&order=product_name.asc`,
-        { headers: scmHeaders },
-      );
-      if (!productsRes.ok)
-        throw new Error(
-          `products: ${productsRes.status} ${await productsRes.text()}`,
-        );
-      const products: any[] = await productsRes.json();
-
-      const iohRes = await fetch(
-        `${fulfillmentBaseUrl}/inventory_on_hand?select=product_id,qty_on_hand,updated_at`,
-        { headers: fulfillmentHeaders },
-      );
-      if (!iohRes.ok)
-        throw new Error(
-          `inventory_on_hand: ${iohRes.status} ${await iohRes.text()}`,
-        );
-      const onHandRows: any[] = await iohRes.json();
-
-      const onHandByProductUuid = new Map(
-        onHandRows.map((row) => [String(row.product_id), row]),
-      );
-      const onHandByProductId = new Map(
-        onHandRows.map((row) => [String(row.product_id), row]),
-      );
-
-      const items: InventoryItem[] = products.map((p) => {
-        const ioh =
-          onHandByProductUuid.get(String(p.product_uuid)) ??
-          onHandByProductId.get(String(p.product_id)) ??
-          null;
-        const qty = Number(
-          ioh?.qty_on_hand ?? p.inventory_on_hand ?? 0,
-        );
-        const status: InventoryItem["status"] =
-          qty === 0
-            ? "zero"
-            : qty < MIN_STOCK_THRESHOLD
-              ? "low"
-              : "normal";
-
-        return {
-          id: String(p.product_id),
-          productUuid: p.product_uuid
-            ? String(p.product_uuid)
-            : null,
-          sku: p.sku ?? "N/A",
-          barcode: String(p.barcode ?? ""),
-          name: p.product_name ?? "Unknown Product",
-          unit: p.unit ?? "-",
-          reservedStock: Number(p.reserved_stock ?? 0),
-          lastUpdated: ioh?.updated_at ?? null,
-          systemCount: qty,
-          status,
-        };
-      });
-
-      setInventory(items);
+      const items = await fetchInventoryItems({ limit: 500 });
+      setInventory(items as InventoryItem[]);
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : String(err);
@@ -338,18 +273,13 @@ export function WarehouseReceiving() {
     let isMounted = true;
 
     const loadBackorderAlerts = async () => {
-      const { data, error } = await supabaseFulfillment
-        .from("backorder_alerts")
-        .select(
-          "id, sku, message, grn_reference, pending_backorder_count, created_at",
-        )
-        .order("created_at", { ascending: false })
-        .limit(5);
-
-      if (!isMounted || error) return;
-      setBackorderAlerts(
-        (data as BackorderAlertRow[]) ?? [],
-      );
+      try {
+        const data = await fetchBackorderAlerts(5);
+        if (!isMounted) return;
+        setBackorderAlerts(data as BackorderAlertRow[]);
+      } catch {
+        if (!isMounted) return;
+      }
     };
 
     void loadBackorderAlerts();
@@ -447,16 +377,6 @@ export function WarehouseReceiving() {
 
       const digitsOnly = trimmed.replace(/\D/g, "");
       const lowerValue = trimmed.toLowerCase();
-      const headers = {
-        apikey: publicAnonKey,
-        Authorization: `Bearer ${publicAnonKey}`,
-        "Content-Type": "application/json",
-      };
-      const scmHeaders = {
-        apikey: scmPublicAnonKey,
-        Authorization: `Bearer ${scmPublicAnonKey}`,
-        "Content-Type": "application/json",
-      };
       const matchedItem =
         inventory.find(
           (item) =>
@@ -498,119 +418,13 @@ export function WarehouseReceiving() {
       );
 
       try {
-        const productKeys = [
-          matchedItem.productUuid,
-          matchedItem.id,
-        ].filter(Boolean) as string[];
-
-        let synced = false;
-        let nextOnHand = matchedItem.systemCount + 1;
-        let usedScmFallback = false;
-
-        for (const productKey of productKeys) {
-          const lookupRes = await fetch(
-            `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?select=product_id,bin_id,qty_on_hand&product_id=eq.${encodeURIComponent(productKey)}&limit=1`,
-            { method: "GET", headers },
-          );
-          if (!lookupRes.ok) continue;
-          const lookupRows = await lookupRes.json();
-          if (lookupRows.length > 0) {
-            const row = lookupRows[0];
-            nextOnHand = Number(row.qty_on_hand ?? 0) + 1;
-            const patchRes = await fetch(
-              `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?product_id=eq.${encodeURIComponent(row.product_id)}&bin_id=eq.${encodeURIComponent(row.bin_id)}`,
-              {
-                method: "PATCH",
-                headers: {
-                  ...headers,
-                  Prefer: "return=minimal",
-                },
-                body: JSON.stringify({
-                  qty_on_hand: nextOnHand,
-                }),
-              },
-            );
-            if (patchRes.ok) {
-              synced = true;
-              break;
-            }
-          }
-        }
-
-        if (!synced) {
-          const insertProductKey =
-            matchedItem.productUuid || matchedItem.id;
-          const binLookupRes = await fetch(
-            `https://${projectId}.supabase.co/rest/v1/inventory_on_hand?select=bin_id&limit=1`,
-            { method: "GET", headers },
-          );
-          let binId: string | null = null;
-          if (binLookupRes.ok) {
-            const binRows = await binLookupRes.json();
-            if (binRows.length > 0) {
-              binId = String(binRows[0].bin_id);
-            }
-          }
-          if (!binId) {
-            const binsRes = await fetch(
-              `https://${projectId}.supabase.co/rest/v1/bins?select=id&limit=1`,
-              { method: "GET", headers },
-            );
-            if (binsRes.ok) {
-              const binsRows = await binsRes.json();
-              if (binsRows.length > 0) {
-                binId = String(binsRows[0].id);
-              }
-            }
-          }
-          if (!binId) {
-            usedScmFallback = true;
-          }
-
-          if (binId) {
-            nextOnHand = 1;
-            const insertRes = await fetch(
-              `https://${projectId}.supabase.co/rest/v1/inventory_on_hand`,
-              {
-                method: "POST",
-                headers: {
-                  ...headers,
-                  Prefer: "return=minimal",
-                },
-                body: JSON.stringify({
-                  product_id: insertProductKey,
-                  bin_id: binId,
-                  qty_on_hand: nextOnHand,
-                }),
-              },
-            );
-            if (!insertRes.ok) {
-              throw new Error(await insertRes.text());
-            }
-          }
-        }
-
-        await fetch(
-          `https://${scmProjectId}.supabase.co/rest/v1/products?product_id=eq.${encodeURIComponent(matchedItem.id)}`,
-          {
-            method: "PATCH",
-            headers: {
-              ...scmHeaders,
-              Prefer: "return=minimal",
-            },
-            body: JSON.stringify({
-              inventory_on_hand: nextOnHand,
-              available_stock: Math.max(
-                0,
-                nextOnHand - matchedItem.reservedStock,
-              ),
-              available_to_promise: Math.max(
-                0,
-                nextOnHand - matchedItem.reservedStock,
-              ),
-            }),
-          },
-        );
+        const syncedItem = await receiveInventoryScan({
+          product_id: matchedItem.id,
+          product_uuid: matchedItem.productUuid,
+          reserved_stock: matchedItem.reservedStock,
+          increment: 1,
+        });
+        const nextOnHand = Number(syncedItem.systemCount ?? 0);
 
         setInventory((prev) =>
           prev.map((entry) => {
@@ -618,7 +432,8 @@ export function WarehouseReceiving() {
             return {
               ...entry,
               systemCount: nextOnHand,
-              lastUpdated: new Date().toISOString(),
+              lastUpdated:
+                syncedItem.lastUpdated || new Date().toISOString(),
               status:
                 nextOnHand === 0
                   ? "zero"
@@ -630,9 +445,7 @@ export function WarehouseReceiving() {
         );
 
         toast.success("Barcode scanned", {
-          description: usedScmFallback
-            ? `${matchedItem.sku} - Received +1 (saved without fulfillment bin yet)`
-            : `${matchedItem.sku} - Received +1 (stock synced)`,
+          description: `${matchedItem.sku} - Received +1 (stock synced)`,
         });
       } catch (error) {
         const message =
@@ -1074,7 +887,7 @@ export function WarehouseReceiving() {
         id: crypto.randomUUID(),
         grn_draft_id: grnId,
         line_no: idx + 1,
-        product_id: line.productId,
+        product_id: product?.productUuid ?? line.productId,
         product_name: product?.name ?? "Unknown",
         sku: product?.sku ?? "N/A",
         qty_expected: expected,
@@ -1093,35 +906,7 @@ export function WarehouseReceiving() {
     headerPayload: object,
     linePayload: object[],
   ) => {
-    const hRes = await fetch(
-      `https://${projectId}.supabase.co/rest/v1/grn_drafts`,
-      {
-        method: "POST",
-        headers: {
-          apikey: publicAnonKey,
-          Authorization: `Bearer ${publicAnonKey}`,
-          "Content-Type": "application/json",
-          Prefer: "return=minimal",
-        },
-        body: JSON.stringify(headerPayload),
-      },
-    );
-    if (!hRes.ok) throw new Error(await hRes.text());
-
-    const lRes = await fetch(
-      `https://${projectId}.supabase.co/rest/v1/grn_draft_lines`,
-      {
-        method: "POST",
-        headers: {
-          apikey: publicAnonKey,
-          Authorization: `Bearer ${publicAnonKey}`,
-          "Content-Type": "application/json",
-          Prefer: "return=minimal",
-        },
-        body: JSON.stringify(linePayload),
-      },
-    );
-    if (!lRes.ok) throw new Error(await lRes.text());
+    await saveGrnDraft(headerPayload, linePayload);
   };
 
   const handleSaveGrn = async () => {
@@ -1247,31 +1032,16 @@ export function WarehouseReceiving() {
 
     setSchedulingDelivery(true);
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/shipments`,
-        {
-          method: "POST",
-          headers: {
-            apikey: publicAnonKey,
-            Authorization: `Bearer ${publicAnonKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-          delivery_datetime: deliveryForm.delivery_datetime,
-          supplier_name: deliveryForm.supplier_name,
-          expected_items_count: expectedItemsCount,
-          warehouse_location: deliveryForm.warehouse_location,
-          contact_person_name: deliveryForm.contact_person_name || null,
-          contact_phone: deliveryForm.contact_phone || null,
-          notes: deliveryForm.notes || null,
-          }),
-        },
-      );
-
-      const responseText = await response.text();
-      if (!response.ok) {
-        throw new Error(responseText || "Failed to send a request to the Edge Function");
-      }
+      await scheduleWarehouseDelivery({
+        delivery_datetime: deliveryForm.delivery_datetime,
+        supplier_name: deliveryForm.supplier_name,
+        expected_items_count: expectedItemsCount,
+        warehouse_location: deliveryForm.warehouse_location,
+        contact_person_name:
+          deliveryForm.contact_person_name || null,
+        contact_phone: deliveryForm.contact_phone || null,
+        notes: deliveryForm.notes || null,
+      });
 
       toast.success("Delivery scheduled successfully", {
         description: "The warehouse is now expecting this delivery.",

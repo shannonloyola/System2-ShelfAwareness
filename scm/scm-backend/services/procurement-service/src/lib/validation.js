@@ -130,3 +130,66 @@ export const validateBulkImportPayload = (payload) => {
     items,
   };
 };
+
+export const validateApprovalPayload = (payload) => {
+  const approval_status = normalizeNullableString(payload?.approval_status);
+  const rejection_reason = normalizeNullableString(payload?.rejection_reason);
+  const approved_by = normalizeNullableString(payload?.approved_by);
+
+  if (!approval_status) {
+    throw createHttpError(400, "approval_status is required");
+  }
+
+  const normalizedStatus = approval_status.toLowerCase();
+  if (!["approved", "rejected", "pending"].includes(normalizedStatus)) {
+    throw createHttpError(
+      400,
+      "approval_status must be Approved, Rejected, or Pending",
+    );
+  }
+
+  if (normalizedStatus === "rejected" && !rejection_reason) {
+    throw createHttpError(400, "rejection_reason is required when rejecting");
+  }
+
+  return {
+    approval_status:
+      normalizedStatus.charAt(0).toUpperCase() + normalizedStatus.slice(1),
+    rejection_reason,
+    approved_by,
+  };
+};
+
+export const validateEtaPayload = (payload) => {
+  const expected_delivery_date = normalizeNullableString(
+    payload?.expected_delivery_date,
+  );
+  const reason = normalizeNullableString(payload?.reason);
+
+  if (!expected_delivery_date) {
+    throw createHttpError(400, "expected_delivery_date is required");
+  }
+
+  if (!reason) {
+    throw createHttpError(400, "reason is required");
+  }
+
+  return {
+    expected_delivery_date,
+    reason,
+  };
+};
+
+export const validateDocumentPayload = (payload) => {
+  const document_url = normalizeNullableString(payload?.document_url);
+  const status_name = normalizeNullableString(payload?.status_name);
+
+  if (!document_url) {
+    throw createHttpError(400, "document_url is required");
+  }
+
+  return {
+    document_url,
+    status_name,
+  };
+};

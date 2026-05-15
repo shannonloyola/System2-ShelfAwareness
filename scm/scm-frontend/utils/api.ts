@@ -1,7 +1,4 @@
-import { projectId } from "./supabase/info";
-
-const defaultGatewayBaseUrl =
-  `https://${projectId}.supabase.co/functions/v1/api-gateway`;
+const defaultGatewayBaseUrl = "http://localhost:3001/api";
 
 export const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ??

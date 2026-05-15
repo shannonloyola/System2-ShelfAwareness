@@ -1,7 +1,4 @@
-import {
-  fulfillmentProjectId as projectId,
-  fulfillmentPublicAnonKey as publicAnonKey,
-} from "./info";
+import { postGrnDraft } from "@/lib/warehouseReceivingService";
 
 export interface PostGRNResult {
   grn_id: string;
@@ -29,47 +26,5 @@ export async function postGRN(
   grnDraftId: string,
   postedBy: string = "warehouse_operator",
 ): Promise<PostGRNResult> {
-  const url = `https://${projectId}.supabase.co/rest/v1/rpc/post_grn_draft`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      apikey: publicAnonKey,
-      Authorization: `Bearer ${publicAnonKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      p_grn_draft_id: grnDraftId,
-      p_posted_by: postedBy,
-    }),
-  });
-
-  const text = await res.text();
-
-  if (!res.ok) {
-    // Supabase wraps DB exceptions in { message, hint, details, code }
-    let message = `HTTP ${res.status}`;
-    try {
-      const err = JSON.parse(text);
-      message = err.message ?? err.hint ?? text;
-    } catch {
-      message = text || message;
-    }
-    throw new Error(message);
-  }
-
-  let data: PostGRNResult;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error(`Unexpected response from post_grn_draft: ${text}`);
-  }
-
-  // The RPC returns { success: true, ... } on success.
-  // If success is explicitly false, surface the error field.
-  if ((data as any).success === false) {
-    throw new Error((data as any).error ?? "post_grn_draft returned success: false");
-  }
-
-  return data;
+  return postGrnDraft(grnDraftId, postedBy);
 }

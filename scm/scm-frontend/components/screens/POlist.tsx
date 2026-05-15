@@ -41,6 +41,15 @@ import {
   runExpirationCheck,
 } from "@/imports/expirationService";
 import {
+  fetchPurchaseOrderById,
+  fetchPurchaseOrderItems,
+  fetchPurchaseOrders,
+  fetchPurchaseOrderStatusHistory,
+  updatePurchaseOrderApproval,
+  updatePurchaseOrderEta,
+  updatePurchaseOrderLatestDocument,
+} from "@/lib/procurementService";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -75,6 +84,7 @@ interface PurchaseOrder {
   approved_by: string | null;
   approved_at: string | null;
   is_late: boolean;
+  item_count?: number;
   items: POItem[];
 }
 
@@ -388,8 +398,8 @@ export function PODetailPage() {
         })),
       };
 
-      // Replace RPC name + args with your actual T2 RPC signature
-      const { error } = await supabase.rpc(
+      // t2_post_landed_costs lives in the Supply Chain project (supabaseSCM)
+      const { error } = await supabaseSCM.rpc(
         "t2_post_landed_costs",
         { p_payload: payload }
       );
@@ -410,67 +420,49 @@ export function PODetailPage() {
   const loadDetail = useCallback(async () => {
     if (!poId) return;
     setLoading(true);
-    const [
-      { data: poData, error: poError },
-      { data: itemData, error: itemError },
-      { data: historyData, error: historyError },
-    ] = await Promise.all([
-      supabaseSCM
-        .from("purchase_orders")
-        .select(
-          "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, approval_status, approved_by, approved_at, is_late",
-        )
-        .eq("po_id", poId)
-        .maybeSingle(),
-      supabaseSCM
-        .from("purchase_order_items")
-        .select("po_item_id, po_id, item_name, quantity")
-        .eq("po_id", poId)
-        .order("po_item_id", { ascending: true }),
-      supabaseSCM
-        .from("po_status_history")
-        .select("history_id, status_name, changed_at")
-        .eq("po_id", poId)
-        .order("changed_at", { ascending: false }),
-    ]);
-    setLoading(false);
+    try {
+      const [poData, itemData, historyData] = await Promise.all([
+        fetchPurchaseOrderById(poId),
+        fetchPurchaseOrderItems(poId),
+        fetchPurchaseOrderStatusHistory(poId),
+      ]);
 
-    if (poError || !poData) {
+      setPo({
+        po_id: poData.po_id,
+        po_no: poData.po_no ?? "N/A",
+        supplier_name: poData.supplier_name ?? "N/A",
+        status: poData.status ?? "Unknown",
+        created_at: poData.created_at ?? new Date().toISOString(),
+        expected_delivery_date:
+          poData.expected_delivery_date ?? null,
+        approval_status: poData.approval_status ?? "Pending",
+        approved_by: poData.approved_by ?? null,
+        approved_at: poData.approved_at ?? null,
+        is_late: Boolean(poData.is_late),
+        item_count: poData.item_count ?? itemData.length,
+        items: (itemData ?? []).map((it) => ({
+          po_item_id: it.po_item_id,
+          item_name: it.item_name ?? "Unnamed item",
+          quantity: it.quantity ?? 0,
+        })),
+      });
+
+      setStatusHistory(
+        (historyData ?? []).map((entry) => ({
+          history_id: entry.history_id,
+          status_name: entry.status_name ?? "Unknown",
+          changed_at:
+            entry.changed_at ?? new Date().toISOString(),
+        })),
+      );
+    } catch (error) {
       toast.error("Failed to load purchase order", {
-        description: toErrorMessage(poError),
+        description: toErrorMessage(error),
       });
       setPo(null);
-      return;
+    } finally {
+      setLoading(false);
     }
-    if (itemError)
-      toast.error("Failed to load line items", {
-        description: toErrorMessage(itemError),
-      });
-    if (historyError)
-      toast.error("Failed to load status history", {
-        description: toErrorMessage(historyError),
-      });
-
-    setPo({
-      po_id: poData.po_id,
-      po_no: poData.po_no ?? "N/A",
-      supplier_name: poData.supplier_name ?? "N/A",
-      status: poData.status ?? "Unknown",
-      created_at: poData.created_at ?? new Date().toISOString(),
-      expected_delivery_date:
-        poData.expected_delivery_date ?? null,
-      approval_status: poData.approval_status ?? "Pending",
-      approved_by: poData.approved_by ?? null,
-      approved_at: poData.approved_at ?? null,
-      is_late: poData.is_late,
-      items: (itemData ?? []).map((it) => ({
-        po_item_id: it.po_item_id,
-        item_name: it.item_name ?? "Unnamed item",
-        quantity: it.quantity ?? 0,
-      })),
-    });
-
-    setStatusHistory(historyData ?? []);
   }, [poId]);
 
   const handleUploadDocument = async (
@@ -506,42 +498,19 @@ export function PODetailPage() {
 
     const publicUrl = publicUrlData.publicUrl;
 
-    const { data: latestHistoryInitial } = await supabaseSCM
-      .from("po_status_history")
-      .select("history_id")
-      .eq("po_id", po.po_id)
-      .order("changed_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    let latestHistory = latestHistoryInitial;
-
-    if (!latestHistory) {
-      const {
-        data: insertedHistory,
-        error: insertHistoryError,
-      } = await supabaseSCM
-        .from("po_status_history")
-        .insert({
-          po_id: po.po_id,
-          status_name:
-            po.status || "Pending Supplier Confirmation",
-        })
-        .select("history_id")
-        .single();
-
-      if (insertHistoryError || !insertedHistory) {
-        setUploadingDoc(false);
-        toast.error("Could not link file to status history");
-        return;
-      }
-
-      latestHistory = insertedHistory;
+    try {
+      await updatePurchaseOrderLatestDocument(po.po_id, {
+        document_url: publicUrl,
+        status_name:
+          po.status || "Pending Supplier Confirmation",
+      });
+    } catch (error) {
+      setUploadingDoc(false);
+      toast.error("Could not link file to status history", {
+        description: toErrorMessage(error),
+      });
+      return;
     }
-
-    await supabaseSCM
-      .from("po_status_history")
-      .update({ document_url: publicUrl })
-      .eq("history_id", latestHistory.history_id);
 
     setUploadingDoc(false);
     setDocumentUrl(publicUrl);
@@ -592,41 +561,31 @@ export function PODetailPage() {
     setApprovalSubmitting(action);
     const nextStatus = "Approved";
 
-    const { data, error } = await supabaseSCM
-      .from("purchase_orders")
-      .update({
-        approval_status: nextStatus,
-        approved_at: new Date().toISOString(),
-        rejection_reason: null,
-        rejected_at: null,
-      })
-      .eq("po_id", po.po_id)
-      .select("approval_status, approved_by, approved_at")
-      .single();
+    try {
+      const data = await updatePurchaseOrderApproval(po.po_id, {
+        approval_status: "Approved",
+      });
+      setPo((current) =>
+        current
+          ? {
+              ...current,
+              approval_status: data.approval_status ?? nextStatus,
+              approved_by:
+                data.approved_by ?? current.approved_by,
+              approved_at:
+                data.approved_at ?? new Date().toISOString(),
+            }
+          : current,
+      );
 
-    setApprovalSubmitting(null);
-
-    if (error || !data) {
+      toast.success("Purchase order approved");
+    } catch (error) {
       toast.error(`Failed to ${action} purchase order`, {
         description: toErrorMessage(error),
       });
-      return;
+    } finally {
+      setApprovalSubmitting(null);
     }
-
-    setPo((current) =>
-      current
-        ? {
-            ...current,
-            approval_status: data.approval_status ?? nextStatus,
-            approved_by:
-              data.approved_by ?? current.approved_by,
-            approved_at:
-              data.approved_at ?? new Date().toISOString(),
-          }
-        : current,
-    );
-
-    toast.success("Purchase order approved");
   };
 
   const handleRejectAction = async () => {
@@ -637,42 +596,34 @@ export function PODetailPage() {
     }
 
     setRejecting(true);
-    const { data, error } = await supabaseSCM
-      .from("purchase_orders")
-      .update({
+    try {
+      const data = await updatePurchaseOrderApproval(po.po_id, {
         approval_status: "Rejected",
-        rejected_at: new Date().toISOString(),
         rejection_reason: rejectReason.trim(),
-        approved_at: null,
-      })
-      .eq("po_id", po.po_id)
-      .select("approval_status, approved_by, approved_at")
-      .single();
+      });
 
-    setRejecting(false);
+      setPo((current) =>
+        current
+          ? {
+              ...current,
+              approval_status: data.approval_status ?? "Rejected",
+              approved_by:
+                data.approved_by ?? current.approved_by,
+              approved_at: data.approved_at ?? null,
+            }
+          : current,
+      );
 
-    if (error || !data) {
+      setShowRejectModal(false);
+      setRejectReason("");
+      toast.success("Purchase order rejected");
+    } catch (error) {
       toast.error("Failed to reject purchase order", {
         description: toErrorMessage(error),
       });
-      return;
+    } finally {
+      setRejecting(false);
     }
-
-    setPo((current) =>
-      current
-        ? {
-            ...current,
-            approval_status: data.approval_status ?? "Rejected",
-            approved_by:
-              data.approved_by ?? current.approved_by,
-            approved_at: data.approved_at ?? null,
-          }
-        : current,
-    );
-
-    setShowRejectModal(false);
-    setRejectReason("");
-    toast.success("Purchase order rejected");
   };
 
   const saveEta = async () => {
@@ -683,37 +634,31 @@ export function PODetailPage() {
     }
     setSavingEta(true);
 
-    const { error: updateError } = await supabaseSCM
-      .from("purchase_orders")
-      .update({ expected_delivery_date: etaDraft })
-      .eq("po_id", po.po_id);
+    try {
+      await updatePurchaseOrderEta(po.po_id, {
+        expected_delivery_date: etaDraft,
+        reason: etaReason.trim(),
+      });
 
-    if (updateError) {
+      setEditEtaOpen(false);
+      toast.success("ETA updated");
+
+      setPo((current) =>
+        current
+          ? { ...current, expected_delivery_date: etaDraft }
+          : current,
+      );
+
+      await loadDetail();
+    } catch (error) {
       setSavingEta(false);
-      toast.error("Failed to update ETA");
+      toast.error("Failed to update ETA", {
+        description: toErrorMessage(error),
+      });
       return;
+    } finally {
+      setSavingEta(false);
     }
-
-    await supabaseSCM.from("po_status_history").insert({
-      po_id: po.po_id,
-      status_name: "ETA Updated",
-      changed_at: new Date().toISOString(),
-      reason: etaReason
-    });
-
-    setSavingEta(false);
-    setEditEtaOpen(false);
-    toast.success("ETA updated");
-    
-    // Update local state
-    setPo((current) =>
-      current
-        ? { ...current, expected_delivery_date: etaDraft }
-        : current,
-    );
-    
-    // Reload to refresh status history
-    await loadDetail();
   };
 
   if (loading || !po) {
@@ -1274,61 +1219,34 @@ export function POList() {
 
   const fetchPOs = useCallback(async () => {
     setLoading(true);
-    const [
-      { data: poData, error: poError },
-      { data: itemData, error: itemError },
-    ] = await Promise.all([
-      supabaseSCM
-        .from("purchase_orders")
-        .select(
-          "po_id, po_no, supplier_name, status, created_at, expected_delivery_date, approval_status, approved_by, approved_at, is_late",
-        )
-        .order("created_at", { ascending: false }),
-      supabaseSCM
-        .from("purchase_order_items")
-        .select("po_item_id, po_id, item_name, quantity"),
-    ]);
-    setLoading(false);
+    try {
+      const poData = await fetchPurchaseOrders();
 
-    if (poError) {
+      setPos(
+        (poData ?? []).map((po) => ({
+          po_id: po.po_id,
+          po_no: po.po_no ?? "N/A",
+          supplier_name: po.supplier_name ?? "N/A",
+          status: po.status ?? "Unknown",
+          created_at: po.created_at ?? new Date().toISOString(),
+          expected_delivery_date:
+            po.expected_delivery_date ?? null,
+          approval_status: po.approval_status ?? "Pending",
+          approved_by: po.approved_by ?? null,
+          approved_at: po.approved_at ?? null,
+          is_late: Boolean(po.is_late),
+          item_count: po.item_count ?? 0,
+          items: [],
+        })),
+      );
+    } catch (error) {
       toast.error("Failed to load purchase orders", {
-        description: toErrorMessage(poError),
+        description: toErrorMessage(error),
       });
       setPos([]);
-      return;
+    } finally {
+      setLoading(false);
     }
-    if (itemError)
-      toast.error("Failed to load line item counts", {
-        description: toErrorMessage(itemError),
-      });
-
-    const map = new Map<string, POItem[]>();
-    (itemData ?? []).forEach((it) => {
-      const list = map.get(it.po_id) ?? [];
-      list.push({
-        po_item_id: it.po_item_id,
-        item_name: it.item_name ?? "Unnamed item",
-        quantity: it.quantity ?? 0,
-      });
-      map.set(it.po_id, list);
-    });
-
-    setPos(
-      (poData ?? []).map((po) => ({
-        po_id: po.po_id,
-        po_no: po.po_no ?? "N/A",
-        supplier_name: po.supplier_name ?? "N/A",
-        status: po.status ?? "Unknown",
-        created_at: po.created_at ?? new Date().toISOString(),
-        expected_delivery_date:
-          po.expected_delivery_date ?? null,
-        approval_status: po.approval_status ?? "Pending",
-        approved_by: po.approved_by ?? null,
-        approved_at: po.approved_at ?? null,
-        is_late: po.is_late,
-        items: map.get(po.po_id) ?? [],
-      })),
-    );
   }, []);
 
   useEffect(() => {
@@ -1731,7 +1649,7 @@ export function POList() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-center text-[#6B7280]">
-                          {po.items.length}
+                          {po.item_count ?? po.items.length}
                         </td>
                         <td className="px-4 py-3 text-right">
                           <span className="text-xs text-[#00A3AD] font-semibold hover:underline">
