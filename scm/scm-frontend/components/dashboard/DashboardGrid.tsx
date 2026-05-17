@@ -5,7 +5,6 @@ import { useDashboardStore } from "@/store/dashboardStore";
 import PanelWrapper from "./PanelWrapper";
 import InventoryValuationTrend from "./executive/InventoryValuationTrend";
 import CriticalStockRiskMatrix from "./executive/CriticalStockRiskMatrix";
-import SupplyChainHealthScore from "./executive/SupplyChainHealthScore";
 import BudgetWaterfall from "./executive/BudgetWaterfall";
 import TopExposureProducts from "./executive/TopExposureProducts";
 import LiveStockMovementFeed from "./operations/LiveStockMovementFeed";
@@ -15,9 +14,35 @@ import BackorderAgingHistogram from "./operations/BackorderAgingHistogram";
 import TransferVelocityFunnel from "./operations/TransferVelocityFunnel";
 import SupplierReliabilityScorecard from "./procurement/SupplierReliabilityScorecard";
 import POLeadTimeDistribution from "./procurement/POLeadTimeDistribution";
-import ProcurementBurnRate from "./procurement/ProcurementBurnRate";
 import BackorderRootCausePareto from "./procurement/BackorderRootCausePareto";
 import InboundGRNPipeline from "./procurement/InboundGRNPipeline";
+import DashboardActionCenter from "./DashboardActionCenter";
+
+function SectionLabel({
+  eyebrow,
+  title,
+}: {
+  eyebrow: string;
+  title?: string;
+}) {
+  return (
+    <div className="flex items-end justify-between gap-3 px-1 pt-1">
+      <div className="space-y-1">
+        <div
+          className="text-[11px] font-bold uppercase tracking-[0.18em]"
+          style={{ color: "var(--accent-teal)", fontFamily: "var(--font-label)" }}
+        >
+          {eyebrow}
+        </div>
+        {title && (
+          <div className="text-[13px] font-semibold" style={{ color: "var(--text-primary)" }}>
+            {title}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function DashboardGrid() {
   const { activeRole, dateRange, filters } = useDashboardStore();
@@ -61,24 +86,32 @@ export default function DashboardGrid() {
   if (displayedRole === 'Executive') {
     return (
       <div className="flex flex-col w-full h-full pb-8" style={{ ...fadeStyle, padding: '16px', gap: '12px' }}>
+        <SectionLabel
+          eyebrow="Risk & Trend Diagnostics"
+        />
         <div className="grid grid-cols-1 md:grid-cols-5 gap-[12px]">
-          <PanelWrapper isLoading={isLoading} filterActive={execFilters} title="Inventory Valuation Trend" className="md:col-span-3" style={{ height: '350px', flexShrink: 0 }} chartType="line">
+          <PanelWrapper isLoading={isLoading} filterActive={execFilters} title="Inventory Valuation Trend" className="md:col-span-3" style={{ height: '260px', flexShrink: 0 }} chartType="line">
             <InventoryValuationTrend />
           </PanelWrapper>
-          <PanelWrapper isLoading={isLoading} filterActive={execFilters} title="Critical Stock Risk Matrix" className="md:col-span-2" style={{ height: '350px', flexShrink: 0 }} chartType="mixed">
+          <PanelWrapper isLoading={isLoading} filterActive={execFilters} title="Critical Stock Products" className="md:col-span-2" style={{ height: '260px', flexShrink: 0 }} chartType="table" contentOverflow="hidden">
             <CriticalStockRiskMatrix />
           </PanelWrapper>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-[12px]">
-          <PanelWrapper isLoading={isLoading} filterActive={execFilters} title="Supply Chain Health Score" style={{ height: '260px', flexShrink: 0 }} chartType="gauge">
-            <SupplyChainHealthScore />
+        <SectionLabel
+          eyebrow="Strategic Action Center"
+        />
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-[12px]">
+          <PanelWrapper isLoading={isLoading} filterActive={hasFilter} title="Executive Action Center" className="md:col-span-3" style={{ minHeight: '250px', flexShrink: 0 }} chartType="table">
+            <DashboardActionCenter role="Executive" />
           </PanelWrapper>
-          <PanelWrapper isLoading={isLoading} filterActive={execFilters} title="Budget Allocation vs. Spend" style={{ height: '260px', flexShrink: 0 }} chartType="bar">
-            <BudgetWaterfall />
-          </PanelWrapper>
-          <PanelWrapper isLoading={isLoading} filterActive={execFilters} title="Top 10 Exposure Products" style={{ height: '260px', flexShrink: 0 }} chartType="bar">
-            <TopExposureProducts />
-          </PanelWrapper>
+          <div className="md:col-span-2 flex flex-col gap-[12px]">
+            <PanelWrapper isLoading={isLoading} filterActive={execFilters} title="Budget Position" style={{ height: '140px', flexShrink: 0 }} chartType="bar" contentOverflow="hidden">
+              <BudgetWaterfall />
+            </PanelWrapper>
+            <PanelWrapper isLoading={isLoading} filterActive={execFilters} title="Top Exposure Products" style={{ height: '210px', flexShrink: 0 }} chartType="bar" contentOverflow="hidden">
+              <TopExposureProducts />
+            </PanelWrapper>
+          </div>
         </div>
       </div>
     );
@@ -87,25 +120,34 @@ export default function DashboardGrid() {
   if (displayedRole === 'Operations') {
     return (
       <div className="flex flex-col w-full h-full pb-8" style={{ ...fadeStyle, padding: '16px', gap: '12px' }}>
+        <SectionLabel
+          eyebrow="Operational monitoring"
+        />
         <div className="grid grid-cols-1 md:grid-cols-5 gap-[12px]">
-          <PanelWrapper isLoading={isLoading} filterActive={opsFilters} title="Live Stock Movement Feed" className="md:col-span-2" style={{ height: '350px', flexShrink: 0 }} chartType="table">
+          <PanelWrapper isLoading={isLoading} filterActive={opsFilters} title="Stock Movement Feed" className="md:col-span-2" style={{ height: '350px', flexShrink: 0 }} chartType="table" contentOverflow="hidden">
             <LiveStockMovementFeed />
           </PanelWrapper>
           <PanelWrapper isLoading={isLoading} filterActive={opsFilters} title="Warehouse Zone Heatmap" className="md:col-span-3" style={{ height: '350px', flexShrink: 0 }} chartType="mixed">
             <WarehouseZoneHeatmap />
           </PanelWrapper>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-[12px]">
-          <PanelWrapper isLoading={isLoading} filterActive={opsFilters} title="Cycle Count Accuracy Trend" style={{ height: '260px', flexShrink: 0 }} chartType="line">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-[12px]">
+          <PanelWrapper isLoading={isLoading} filterActive={opsFilters} title="Cycle Count Accuracy Trend" className="md:col-span-2" style={{ height: '260px', flexShrink: 0 }} chartType="line" contentOverflow="hidden">
             <CycleCountAccuracyTrend />
           </PanelWrapper>
-          <PanelWrapper isLoading={isLoading} filterActive={opsFilters} title="Backorder Aging Histogram" style={{ height: '260px', flexShrink: 0 }} chartType="bar">
+          <PanelWrapper isLoading={isLoading} filterActive={opsFilters} title="Backorder Aging Histogram" className="md:col-span-2" style={{ height: '260px', flexShrink: 0 }} chartType="bar" contentOverflow="hidden">
             <BackorderAgingHistogram />
           </PanelWrapper>
-          <PanelWrapper isLoading={isLoading} filterActive={opsFilters} title="Transfer Velocity Funnel" style={{ height: '260px', flexShrink: 0 }} chartType="bar">
+          <PanelWrapper isLoading={isLoading} filterActive={opsFilters} title="Transfer Velocity Funnel" className="md:col-span-2" style={{ height: '260px', flexShrink: 0 }} chartType="bar" contentOverflow="hidden">
             <TransferVelocityFunnel />
           </PanelWrapper>
         </div>
+        <SectionLabel
+          eyebrow="Operations Action Center"
+        />
+        <PanelWrapper isLoading={isLoading} filterActive={hasFilter} title="Operations Action Center" style={{ minHeight: '320px', flexShrink: 0 }} chartType="table">
+          <DashboardActionCenter role="Operations" />
+        </PanelWrapper>
       </div>
     );
   }
@@ -113,25 +155,33 @@ export default function DashboardGrid() {
   if (displayedRole === 'Procurement') {
     return (
       <div className="flex flex-col w-full h-full pb-8" style={{ ...fadeStyle, padding: '16px', gap: '12px' }}>
+        <SectionLabel
+          eyebrow="Predictive sourcing risk"
+          title="Use the top row to identify the few suppliers and SKUs creating most future service loss."
+        />
         <div className="grid grid-cols-1 md:grid-cols-10 gap-[12px]">
-          <PanelWrapper isLoading={isLoading} filterActive={procFilters} title="Backorder Root Cause Pareto" className="md:col-span-5" style={{ height: '350px', flexShrink: 0 }} chartType="mixed">
+          <PanelWrapper isLoading={isLoading} filterActive={procFilters} title="Backorder Root Cause Pareto" className="md:col-span-6" style={{ height: '350px', flexShrink: 0 }} chartType="mixed">
             <BackorderRootCausePareto />
           </PanelWrapper>
-          <PanelWrapper isLoading={isLoading} filterActive={procFilters} title="PO Lead Time Distribution" className="md:col-span-5" style={{ height: '350px', flexShrink: 0 }} chartType="bar">
+          <PanelWrapper isLoading={isLoading} filterActive={procFilters} title="PO Lead Time Distribution" className="md:col-span-4" style={{ height: '350px', flexShrink: 0 }} chartType="bar">
             <POLeadTimeDistribution />
           </PanelWrapper>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-10 gap-[12px]">
-          <PanelWrapper isLoading={isLoading} filterActive={procFilters} title="Procurement Budget Burn Rate" className="md:col-span-3" style={{ height: '260px', flexShrink: 0 }} chartType="gauge">
-            <ProcurementBurnRate />
-          </PanelWrapper>
-          <PanelWrapper isLoading={isLoading} filterActive={procFilters} title="Supplier Reliability Scorecard" className="md:col-span-4" style={{ height: '260px', flexShrink: 0 }} chartType="line">
+          <PanelWrapper isLoading={isLoading} filterActive={procFilters} title="Supplier Reliability Scorecard" className="md:col-span-5" style={{ height: '260px', flexShrink: 0 }} chartType="line">
             <SupplierReliabilityScorecard />
           </PanelWrapper>
-          <PanelWrapper isLoading={isLoading} filterActive={procFilters} title="Inbound GRN Status Pipeline" className="md:col-span-3" style={{ height: '260px', flexShrink: 0 }} chartType="kanban">
+          <PanelWrapper isLoading={isLoading} filterActive={procFilters} title="Inbound GRN Status Pipeline" className="md:col-span-5" style={{ height: '260px', flexShrink: 0 }} chartType="kanban">
             <InboundGRNPipeline />
           </PanelWrapper>
         </div>
+        <SectionLabel
+          eyebrow="Prescriptive action center"
+          title="Make the bottom row explicit about which supplier, PO, or safety-stock policy needs intervention now."
+        />
+        <PanelWrapper isLoading={isLoading} filterActive={hasFilter} title="Procurement Action Center" style={{ minHeight: '320px', flexShrink: 0 }} chartType="table">
+          <DashboardActionCenter role="Procurement" />
+        </PanelWrapper>
       </div>
     );
   }

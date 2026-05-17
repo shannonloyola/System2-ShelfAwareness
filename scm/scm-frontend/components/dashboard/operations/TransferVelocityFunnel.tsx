@@ -2,41 +2,40 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { useDashboardStore } from '@/store/dashboardStore';
-
-const MOCK_DATA = [
-  { stage: 'Initiated', count: 156, avgHoursInStage: 0.5, dropoffCount: 0, dropoffPct: 0 },
-  { stage: 'Pending Approval', count: 134, avgHoursInStage: 18.2, dropoffCount: 22, dropoffPct: 14.1 },
-  { stage: 'In Transit', count: 118, avgHoursInStage: 6.4, dropoffCount: 16, dropoffPct: 11.9 },
-  { stage: 'Quality Check', count: 109, avgHoursInStage: 4.1, dropoffCount: 9, dropoffPct: 7.6 },
-  { stage: 'Received', count: 102, avgHoursInStage: 0, dropoffCount: 7, dropoffPct: 6.4 }
-];
+import { EmptyDashboardState, useDashboardData } from '../DashboardDataContext';
 
 export default function TransferVelocityFunnel() {
   const [mounted, setMounted] = useState(false);
   const activeRole = useDashboardStore(state => state.activeRole);
+  const { data: dashboardData, isLoading } = useDashboardData();
+  const funnelData = useMemo(() => dashboardData?.operations?.transferVelocityFunnel || [], [dashboardData]);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
   // Find bottleneck
-  const maxHours = Math.max(...MOCK_DATA.map(d => d.avgHoursInStage));
-  const bottleneckStage = MOCK_DATA.find(d => d.avgHoursInStage === maxHours)?.stage;
+  const maxHours = Math.max(...funnelData.map(d => d.avgHoursInStage), 0);
+  const bottleneckStage = funnelData.find(d => d.avgHoursInStage === maxHours)?.stage;
 
-  const initialCount = MOCK_DATA[0].count;
-  const finalCount = MOCK_DATA[MOCK_DATA.length - 1].count;
+  const initialCount = funnelData[0]?.count || 0;
+  const finalCount = funnelData[funnelData.length - 1]?.count || 0;
   const overallConv = ((finalCount / initialCount) * 100).toFixed(1);
 
   // Layout math
   const width = 300;
   const height = 200;
-  const stageHeight = height / MOCK_DATA.length;
+  const stageHeight = height / Math.max(1, funnelData.length);
   
   // Calculate widths for each stage based on count relative to max count (156)
   // Max width is 300, min width maybe 100
   const getStageWidth = (count: number) => {
     return Math.max(120, (count / initialCount) * width);
   };
+
+  if (!funnelData.length || initialCount === 0) {
+    return <EmptyDashboardState message={isLoading ? "Loading backend transfer data..." : "No transfer velocity data returned by procurement service."} />;
+  }
 
   return (
     <div className="flex flex-col items-center justify-between w-full h-full p-2" style={{ overflow: 'hidden' }}>
@@ -58,8 +57,8 @@ export default function TransferVelocityFunnel() {
             </style>
           </defs>
 
-          {MOCK_DATA.map((item, i) => {
-            const topWidth = getStageWidth(i === 0 ? item.count : MOCK_DATA[i-1].count);
+          {funnelData.map((item, i) => {
+            const topWidth = getStageWidth(i === 0 ? item.count : funnelData[i-1].count);
             const bottomWidth = getStageWidth(item.count);
             
             const topX = (width - topWidth) / 2;
@@ -179,7 +178,7 @@ export default function TransferVelocityFunnel() {
         }}
       >
         <span className="text-[11px] font-bold flex items-center gap-1.5" style={{ color: 'var(--accent-amber)', fontFamily: 'var(--font-label)' }}>
-          ⚡ Bottleneck: Pending Approval averaging 18.2h — 12 approvals awaiting action
+          Bottleneck: {bottleneckStage || "None"} averaging {maxHours.toFixed(1)}h - {overallConv}% completion flow
         </span>
         <a 
           href="/warehouse" 

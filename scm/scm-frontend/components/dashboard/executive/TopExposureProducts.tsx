@@ -1,152 +1,148 @@
 "use client";
 
-import { useDashboardStore } from '@/store/dashboardStore';
-import { useEffect, useState } from 'react';
+import { useDashboardStore } from "@/store/dashboardStore";
+import { useEffect, useState } from "react";
+import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
+import { EmptyDashboardState, useDashboardData } from "../DashboardDataContext";
 
-const MOCK_DATA = [
-  { rank: 1, sku: 'MED-042', name: 'Insulin Glargine 100U/mL', category: 'Endocrinology', exposure: 2840000, trend: [2100000, 2300000, 2500000, 2650000, 2840000], stockLevel: 120, status: 'warning' },
-  { rank: 2, sku: 'MED-119', name: 'Meropenem 1g Injection', category: 'Antibiotics', exposure: 1950000, trend: [2000000, 1980000, 1850000, 1900000, 1950000], stockLevel: 45, status: 'critical' },
-  { rank: 3, sku: 'MED-087', name: 'Atorvastatin 40mg', category: 'Cardiology', exposure: 1420000, trend: [1100000, 1200000, 1250000, 1300000, 1420000], stockLevel: 450, status: 'healthy' },
-  { rank: 4, sku: 'MED-003', name: 'Metformin 500mg', category: 'Endocrinology', exposure: 1250000, trend: [1100000, 1150000, 1200000, 1220000, 1250000], stockLevel: 80, status: 'warning' },
-  { rank: 5, sku: 'MED-215', name: 'Propofol 10mg/mL', category: 'Anesthetics', exposure: 980000, trend: [750000, 800000, 850000, 910000, 980000], stockLevel: 25, status: 'critical' },
-  { rank: 6, sku: 'MED-099', name: 'Clopidogrel 75mg', category: 'Cardiology', exposure: 850000, trend: [950000, 900000, 880000, 860000, 850000], stockLevel: 310, status: 'healthy' },
-  { rank: 7, sku: 'MED-144', name: 'Pantoprazole 40mg IV', category: 'Gastroenterology', exposure: 760000, trend: [700000, 720000, 740000, 750000, 760000], stockLevel: 150, status: 'healthy' },
-  { rank: 8, sku: 'MED-033', name: 'Ceftriaxone 1g IV', category: 'Antibiotics', exposure: 690000, trend: [710000, 700000, 680000, 685000, 690000], stockLevel: 65, status: 'warning' },
-  { rank: 9, sku: 'MED-112', name: 'Levothyroxine 50mcg', category: 'Endocrinology', exposure: 540000, trend: [450000, 480000, 500000, 520000, 540000], stockLevel: 220, status: 'healthy' },
-  { rank: 10, sku: 'MED-201', name: 'Bupivacaine 5mg/mL', category: 'Anesthetics', exposure: 450000, trend: [500000, 480000, 470000, 460000, 450000], stockLevel: 18, status: 'critical' },
-];
-
-const MAX_EXPOSURE = Math.max(...MOCK_DATA.map(d => d.exposure));
-
-const getStatusColor = (status: string) => {
-  if (status === 'critical') return 'var(--accent-red)';
-  if (status === 'warning') return 'var(--accent-amber)';
-  return 'var(--accent-green)';
+const getTrendDelta = (trend: number[]) => {
+  if (trend.length < 2) return 0;
+  const start = trend[0];
+  const end = trend[trend.length - 1];
+  if (start === 0) return 0;
+  return ((end - start) / start) * 100;
 };
 
-const formatPHP = (val: number) => {
-  if (val >= 1000000) return `₱${(val / 1000000).toFixed(1)}M`;
-  if (val >= 1000) return `₱${(val / 1000).toFixed(0)}k`;
-  return `₱${val}`;
-};
+const formatPHPCompact = (value: number) =>
+  new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+    notation: value >= 1000000 ? "compact" : "standard",
+    maximumFractionDigits: value >= 1000000 ? 1 : 0,
+  }).format(value);
 
-// Raw SVG Sparkline
-const Sparkline = ({ data }: { data: number[] }) => {
-  if (!data || data.length === 0) return null;
+const Sparkline = ({ data, stroke }: { data: number[]; stroke: string }) => {
+  if (!data.length) return null;
   const max = Math.max(...data);
   const min = Math.min(...data);
   const range = max - min || 1;
-  
   const width = 72;
   const height = 28;
-  const pad = 3; // 3px padding to prevent any boundary clipping
-  
-  const points = data.map((val, i) => {
-    const x = pad + (i / (data.length - 1)) * (width - 2 * pad);
-    const y = pad + (height - 2 * pad) - ((val - min) / range) * (height - 2 * pad);
-    return `${x},${y}`;
-  }).join(' ');
+  const pad = 3;
 
-  const lastX = pad + (width - 2 * pad);
+  const points = data
+    .map((value, index) => {
+      const x = pad + (index / (data.length - 1)) * (width - 2 * pad);
+      const y = pad + (height - 2 * pad) - ((value - min) / range) * (height - 2 * pad);
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  const lastX = width - pad;
   const lastY = pad + (height - 2 * pad) - ((data[data.length - 1] - min) / range) * (height - 2 * pad);
 
   return (
-    <svg width={width} height={height} className="overflow-visible">
-      <polyline 
-        points={points}
-        fill="none"
-        stroke="var(--accent-teal)"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {/* Circle on last point */}
-      <circle 
-        cx={lastX} 
-        cy={lastY} 
-        r="3" 
-        fill="var(--accent-teal)" 
-      />
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="block overflow-hidden">
+      <polyline points={points} fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={lastX} cy={lastY} r="3" fill={stroke} />
     </svg>
   );
 };
 
 export default function TopExposureProducts() {
   const [mounted, setMounted] = useState(false);
-  const setFilter = useDashboardStore(state => state.setFilter);
-  const activeSku = useDashboardStore(state => state.filters.sku);
+  const setFilter = useDashboardStore((state) => state.setFilter);
+  const activeSku = useDashboardStore((state) => state.filters.sku);
+  const { data, isLoading } = useDashboardData();
+  const exposureProducts = data?.executive?.topExposureProducts || [];
+  const maxExposure = Math.max(...exposureProducts.map((item) => item.exposure), 1);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
   return (
-    <div className="flex flex-col w-full h-full gap-1 overflow-y-auto pr-2 custom-scrollbar">
-      {MOCK_DATA.map((item, index) => {
+    <div className="flex h-full w-full flex-col gap-1.5">
+      {!exposureProducts.length && (
+        <EmptyDashboardState message={isLoading ? "Loading backend exposure data..." : "No exposure products returned by backend."} />
+      )}
+      {exposureProducts.slice(0, 4).map((item, index) => {
         const isFaded = activeSku && activeSku !== item.sku;
-        const widthPercent = (item.exposure / MAX_EXPOSURE) * 100;
-        
+        const widthPercent = Math.max(18, (item.exposure / maxExposure) * 100);
+        const trendDelta = getTrendDelta(item.trend);
+        const trendDirection = trendDelta > 0.2 ? "up" : trendDelta < -0.2 ? "down" : "flat";
+        const trendColor = trendDirection === "up" ? "#22c55e" : trendDirection === "down" ? "#ef4444" : "#475569";
+        const TrendIcon = trendDirection === "up" ? ArrowUpRight : trendDirection === "down" ? ArrowDownRight : Minus;
+        const budgetColor = item.budgetUtilizationPct >= 90 ? "var(--accent-amber)" : item.budgetUtilizationPct >= 75 ? "#5B7C99" : "var(--accent-green)";
+        const exposureBarColor = item.budgetUtilizationPct > 90 ? "#ef4444" : "#475569";
+
         return (
-          <div 
+          <div
             key={item.sku}
-            onClick={() => setFilter('sku', activeSku === item.sku ? null : item.sku)}
-            className="flex items-center gap-3 rounded-lg cursor-pointer transition-all duration-300 group"
-            style={{ 
-              padding: '8px 12px',
+            onClick={() => setFilter("sku", activeSku === item.sku ? null : item.sku)}
+            className="relative flex cursor-pointer items-center gap-3 rounded-lg border transition-all duration-300"
+            style={{
+              padding: "7px 10px",
               opacity: isFaded ? 0.3 : 1,
-              transform: mounted ? 'translateY(0)' : 'translateY(10px)',
+              transform: mounted ? "translateY(0)" : "translateY(10px)",
               transitionDelay: `${index * 50}ms`,
+              backgroundColor: isFaded ? "transparent" : "var(--bg-surface)",
+              borderColor: isFaded ? "transparent" : "var(--border-subtle)",
             }}
           >
-            {/* Hover Background - done via Tailwind classes but injected dynamically */}
-            <div className="absolute inset-0 opacity-0 group-hover:opacity-50 rounded-lg pointer-events-none transition-opacity" style={{ backgroundColor: 'var(--bg-elevated)' }} />
-            
-            {/* Rank & Status */}
-            <div className="flex items-center gap-2 w-[40px] shrink-0">
-              <div 
-                className="flex items-center justify-center font-bold font-mono rounded" 
-                style={{ width: '20px', height: '20px', fontSize: '10px', backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+            <div className="relative z-10 flex w-[40px] shrink-0 items-center gap-2">
+              <div
+                className="flex items-center justify-center rounded font-bold font-mono"
+                style={{ width: "20px", height: "20px", fontSize: "10px", backgroundColor: "var(--bg-elevated)", color: "var(--text-secondary)" }}
               >
                 {item.rank}
               </div>
-              <div 
-                className="w-1.5 h-1.5 rounded-full" 
-                style={{ backgroundColor: getStatusColor(item.status) }} 
-              />
+              <div className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: exposureBarColor }} />
             </div>
 
-            {/* Product Info */}
-            <div className="flex flex-col w-[140px] shrink-0" style={{ minWidth: '0' }}>
-              <span className="text-[12px] font-bold truncate block w-full" style={{ color: 'var(--text-primary)' }} title={item.name}>
+            <div className="relative z-10 flex w-[150px] shrink-0 flex-col" style={{ minWidth: "0" }}>
+              <span className="block w-full truncate text-[11px] font-bold" style={{ color: "var(--text-primary)" }} title={item.name}>
                 {item.name}
               </span>
-              <div className="flex items-center gap-1.5 text-[9px] font-mono" style={{ color: 'var(--text-secondary)' }}>
+              <div className="flex items-center gap-1 text-[8px] font-mono" style={{ color: "var(--text-secondary)" }}>
                 <span>{item.sku}</span>
-                <span className="w-0.5 h-0.5 rounded-full bg-current opacity-50" />
+                <span className="h-0.5 w-0.5 rounded-full bg-current opacity-50" />
                 <span className="truncate">{item.category}</span>
+              </div>
+              <div className="mt-1 flex items-center gap-1 text-[7px]">
+                <span className="rounded-full px-2 py-0.5 font-semibold" style={{ backgroundColor: "var(--bg-elevated)", color: budgetColor }}>
+                  Budget {item.budgetUtilizationPct.toFixed(0)}%
+                </span>
+                <span style={{ color: "var(--text-secondary)" }}>{formatPHPCompact(item.budgetRemaining)} left</span>
               </div>
             </div>
 
-            {/* Exposure Bar */}
-            <div className="flex-1 flex flex-col justify-center min-w-[100px]">
-              <div className="w-full h-3 rounded-full flex items-center" style={{ backgroundColor: 'var(--bg-elevated)' }}>
-                <div 
-                  className="h-full rounded-full transition-all duration-1000 ease-out flex items-center justify-end px-1.5"
-                  style={{ 
-                    width: mounted ? `${widthPercent}%` : '0%', 
-                    backgroundColor: getStatusColor(item.status) 
+            <div className="relative z-10 flex min-w-[120px] flex-1 flex-col justify-center gap-1">
+              <div className="flex items-center justify-between text-[8px]">
+                <span style={{ color: "var(--text-secondary)" }}>Exposure</span>
+                <div className="flex items-center gap-1 font-bold" style={{ color: trendColor }}>
+                  <TrendIcon className="h-3 w-3" />
+                  <span>{Math.abs(trendDelta).toFixed(1)}%</span>
+                </div>
+              </div>
+              <div className="flex h-3.5 w-full items-center overflow-hidden rounded-full" style={{ backgroundColor: "var(--bg-elevated)" }}>
+                <div
+                  className="flex h-full items-center justify-between rounded-full px-2 transition-all duration-1000 ease-out"
+                  style={{
+                    width: mounted ? `${widthPercent}%` : "0%",
+                    backgroundColor: exposureBarColor,
                   }}
                 >
-                  <span className="text-[9px] font-bold text-white font-mono drop-shadow-md">
-                    {formatPHP(item.exposure)}
-                  </span>
+                  <span className="whitespace-nowrap text-[8px] font-bold text-white font-mono">{formatPHPCompact(item.exposure)}</span>
                 </div>
               </div>
             </div>
 
-            {/* Trend Sparkline */}
-            <div className="shrink-0 w-[72px] flex justify-end">
-              <Sparkline data={item.trend} />
+            <div className="relative z-10 flex w-[74px] shrink-0 flex-col items-end gap-1">
+              <Sparkline data={item.trend} stroke={trendColor} />
+              <span className="text-[7px] font-medium" style={{ color: trendColor }}>
+                {trendDirection === "up" ? "Up" : trendDirection === "down" ? "Down" : "Flat"}
+              </span>
             </div>
           </div>
         );

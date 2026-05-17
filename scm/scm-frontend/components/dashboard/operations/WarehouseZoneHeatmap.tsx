@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useEffect } from 'react';
 import { useDashboardStore } from '@/store/dashboardStore';
+import { EmptyDashboardState, useDashboardData } from '../DashboardDataContext';
 
 interface BinData {
   zone: string;
@@ -15,44 +16,12 @@ interface BinData {
   hasAlert: boolean;
 }
 
-const ZONES = ['Zone A', 'Zone B', 'Zone C', 'Zone D'];
-
-const generateHeatmapData = (): BinData[] => {
-  const data: BinData[] = [];
-  
-  ZONES.forEach(zone => {
-    for (let aisle = 1; aisle <= 6; aisle++) {
-      for (let bin = 1; bin <= 8; bin++) {
-        const baseUtil = zone === 'Zone A' ? 74 : zone === 'Zone B' ? 52 : zone === 'Zone C' ? 88 : 28;
-        const rand = Math.random() * 20 - 10;
-        let util = Math.min(100, Math.max(0, baseUtil + rand));
-        
-        if (Math.random() > 0.96) util = 100;
-        else if (Math.random() > 0.96) util = 0;
-
-        data.push({
-          zone,
-          aisle: `Aisle ${aisle}`,
-          bin: `Bin ${bin.toString().padStart(2, '0')}`,
-          capacity: 100,
-          currentStock: Math.round(util),
-          utilizationPct: Math.round(util),
-          topProduct: util > 0 ? 'Amoxicillin 500mg' : 'Empty',
-          skuCount: util > 0 ? Math.floor(Math.random() * 4) + 1 : 0,
-          hasAlert: Math.random() > 0.93
-        });
-      }
-    }
-  });
-  return data;
-};
-
 const getColor = (util: number) => {
   if (util <= 30) return 'var(--bg-elevated)';
   if (util <= 60) return 'rgba(0,163,173,0.4)';
   if (util <= 85) return 'rgba(0,163,173,0.9)';
-  if (util < 100) return 'var(--accent-amber)';
-  return 'var(--accent-red)';
+  if (util < 100) return '#f59e0b';
+  return '#ef4444';
 };
 
 const TooltipContent = ({ data }: { data: BinData | null }) => {
@@ -84,25 +53,31 @@ const TooltipContent = ({ data }: { data: BinData | null }) => {
 export default function WarehouseZoneHeatmap() {
   const [mounted, setMounted] = useState(false);
   const [hoveredCell, setHoveredCell] = useState<{ x: number, y: number, data: BinData } | null>(null);
+  const { data: dashboardData, isLoading } = useDashboardData();
   
   // Dashboard cross-filtering state
   const setFilter = useDashboardStore(state => state.setFilter);
   const activeZoneFilter = useDashboardStore(state => state.filters.zone);
 
-  const data = useMemo(() => generateHeatmapData(), []);
+  const data = useMemo(() => dashboardData?.operations?.warehouseZoneHeatmap || [], [dashboardData]);
+  const zones = useMemo(() => Array.from(new Set(data.map((item) => item.zone))).slice(0, 4), [data]);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
   const zoneStats = useMemo(() => {
-    return ZONES.map(z => {
+    return zones.map(z => {
       const zData = data.filter(d => d.zone === z);
       const avg = Math.round(zData.reduce((acc, d) => acc + d.utilizationPct, 0) / zData.length) || 0;
       const alerts = zData.filter(d => d.hasAlert).length;
       return { zone: z, avg, alerts, data: zData };
     });
-  }, [data]);
+  }, [data, zones]);
+
+  if (!data.length) {
+    return <EmptyDashboardState message={isLoading ? "Loading backend warehouse data..." : "No warehouse location data returned by product/inventory services."} />;
+  }
 
   return (
     <div className="flex flex-col h-full w-full relative justify-between pb-1">
@@ -135,9 +110,8 @@ export default function WarehouseZoneHeatmap() {
 
               {/* Heatmap Grid cells */}
               <div className="flex-1 flex flex-col gap-1 justify-center">
-                {Array.from({ length: 6 }).map((_, aIdx) => {
-                  const aisleName = `Aisle ${aIdx + 1}`;
-                  const aisleData = zBins.filter(d => d.aisle === aisleName);
+                {Array.from(new Set(zBins.map((bin) => bin.aisle))).slice(0, 6).map((aisleName, aIdx) => {
+                  const aisleData = zBins.filter(d => d.aisle === aisleName).slice(0, 8);
 
                   return (
                     <div key={aisleName} className="flex gap-1.5 items-center justify-between">
@@ -209,7 +183,7 @@ export default function WarehouseZoneHeatmap() {
           ))}
         </div>
         <span className="text-[8px] font-bold font-mono text-[var(--text-secondary)] uppercase tracking-wider">
-          Total: 192 Bins
+          Total: {data.length} Bins
         </span>
       </div>
     </div>
