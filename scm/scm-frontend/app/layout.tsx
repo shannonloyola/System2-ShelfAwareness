@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import { Providers } from "@/components/Providers";
 import "@/styles/index.css";
+import "./globals.css";
+
 
 export const metadata: Metadata = {
   title: "Pharma Distribution Management System",

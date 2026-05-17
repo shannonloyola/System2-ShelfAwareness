@@ -23,7 +23,7 @@ const SCM_URL = "https://wbktqkjdsqrvqxxtitsg.supabase.co";
 const SCM_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6India3Rxa2pkc3FydnF4eHRpdHNnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0NzQ2MTIsImV4cCI6MjA5NDA1MDYxMn0.rWnlQ2PZVAWnK5kao1GPgHHexqCquzD9XE711MWOfck";
 
-export default function ValuationReport() {
+export default function EvaluationReport() {
   const [rows, setRows] = useState<ValuationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
@@ -106,7 +106,7 @@ export default function ValuationReport() {
       {/* Header */}
       <div className="bg-white border border-[#E5E7EB] rounded-xl p-4 flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-[#111827]">Valuation Report</h2>
+          <h2 className="text-lg font-semibold text-[#111827]">Evaluation Report</h2>
           <p className="text-sm text-[#6B7280]">Inventory asset valuation — stock quantity × unit price.</p>
         </div>
         <button

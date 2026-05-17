@@ -141,51 +141,51 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Desktop Sidebar - Midnight Blue */}
-      <aside className="relative z-20 hidden w-64 shrink-0 lg:flex lg:flex-col bg-[#1A2B47] text-white">
-        <div className="p-6 border-b border-white/10">
-          <h1 className="text-2xl font-semibold tracking-tight">
+      <aside className="fixed left-0 top-0 bottom-0 z-20 hidden w-64 h-screen lg:flex lg:flex-col bg-[#1A2B47] text-white overflow-hidden">
+        <div className="p-5 border-b border-white/10">
+          <h1 className="text-xl font-bold tracking-tight">
             Shelf Awareness
           </h1>
-          <p className="text-sm text-white/70 mt-1">
+          <p className="text-xs text-white/70 mt-0.5">
             Medical Logistics
           </p>
         </div>
 
-        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto custom-scrollbar">
           {visibleNav.map((item) => {
             const isActive = pathname === item.href;
             return (
               <Link
                 key={item.name}
                 href={item.href}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
                   isActive
-                    ? "bg-[#00A3AD] text-white shadow-lg"
-                    : "text-white/90 hover:bg-white/10"
+                    ? "bg-[#00A3AD] text-white shadow-md font-semibold"
+                    : "text-white/80 hover:bg-white/10 hover:text-white"
                 }`}
               >
-                <item.icon className="w-5 h-5" />
-                <span className="font-medium">{item.name}</span>
+                <item.icon className="w-4 h-4" />
+                <span>{item.name}</span>
               </Link>
             );
           })}
         </nav>
 
-        <div className="mt-auto p-4 border-t border-white/10 space-y-3">
+        <div className="p-3 border-t border-white/10 space-y-2 shrink-0 bg-[#1A2B47]">
           {/* User Profile */}
-          <div className="flex items-center gap-3 px-4 py-2">
-            <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
-              <User className="w-4 h-4" />
+          <div className="flex items-center gap-2.5 px-3 py-1.5">
+            <div className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center">
+              <User className="w-3.5 h-3.5" />
             </div>
             <div className="flex-1 min-w-0">
               <p
-                className="text-sm font-semibold capitalize truncate"
+                className="text-xs font-semibold capitalize truncate"
                 style={{ fontFamily: "Public Sans, sans-serif" }}
               >
                 {role?.replace(/_/g, " ") ?? "User"}
               </p>
               <p
-                className="text-xs text-white/60 truncate"
+                className="text-[10px] text-white/50 truncate"
                 style={{ fontFamily: "Public Sans, sans-serif" }}
               >
                 {user.email}
@@ -197,18 +197,18 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <Button
             type="button"
             onClick={handleLogout}
-            className="relative z-10 w-full pointer-events-auto bg-white/10 hover:bg-white/20 text-white border border-white/20 justify-start gap-3 px-4 rounded-lg font-semibold"
+            className="relative z-10 w-full pointer-events-auto bg-white/10 hover:bg-white/20 text-white border border-white/20 justify-start gap-2.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
             variant="outline"
-            style={{ fontFamily: "Public Sans, sans-serif" }}
+            style={{ fontFamily: "Public Sans, sans-serif", height: '32px' }}
           >
-            <LogOut className="w-5 h-5" />
+            <LogOut className="w-4 h-4" />
             <span>Logout</span>
           </Button>
         </div>
       </aside>
 
       {/* Main Content */}
-      <div className="relative z-0 flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="relative z-0 flex min-w-0 flex-1 flex-col overflow-hidden lg:pl-64">
         {/* Mobile Header */}
         <header className="lg:hidden bg-[#1A2B47] text-white p-4 flex items-center justify-between">
           <div>

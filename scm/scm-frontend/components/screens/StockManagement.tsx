@@ -60,7 +60,7 @@ import { supabaseFulfillment } from "@/lib/supabase";
 import { fetchInventoryItems } from "@/lib/inventoryService";
 import { listCatalogProducts } from "@/lib/productCatalogService";
 import MovementReport from "@/imports/movement-report";
-import ValuationReport from "@/imports/valuation-report";
+import EvaluationReport from "@/imports/evaluation-report";
 
 interface StockItem {
   id: string;
@@ -927,11 +927,11 @@ export function StockManagement() {
             Movement Report
           </TabsTrigger>
           <TabsTrigger
-            value="valuation"
+            value="evaluation"
             className="data-[state=active]:bg-[#00A3AD] data-[state=active]:text-white text-white/80 font-medium"
           >
             <FileBarChart className="w-4 h-4 mr-2" />
-            Valuation Report
+            Evaluation Report
           </TabsTrigger>
         </TabsList>
 
@@ -2058,8 +2058,8 @@ export function StockManagement() {
           <MovementReport key={movementRefreshKey} />
         </TabsContent>
 
-        <TabsContent value="valuation" className="space-y-6">
-          <ValuationReport key="valuation-report-v1" />
+        <TabsContent value="evaluation" className="space-y-6">
+          <EvaluationReport key="evaluation-report-v1" />
         </TabsContent>
       </Tabs>
     </div>

@@ -58,10 +58,12 @@ services:
     volumes:
       - ./scm/scm-frontend:/app
       - /app/node_modules
+      - /app/.next
     environment:
       - PORT=5173
       - HOSTNAME=0.0.0.0
       - NODE_ENV=development
+      - WATCHPACK_POLLING=true
     command: sh -c "if [ ! -d 'node_modules/.bin' ]; then npm install; fi && npm run dev"
     networks:
       - pharma-network
