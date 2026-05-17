@@ -32,6 +32,7 @@ interface NavItem {
   href: string;
   icon: React.ElementType;
   roles: AppRole[]; // which roles can see this item
+  section: string;
 }
 
 const navigation: NavItem[] = [
@@ -42,6 +43,7 @@ const navigation: NavItem[] = [
     roles: [
       ...ROUTE_ACCESS["/dashboard"],
     ],
+    section: "Overview",
   },
   {
     name: "Product Master",
@@ -50,42 +52,49 @@ const navigation: NavItem[] = [
     roles: [
       ...ROUTE_ACCESS["/products"],
     ],
+    section: "Registry",
   },
   {
     name: "Procurement",
     href: "/procurement",
     icon: Package,
     roles: ROUTE_ACCESS["/procurement"],
+    section: "Inbound Logistics",
   },
   {
     name: "PO List",
     href: "/po-list",
     icon: FileText,
     roles: ROUTE_ACCESS["/po-list"],
+    section: "Inbound Logistics",
   },
   {
     name: "Warehouse",
     href: "/warehouse",
     icon: Warehouse,
     roles: ROUTE_ACCESS["/warehouse"],
-  },
-  {
-    name: "Discrepancies",
-    href: "/discrepancies",
-    icon: ClipboardList,
-    roles: ROUTE_ACCESS["/discrepancies"],
+    section: "Inbound Logistics",
   },
   {
     name: "Stock Management",
     href: "/stock",
     icon: BarChart3,
     roles: ROUTE_ACCESS["/stock"],
+    section: "Inventory & QC",
+  },
+  {
+    name: "Discrepancies",
+    href: "/discrepancies",
+    icon: ClipboardList,
+    roles: ROUTE_ACCESS["/discrepancies"],
+    section: "Inventory & QC",
   },
   {
     name: "Distribution",
     href: "/distribution",
     icon: TruckIcon,
     roles: ROUTE_ACCESS["/distribution"],
+    section: "Outbound Logistics",
   },
 ];
 
@@ -152,23 +161,36 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto custom-scrollbar">
-          {visibleNav.map((item) => {
-            const isActive = pathname === item.href;
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
-                  isActive
-                    ? "bg-[#00A3AD] text-white shadow-md font-semibold"
-                    : "text-white/80 hover:bg-white/10 hover:text-white"
-                }`}
-              >
-                <item.icon className="w-4 h-4" />
-                <span>{item.name}</span>
-              </Link>
-            );
-          })}
+          {(() => {
+            let lastSection = "";
+            return visibleNav.map((item) => {
+              const isActive = pathname === item.href;
+              const showSectionHeader = item.section && item.section !== lastSection;
+              if (showSectionHeader) {
+                lastSection = item.section;
+              }
+              return (
+                <div key={item.name} className="space-y-1">
+                  {showSectionHeader && (
+                    <div className="text-[10px] font-bold text-white/30 uppercase tracking-wider px-3 pt-4 pb-1">
+                      {item.section}
+                    </div>
+                  )}
+                  <Link
+                    href={item.href}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
+                      isActive
+                        ? "bg-[#00A3AD] text-white shadow-md font-semibold"
+                        : "text-white/80 hover:bg-white/10 hover:text-white"
+                    }`}
+                  >
+                    <item.icon className="w-4 h-4" />
+                    <span>{item.name}</span>
+                  </Link>
+                </div>
+              );
+            });
+          })()}
         </nav>
 
         <div className="p-3 border-t border-white/10 space-y-2 shrink-0 bg-[#1A2B47]">

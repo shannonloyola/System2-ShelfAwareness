@@ -1,16 +1,29 @@
-export function Logo({ className = "", size = "default" }: { className?: string; size?: "small" | "default" | "large" }) {
+export function Logo({ 
+  className = "", 
+  size = "default",
+  showSubtitle = true,
+  layout = "row",
+  customSubtitle = ""
+}: { 
+  className?: string; 
+  size?: "small" | "default" | "large" | "huge"; 
+  showSubtitle?: boolean;
+  layout?: "row" | "col";
+  customSubtitle?: string;
+}) {
   const sizeClasses = {
     small: "w-32 h-12",
     default: "w-48 h-20",
-    large: "w-64 h-28"
+    large: "w-64 h-28",
+    huge: "w-96 h-48"
   };
 
   return (
-    <div className={`flex items-center gap-3 ${sizeClasses[size]} ${className}`}>
+    <div className={`flex ${layout === "col" ? "flex-col items-center text-center justify-center w-full h-auto" : "items-center gap-3 " + sizeClasses[size]} ${className}`}>
       {/* Medical Cross + Warehouse Shelf Icon */}
       <svg 
         viewBox="0 0 80 80" 
-        className="h-full w-auto"
+        className={`${size === "huge" ? "h-36 w-36" : "h-full w-auto"}`}
         fill="none" 
         xmlns="http://www.w3.org/2000/svg"
       >
@@ -43,25 +56,25 @@ export function Logo({ className = "", size = "default" }: { className?: string;
       </svg>
       
       {/* Logo Text */}
-      <div className="flex flex-col justify-center">
+      <div className={`flex flex-col justify-center ${layout === "col" ? "items-center mt-6" : ""}`}>
         <div 
           className="font-bold text-white leading-tight"
           style={{ 
             fontFamily: 'Public Sans, Inter, sans-serif',
-            fontSize: size === "small" ? "1rem" : size === "large" ? "1.75rem" : "1.35rem"
+            fontSize: size === "small" ? "1rem" : size === "large" ? "1.75rem" : size === "huge" ? "3.5rem" : "1.35rem"
           }}
         >
           Shelf Awareness
         </div>
-        {size !== "small" && (
+        {showSubtitle && size !== "small" && (
           <div 
-            className="text-white/80 text-xs font-medium tracking-wide"
+            className={`${size === "huge" ? "text-[#00A3AD] text-xl font-bold tracking-widest mt-4 uppercase" : "text-white/80 text-xs font-medium tracking-wide mt-1"}`}
             style={{ fontFamily: 'Public Sans, sans-serif' }}
           >
-            Medical Logistics Portal
+            {customSubtitle || "Medical Logistics Portal"}
           </div>
         )}
       </div>
     </div>
   );
-}
+}

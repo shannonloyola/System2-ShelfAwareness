@@ -29,7 +29,6 @@ services:
   pharma-frontend:
     build:
       context: ./scm/scm-frontend
-      target: builder
       args:
         - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
         - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
@@ -55,16 +54,10 @@ services:
     ports:
       - "5173:5173"
     env_file: .env
-    volumes:
-      - ./scm/scm-frontend:/app
-      - /app/node_modules
-      - /app/.next
     environment:
       - PORT=5173
       - HOSTNAME=0.0.0.0
-      - NODE_ENV=development
-      - WATCHPACK_POLLING=true
-    command: sh -c "if [ ! -d 'node_modules/.bin' ]; then npm install; fi && npm run dev"
+      - NODE_ENV=production
     networks:
       - pharma-network
 

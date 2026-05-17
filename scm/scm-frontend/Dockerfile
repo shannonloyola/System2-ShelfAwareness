@@ -46,7 +46,7 @@ ENV NEXT_PUBLIC_AUTH_USER_ACCESS_SERVICE_URL=$NEXT_PUBLIC_AUTH_USER_ACCESS_SERVI
 
 # Install dependencies
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 # Copy source and build
 COPY . .
