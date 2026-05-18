@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "npm --prefix scm/scm-frontend run build",
-    "dev": "npm --prefix scm/scm-frontend run dev -- --port 5173",
+    "dev": "node scripts/dev-stack.mjs",
+    "dev:frontend": "npm --prefix scm/scm-frontend run dev -- --port 5173",
     "dev:backend": "npm --prefix scm/scm-backend/backend run start:dev",
     "install:frontend": "npm --prefix scm/scm-frontend install",
     "install:backend": "npm --prefix scm/scm-backend/backend install",

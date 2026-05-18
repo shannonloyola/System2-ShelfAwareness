@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Calendar,
   Plus,
@@ -43,10 +43,13 @@ import {
   createSupplier as createSupplierFromService,
   fetchSupplierScorecard as fetchSupplierScorecardFromService,
   fetchSuppliers,
+  type SupplierRecord,
 } from "../../lib/supplierService";
 import {
+  createFreightQuote,
   fetchPurchaseOrders as fetchPurchaseOrdersFromService,
   fetchPurchaseOrderById,
+  fetchFreightQuotes,
   fetchPurchaseOrderItems,
   updatePurchaseOrder,
   updatePurchaseOrderStatus,
@@ -56,6 +59,8 @@ import {
   deletePurchaseOrderItem,
   fetchNextPurchaseOrderNumber,
   importPurchaseOrder,
+  selectWinnerFreightQuote,
+  type FreightQuoteRecord,
 } from "../../lib/procurementService";
 import { listCatalogProducts } from "../../lib/productCatalogService";
 import { CSVUploader } from "../CSVUploader";
@@ -101,6 +106,7 @@ interface ProductRow {
   product_name: string | null;
   unit: string | null;
   barcode: string | null;
+  supplier: string | null;
 }
 
 interface SupplierScorecardRow {
@@ -145,7 +151,15 @@ interface SupplierFormState {
   phone: string;
   address: string;
   currency_code: string;
-  lead_time_days: string;
+}
+
+interface FreightQuoteRow {
+  id: string;
+  provider: string;
+  freightType: string;
+  cost: number;
+  days: number;
+  winner: boolean;
 }
 
 const DEFAULT_PO_STATUS = "Draft";
@@ -231,7 +245,6 @@ const createEmptySupplierForm = (): SupplierFormState => ({
   phone: "",
   address: "",
   currency_code: "",
-  lead_time_days: "",
 });
 
 const validateSupplierForm = (
@@ -266,20 +279,13 @@ const validateSupplierForm = (
       form.currency_code.trim().toUpperCase(),
     )
   ) {
-    errors.currency_code = "Use a 3-letter code like USD.";
-  }
-  if (!form.lead_time_days.trim()) {
-    errors.lead_time_days = "Lead time is required.";
-  } else {
-    const parsed = Number.parseInt(form.lead_time_days, 10);
-    if (Number.isNaN(parsed) || parsed <= 0) {
-      errors.lead_time_days =
-        "Lead time must be a positive number.";
-    }
+    errors.currency_code = "Use PHP or JPY.";
   }
 
   return errors;
 };
+
+const CURRENCY_OPTIONS = ["PHP", "JPY"] as const;
 
 export function InboundProcurement() {
   const router = useRouter();
@@ -298,7 +304,9 @@ export function InboundProcurement() {
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
   const [supplierScorecard, setSupplierScorecard] =
     useState<SupplierScorecardRow | null>(null);
-  const [supplierOptions, setSupplierOptions] = useState<string[]>(
+  const [supplierRecords, setSupplierRecords] = useState<
+    SupplierRecord[]
+  >(
     [],
   );
   const [
@@ -330,8 +338,9 @@ export function InboundProcurement() {
 
   // Freight quotes state
   const [showQuotes, setShowQuotes] = useState(false);
-  const [quotes, setQuotes] = useState([]);
+  const [quotes, setQuotes] = useState<FreightQuoteRow[]>([]);
   const [newQuote, setNewQuote] = useState({ provider: "", freightType: "", cost: "", days: "" });
+  const [loadingQuotes, setLoadingQuotes] = useState(false);
 
   const [loadingPOs, setLoadingPOs] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -340,6 +349,7 @@ export function InboundProcurement() {
   const [sendingPO, setSendingPO] = useState(false);
   const [isEditingPO, setIsEditingPO] = useState(true);
   const [importingPO, setImportingPO] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
   
   // Import preview modal state
   const [showImportPreview, setShowImportPreview] = useState(false);
@@ -355,6 +365,18 @@ export function InboundProcurement() {
   };
 
   const normalizeSku = (value: string) => (value ?? "").trim().toLowerCase();
+  const supplierOptions = useMemo(() => {
+    const productSuppliers = products
+      .map((product) => product.supplier?.trim() ?? "")
+      .filter(Boolean);
+    const supplierNames = supplierRecords
+      .map((supplier) => supplier.supplier_name?.trim() ?? "")
+      .filter(Boolean);
+
+    return Array.from(
+      new Set([...supplierNames, ...productSuppliers]),
+    ).sort((left, right) => left.localeCompare(right));
+  }, [products, supplierRecords]);
 
   const checkSkuMismatches = async (rows: CSVRow[]) => {
     const uniqueSkus = Array.from(
@@ -424,9 +446,7 @@ export function InboundProcurement() {
   const fetchSupplierOptions = useCallback(async () => {
     try {
       const suppliers = await fetchSuppliers();
-      setSupplierOptions(
-        suppliers.map((supplier) => supplier.supplier_name),
-      );
+      setSupplierRecords(suppliers);
     } catch (error) {
       console.error("Supplier list fetch error", error);
     }
@@ -1014,36 +1034,92 @@ export function InboundProcurement() {
     setSelectedTemplateId("");
   }, [templates]);
 
+  const mapFreightQuote = useCallback(
+    (quote: FreightQuoteRecord): FreightQuoteRow => ({
+      id: quote.id,
+      provider: quote.provider,
+      freightType: quote.freight_type,
+      cost: Number(quote.cost),
+      days: Number(quote.estimated_days),
+      winner: Boolean(quote.is_winner),
+    }),
+    [],
+  );
+
+  const loadQuotes = useCallback(async (poId: string) => {
+    setLoadingQuotes(true);
+    try {
+      const data = await fetchFreightQuotes(poId);
+      setQuotes(data.map(mapFreightQuote));
+    } catch (error) {
+      toast.error("Failed to load freight quotes", {
+        description: toErrorMessage(error),
+      });
+      setQuotes([]);
+    } finally {
+      setLoadingQuotes(false);
+    }
+  }, [mapFreightQuote]);
+
   // Freight quote handlers
-  const addQuote = useCallback(() => {
+  const addQuote = useCallback(async () => {
+    if (!selectedPO?.po_id) {
+      toast.error("Save the draft first", {
+        description: "A purchase order record is required before adding freight quotes.",
+      });
+      return;
+    }
+
     if (!newQuote.provider || !newQuote.freightType || !newQuote.cost || !newQuote.days) {
       toast.error("All quote fields are required");
       return;
     }
-    
-    setQuotes((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}`,
-        provider: newQuote.provider,
+
+    try {
+      await createFreightQuote(selectedPO.po_id, {
+        provider: newQuote.provider.trim(),
         freightType: newQuote.freightType,
         cost: Number(newQuote.cost),
         days: Number(newQuote.days),
-        winner: false
-      }
-    ]);
-    setNewQuote({ provider: "", freightType: "", cost: "", days: "" });
-    toast.success("Quote added");
-  }, [newQuote]);
+      });
+      await loadQuotes(selectedPO.po_id);
+      setNewQuote({ provider: "", freightType: "", cost: "", days: "" });
+      toast.success("Quote added");
+    } catch (error) {
+      toast.error("Failed to add quote", {
+        description: toErrorMessage(error),
+      });
+    }
+  }, [loadQuotes, newQuote, selectedPO?.po_id]);
 
-  const selectWinner = useCallback((id: string) => {
-    setQuotes((prev) => prev.map((q) => ({ ...q, winner: q.id === id })));
-    toast.success("Freight quote selected as winner");
-  }, []);
+  const selectWinner = useCallback(async (id: string) => {
+    if (!selectedPO?.po_id) {
+      toast.error("Purchase order not found");
+      return;
+    }
+
+    try {
+      await selectWinnerFreightQuote(selectedPO.po_id, id);
+      await loadQuotes(selectedPO.po_id);
+      toast.success("Freight quote selected as winner");
+    } catch (error) {
+      toast.error("Failed to select winner", {
+        description: toErrorMessage(error),
+      });
+    }
+  }, [loadQuotes, selectedPO?.po_id]);
 
   useEffect(() => {
     loadTemplates();
   }, [loadTemplates]);
+
+  useEffect(() => {
+    if (!selectedPO?.po_id) {
+      setQuotes([]);
+      return;
+    }
+    void loadQuotes(selectedPO.po_id);
+  }, [loadQuotes, selectedPO?.po_id]);
 
   const setSupplierField = <
     K extends keyof SupplierFormState,
@@ -1058,10 +1134,7 @@ export function InboundProcurement() {
           ? value.toUpperCase()
           : key === "phone" && typeof value === "string"
             ? sanitizePhoneInput(value)
-            : key === "lead_time_days" &&
-                typeof value === "string"
-              ? sanitizeIntegerInput(value)
-          : value,
+            : value,
     }));
     setSupplierFormErrors((prev) => {
       if (!prev[key]) return prev;
@@ -1076,6 +1149,22 @@ export function InboundProcurement() {
 
     setSavingSupplier(true);
     try {
+      const existing = await fetchSupplierByName(
+        supplierForm.supplier_name.trim(),
+      );
+      if (existing) {
+        setSupplierName(existing.supplier_name);
+        setSelectedSupplierId(existing.id);
+        void fetchSupplierScorecard(existing.supplier_name);
+        setShowCreateSupplierDialog(false);
+        setSupplierForm(createEmptySupplierForm());
+        setSupplierFormErrors({});
+        toast.success("Supplier selected", {
+          description: `${existing.supplier_name} is now applied to the P.O. builder.`,
+        });
+        return;
+      }
+
       const created = await createSupplierFromService({
         supplier_name: supplierForm.supplier_name.trim(),
         contact_person: supplierForm.contact_person.trim(),
@@ -1084,10 +1173,6 @@ export function InboundProcurement() {
         address: supplierForm.address.trim(),
         currency_code:
           supplierForm.currency_code.trim().toUpperCase(),
-        lead_time_days: Number.parseInt(
-          supplierForm.lead_time_days,
-          10,
-        ),
       });
       await fetchSupplierOptions();
       setSupplierName(created.supplier_name);
@@ -1309,23 +1394,30 @@ export function InboundProcurement() {
 
               <div>
                 <Label>Supplier</Label>
-                <Input
-                  list="supplier-service-options"
+                <Select
                   value={supplierName}
-                  onChange={(e) => {
-                    const value = e.target.value;
+                  onValueChange={(value) => {
                     setSupplierName(value);
                     setSelectedSupplierId("");
                     void fetchSupplierScorecard(value);
                   }}
-                  placeholder="Enter supplier name..."
-                  className={builderInputClass}
-                />
-                <datalist id="supplier-service-options">
+                >
+                  <SelectTrigger className={builderInputClass}>
+                    <SelectValue placeholder="Choose supplier..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {supplierOptions.length === 0 && (
+                      <SelectItem value="no-suppliers" disabled>
+                        No suppliers available
+                      </SelectItem>
+                    )}
                   {supplierOptions.map((option) => (
-                    <option key={option} value={option} />
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
                   ))}
-                </datalist>
+                  </SelectContent>
+                </Select>
                 <div className="mt-2 flex items-center justify-between gap-3">
                   <p className="text-xs text-[#6B7280]">
                     Need a new supplier? Add it here and keep building the order.
@@ -1457,34 +1549,40 @@ export function InboundProcurement() {
 
               <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC] space-y-3">
                 <div className="flex items-center justify-between">
-                  <div>
-                    <Label className="text-[#111827]">
-                      Bulk import via CSV
-                    </Label>
-                    <p className="text-xs text-[#6B7280]">
-                      Uploads call the Supabase RPC
-                      bulk_import_po
-                    </p>
-                  </div>
+                  <Label className="text-[#111827]">
+                    Bulk import via CSV
+                  </Label>
                   {importingPO && (
                     <span className="text-xs text-[#00A3AD]">
                       Importing...
                     </span>
                   )}
                 </div>
-                <CSVUploader
-                  onParsed={(rows) => void openImportPreview(rows)}
-                  onError={(msg) =>
-                    toast.error("CSV parse failed", {
-                      description: msg,
-                    })
-                  }
-                />
-                <p className="text-xs text-[#6B7280]">
-                  Required columns: sku, qty. We will
-                  auto-generate the P.O. number if blank and
-                  create items in one call.
-                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowBulkImport((prev) => !prev)}
+                  className="border-[#111827]/20 text-[#111827] hover:bg-[#F8FAFC]"
+                >
+                  {showBulkImport ? "Hide CSV Upload" : "Show CSV Upload"}
+                </Button>
+                {showBulkImport && (
+                  <>
+                    <CSVUploader
+                      onParsed={(rows) => void openImportPreview(rows)}
+                      onError={(msg) =>
+                        toast.error("CSV parse failed", {
+                          description: msg,
+                        })
+                      }
+                    />
+                    <p className="text-xs text-[#6B7280]">
+                      Required columns: sku, qty. We will
+                      auto-generate the P.O. number if blank and
+                      create items in one call.
+                    </p>
+                  </>
+                )}
               </div>
 
               {selectedPO && (
@@ -1767,7 +1865,15 @@ export function InboundProcurement() {
 
                   <Button
                     variant="outline"
-                    onClick={() => setShowQuotes(true)}
+                    onClick={() => {
+                      if (!selectedPO?.po_id) {
+                        toast.error("Save the draft first", {
+                          description: "A purchase order record is required before managing freight quotes.",
+                        });
+                        return;
+                      }
+                      setShowQuotes(true);
+                    }}
                     className="w-full border-[#111827]/20 text-[#111827]"
                   >
                     Manage Freight Quotes
@@ -1813,24 +1919,58 @@ export function InboundProcurement() {
       >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Create New Supplier</DialogTitle>
+            <DialogTitle>Supplier Details</DialogTitle>
             <DialogDescription>
-              Add supplier details with validation before saving.
+              Choose a supplier from the approved list and review its details.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="supplier-name">Supplier Name</Label>
-              <Input
-                id="supplier-name"
+              <Select
                 value={supplierForm.supplier_name}
-                onChange={(e) =>
-                  setSupplierField("supplier_name", e.target.value)
-                }
-                className={builderInputClass.replace("mt-2 ", "")}
-                aria-invalid={!!supplierFormErrors.supplier_name}
-              />
+                onValueChange={(value) => {
+                  setSupplierField("supplier_name", value);
+                  const selectedSupplier = supplierRecords.find(
+                    (supplier) => supplier.supplier_name === value,
+                  );
+                  if (!selectedSupplier) return;
+                  setSupplierForm((prev) => ({
+                    ...prev,
+                    supplier_name: selectedSupplier.supplier_name ?? value,
+                    contact_person: selectedSupplier.contact_person ?? "",
+                    email: selectedSupplier.email ?? "",
+                    phone: selectedSupplier.phone ?? "",
+                    address: selectedSupplier.address ?? "",
+                    currency_code: CURRENCY_OPTIONS.includes(
+                      (selectedSupplier.currency_code ?? "").toUpperCase() as (typeof CURRENCY_OPTIONS)[number],
+                    )
+                      ? (selectedSupplier.currency_code ?? "").toUpperCase()
+                      : "",
+                  }));
+                }}
+              >
+                <SelectTrigger
+                  id="supplier-name"
+                  className={builderInputClass.replace("mt-2 ", "")}
+                  aria-invalid={!!supplierFormErrors.supplier_name}
+                >
+                  <SelectValue placeholder="Choose supplier" />
+                </SelectTrigger>
+                <SelectContent>
+                  {supplierOptions.length === 0 && (
+                    <SelectItem value="no-suppliers" disabled>
+                      No suppliers available
+                    </SelectItem>
+                  )}
+                  {supplierOptions.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {supplierFormErrors.supplier_name && (
                 <p className="text-xs text-[#DC2626]">
                   {supplierFormErrors.supplier_name}
@@ -1915,51 +2055,30 @@ export function InboundProcurement() {
 
             <div className="space-y-2">
               <Label htmlFor="supplier-currency">Currency Code</Label>
-              <Input
-                id="supplier-currency"
+              <Select
                 value={supplierForm.currency_code}
-                maxLength={3}
-                onChange={(e) =>
-                  setSupplierField(
-                    "currency_code",
-                    e.target.value.replace(/[^a-zA-Z]/g, ""),
-                  )
+                onValueChange={(value) =>
+                  setSupplierField("currency_code", value)
                 }
-                className={builderInputClass.replace("mt-2 ", "")}
-                aria-invalid={!!supplierFormErrors.currency_code}
-              />
+              >
+                <SelectTrigger
+                  id="supplier-currency"
+                  className={builderInputClass.replace("mt-2 ", "")}
+                  aria-invalid={!!supplierFormErrors.currency_code}
+                >
+                  <SelectValue placeholder="Choose currency" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CURRENCY_OPTIONS.map((currency) => (
+                    <SelectItem key={currency} value={currency}>
+                      {currency}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {supplierFormErrors.currency_code && (
                 <p className="text-xs text-[#DC2626]">
                   {supplierFormErrors.currency_code}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="supplier-lead-time">Lead Time Days</Label>
-              <Input
-                id="supplier-lead-time"
-                type="number"
-                min="1"
-                step="1"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                value={supplierForm.lead_time_days}
-                onChange={(e) =>
-                  setSupplierField(
-                    "lead_time_days",
-                    sanitizeIntegerInput(e.target.value),
-                  )
-                }
-                onKeyDown={(e) =>
-                  blockInvalidNumberKeys(e)
-                }
-                className={builderInputClass.replace("mt-2 ", "")}
-                aria-invalid={!!supplierFormErrors.lead_time_days}
-              />
-              {supplierFormErrors.lead_time_days && (
-                <p className="text-xs text-[#DC2626]">
-                  {supplierFormErrors.lead_time_days}
                 </p>
               )}
             </div>
@@ -1982,7 +2101,7 @@ export function InboundProcurement() {
               }
               className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
             >
-              {savingSupplier ? "Saving..." : "Create Supplier"}
+              {savingSupplier ? "Saving..." : "Apply Supplier"}
             </Button>
           </div>
         </DialogContent>
@@ -2022,6 +2141,20 @@ export function InboundProcurement() {
                   </TableCell>
                 </TableRow>
               ))}
+              {!loadingQuotes && quotes.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-[#6B7280]">
+                    No freight quotes yet.
+                  </TableCell>
+                </TableRow>
+              )}
+              {loadingQuotes && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-[#6B7280]">
+                    Loading freight quotes...
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
 
@@ -2115,7 +2248,7 @@ export function InboundProcurement() {
             </div>
 
             <Button 
-              onClick={addQuote} 
+              onClick={() => void addQuote()} 
               className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
             >
               Add Quote

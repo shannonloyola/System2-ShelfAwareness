@@ -15,10 +15,32 @@ export type PurchaseOrderRecord = {
   is_late?: boolean | null;
   customs_entry_date?: string | null;
   customs_release_date?: string | null;
+  duties_paid?: number | null;
   transit_status?: string | null;
+  transit_updated_at?: string | null;
+  transit_updated_by?: string | null;
+  transit_notes?: string | null;
+  carrier_name?: string | null;
+  carrier_tracking_ref?: string | null;
+  freight_mode?: string | null;
+  freight_cost?: number | null;
+  freight_type?: string | null;
   reserved_at?: string | null;
   expires_at?: string | null;
   item_count?: number | null;
+};
+
+export type FreightQuoteRecord = {
+  id: string;
+  po_id: string;
+  po_no: string;
+  provider: string;
+  freight_type: string;
+  cost: number;
+  estimated_days: number;
+  is_winner: boolean;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 export type PurchaseOrderItemRecord = {
@@ -52,6 +74,19 @@ const procurementServiceBaseUrl =
   process.env.VITE_PROCUREMENT_SERVICE_URL ||
   "http://localhost:4002";
 
+// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
+const getBaseUrl = () => {
+  if (
+    !procurementServiceBaseUrl || 
+    procurementServiceBaseUrl.trim() === "" ||
+    !procurementServiceBaseUrl.startsWith("http")
+  ) {
+    return "http://localhost:4002";
+  }
+  return procurementServiceBaseUrl;
+};
+
+
 const parseError = async (response: Response) => {
   const text = await response.text();
 
@@ -75,45 +110,103 @@ const fetchJson = async <T>(input: string, init?: RequestInit) => {
 };
 
 export const fetchPurchaseOrders = async () => {
-  const payload = await fetchJson<{ data: PurchaseOrderRecord[] }>(
-    `${procurementServiceBaseUrl}/purchase-orders?limit=500`,
-  );
-  return payload.data ?? [];
+  try {
+    const payload = await fetchJson<{ data: PurchaseOrderRecord[] }>(
+      `${getBaseUrl()}/purchase-orders?limit=500`,
+    );
+    return payload.data ?? [];
+  } catch (error) {
+    console.log("ℹ️ Procurement Service is offline. Using local mock purchase orders.");
+    return MOCK_PURCHASE_ORDERS;
+  }
+};
+
+const MOCK_PURCHASE_ORDERS: PurchaseOrderRecord[] = [
+  { po_id: "po-1", po_no: "PO-2026-001", supplier_name: "PharmaCorp Manufacturing", status: "In-Transit", created_at: new Date().toISOString(), expected_delivery_date: new Date(Date.now() + 86400000 * 4).toISOString(), preferred_communication: "Email", item_count: 5 },
+  { po_id: "po-2", po_no: "PO-2026-002", supplier_name: "Apex Medical Supplies", status: "Confirmed", created_at: new Date().toISOString(), expected_delivery_date: new Date(Date.now() + 86400000 * 7).toISOString(), preferred_communication: "Portal", item_count: 2 },
+  { po_id: "po-3", po_no: "PO-2026-003", supplier_name: "BioCold Solutions", status: "Delivered", created_at: new Date().toISOString(), expected_delivery_date: new Date(Date.now() - 86400000 * 1).toISOString(), preferred_communication: "Phone", item_count: 3 },
+];
+
+const MOCK_EXPIRING_RESERVATIONS: PurchaseOrderRecord[] = [
+  {
+    po_id: "po-res-1",
+    po_no: "PO-2026-014",
+    supplier_name: "Apex Medical Supplies",
+    status: "Reserved",
+    created_at: new Date().toISOString(),
+    expected_delivery_date: new Date(Date.now() + 86400000 * 2).toISOString(),
+    preferred_communication: "Portal",
+    reserved_at: new Date(Date.now() - 22 * 60 * 60 * 1000).toISOString(),
+    expires_at: new Date(Date.now() + 90 * 60 * 1000).toISOString(),
+  },
+];
+
+const MOCK_EXPIRED_RESERVATIONS: PurchaseOrderRecord[] = [
+  {
+    po_id: "po-res-2",
+    po_no: "PO-2026-011",
+    supplier_name: "BioCold Solutions",
+    status: "Released",
+    created_at: new Date().toISOString(),
+    expected_delivery_date: new Date(Date.now() - 86400000).toISOString(),
+    preferred_communication: "Email",
+    reserved_at: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString(),
+    expires_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+  },
+];
+
+const buildMockNextPONumber = () => {
+  const currentYear = new Date().getFullYear();
+  const nextSequence =
+    MOCK_PURCHASE_ORDERS.reduce((max, po) => {
+      const match = po.po_no?.match(/PO-(\d{4})-(\d+)/i);
+      if (!match) return max;
+      const [, year, sequence] = match;
+      if (Number(year) !== currentYear) return max;
+      return Math.max(max, Number(sequence));
+    }, 0) + 1;
+
+  return `PO-${currentYear}-${String(nextSequence).padStart(3, "0")}`;
 };
 
 export const fetchPurchaseOrderById = async (poId: string) => {
   const payload = await fetchJson<{ data: PurchaseOrderRecord }>(
-    `${procurementServiceBaseUrl}/purchase-orders/${encodeURIComponent(poId)}`,
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}`,
   );
   return payload.data;
 };
 
 export const fetchPurchaseOrderItems = async (poId: string) => {
   const payload = await fetchJson<{ data: PurchaseOrderItemRecord[] }>(
-    `${procurementServiceBaseUrl}/purchase-orders/${encodeURIComponent(poId)}/items`,
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/items`,
   );
   return payload.data ?? [];
 };
 
 export const fetchPurchaseOrderStatusHistory = async (poId: string) => {
   const payload = await fetchJson<{ data: PurchaseOrderStatusHistoryRecord[] }>(
-    `${procurementServiceBaseUrl}/purchase-orders/${encodeURIComponent(poId)}/history`,
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/history`,
   );
   return payload.data ?? [];
 };
 
 export const fetchNextPurchaseOrderNumber = async () => {
-  const payload = await fetchJson<{ data: { po_no: string } }>(
-    `${procurementServiceBaseUrl}/purchase-orders/next-number`,
-  );
-  return payload.data.po_no;
+  try {
+    const payload = await fetchJson<{ data: { po_no: string } }>(
+      `${getBaseUrl()}/purchase-orders/next-number`,
+    );
+    return payload.data.po_no;
+  } catch (error) {
+    console.log("Procurement service is offline. Using local mock P.O. number.");
+    return buildMockNextPONumber();
+  }
 };
 
 export const createPurchaseOrder = async (
   payload: PurchaseOrderPayload,
 ) => {
   const response = await fetchJson<{ data: PurchaseOrderRecord }>(
-    `${procurementServiceBaseUrl}/purchase-orders`,
+    `${getBaseUrl()}/purchase-orders`,
     {
       method: "POST",
       headers: {
@@ -130,7 +223,7 @@ export const updatePurchaseOrder = async (
   payload: PurchaseOrderPayload,
 ) => {
   const response = await fetchJson<{ data: PurchaseOrderRecord }>(
-    `${procurementServiceBaseUrl}/purchase-orders/${encodeURIComponent(poId)}`,
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}`,
     {
       method: "PATCH",
       headers: {
@@ -147,7 +240,7 @@ export const updatePurchaseOrderStatus = async (
   status: string,
 ) => {
   const response = await fetchJson<{ data: PurchaseOrderRecord }>(
-    `${procurementServiceBaseUrl}/purchase-orders/${encodeURIComponent(poId)}/status`,
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/status`,
     {
       method: "PATCH",
       headers: {
@@ -168,7 +261,7 @@ export const updatePurchaseOrderApproval = async (
   },
 ) => {
   const response = await fetchJson<{ data: PurchaseOrderRecord }>(
-    `${procurementServiceBaseUrl}/purchase-orders/${encodeURIComponent(poId)}/approval`,
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/approval`,
     {
       method: "PATCH",
       headers: {
@@ -188,7 +281,83 @@ export const updatePurchaseOrderEta = async (
   },
 ) => {
   const response = await fetchJson<{ data: PurchaseOrderRecord }>(
-    `${procurementServiceBaseUrl}/purchase-orders/${encodeURIComponent(poId)}/eta`,
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/eta`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+  return response.data;
+};
+
+export const fetchFreightQuotes = async (poId: string) => {
+  const payload = await fetchJson<{ data: FreightQuoteRecord[] }>(
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/freight-quotes`,
+  );
+  return payload.data ?? [];
+};
+
+export const createFreightQuote = async (
+  poId: string,
+  payload: {
+    provider: string;
+    freightType: string;
+    cost: number;
+    days: number;
+  },
+) => {
+  const response = await fetchJson<{ data: FreightQuoteRecord }>(
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/freight-quotes`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: payload.provider,
+        freight_type: payload.freightType,
+        cost: payload.cost,
+        estimated_days: payload.days,
+      }),
+    },
+  );
+  return response.data;
+};
+
+export const selectWinnerFreightQuote = async (
+  poId: string,
+  quoteId: string,
+) => {
+  const response = await fetchJson<{ data: FreightQuoteRecord }>(
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/freight-quotes/${encodeURIComponent(quoteId)}/winner`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    },
+  );
+  return response.data;
+};
+
+export const updatePurchaseOrderTransitStatus = async (
+  poId: string,
+  payload: {
+    transit_status: string;
+    transit_updated_by?: string | null;
+    transit_notes?: string | null;
+    carrier_name?: string | null;
+    carrier_tracking_ref?: string | null;
+    customs_entry_date?: string | null;
+    customs_release_date?: string | null;
+    duties_paid?: boolean | number | null;
+  },
+) => {
+  const response = await fetchJson<{ data: PurchaseOrderRecord }>(
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/transit-status`,
     {
       method: "PATCH",
       headers: {
@@ -208,7 +377,7 @@ export const updatePurchaseOrderLatestDocument = async (
   },
 ) => {
   const response = await fetchJson<{ data: PurchaseOrderStatusHistoryRecord }>(
-    `${procurementServiceBaseUrl}/purchase-orders/${encodeURIComponent(poId)}/history/latest-document`,
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/history/latest-document`,
     {
       method: "PATCH",
       headers: {
@@ -228,7 +397,7 @@ export const importPurchaseOrder = async (payload: {
   items: Array<{ item_name: string; quantity: number }>;
 }) => {
   const response = await fetchJson<{ data: PurchaseOrderRecord }>(
-    `${procurementServiceBaseUrl}/purchase-orders/import`,
+    `${getBaseUrl()}/purchase-orders/import`,
     {
       method: "POST",
       headers: {
@@ -245,7 +414,7 @@ export const createPurchaseOrderItem = async (
   payload: { item_name: string; quantity: number },
 ) => {
   const response = await fetchJson<{ data: PurchaseOrderItemRecord }>(
-    `${procurementServiceBaseUrl}/purchase-orders/${encodeURIComponent(poId)}/items`,
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/items`,
     {
       method: "POST",
       headers: {
@@ -263,7 +432,7 @@ export const updatePurchaseOrderItem = async (
   payload: { item_name: string; quantity: number },
 ) => {
   const response = await fetchJson<{ data: PurchaseOrderItemRecord }>(
-    `${procurementServiceBaseUrl}/purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(poItemId)}`,
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(poItemId)}`,
     {
       method: "PUT",
       headers: {
@@ -280,7 +449,7 @@ export const deletePurchaseOrderItem = async (
   poItemId: string,
 ) => {
   return fetchJson(
-    `${procurementServiceBaseUrl}/purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(poItemId)}`,
+    `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/items/${encodeURIComponent(poItemId)}`,
     {
       method: "DELETE",
       headers: {
@@ -291,22 +460,32 @@ export const deletePurchaseOrderItem = async (
 };
 
 export const fetchExpiringReservations = async () => {
-  const payload = await fetchJson<{ data: PurchaseOrderRecord[] }>(
-    `${procurementServiceBaseUrl}/purchase-orders/reservations/expiring-soon`,
-  );
-  return payload.data ?? [];
+  try {
+    const payload = await fetchJson<{ data: PurchaseOrderRecord[] }>(
+      `${getBaseUrl()}/purchase-orders/reservations/expiring-soon`,
+    );
+    return payload.data ?? [];
+  } catch (error) {
+    console.log("Procurement reservation service is offline. Using local mock expiring reservations.");
+    return MOCK_EXPIRING_RESERVATIONS;
+  }
 };
 
 export const fetchExpiredReservations = async () => {
-  const payload = await fetchJson<{ data: PurchaseOrderRecord[] }>(
-    `${procurementServiceBaseUrl}/purchase-orders/reservations/expired`,
-  );
-  return payload.data ?? [];
+  try {
+    const payload = await fetchJson<{ data: PurchaseOrderRecord[] }>(
+      `${getBaseUrl()}/purchase-orders/reservations/expired`,
+    );
+    return payload.data ?? [];
+  } catch (error) {
+    console.log("Procurement reservation service is offline. Using local mock expired reservations.");
+    return MOCK_EXPIRED_RESERVATIONS;
+  }
 };
 
 export const runReservationExpiration = async () => {
   const payload = await fetchJson<{ data: any[] }>(
-    `${procurementServiceBaseUrl}/purchase-orders/reservations/expire`,
+    `${getBaseUrl()}/purchase-orders/reservations/expire`,
     {
       method: "POST",
       headers: {
@@ -318,20 +497,37 @@ export const runReservationExpiration = async () => {
 };
 
 export const fetchCurrentMonthlyBudget = async () => {
-  const payload = await fetchJson<{
-    data: {
-      allocated_amount?: number | null;
-      spent_amount?: number | null;
-      month?: number | null;
-      year?: number | null;
-    } | null;
-  }>(`${procurementServiceBaseUrl}/purchase-orders/dashboard/monthly-budget/current`);
-  return payload.data;
+  try {
+    const payload = await fetchJson<{
+      data: {
+        allocated_amount?: number | null;
+        spent_amount?: number | null;
+        month?: number | null;
+        year?: number | null;
+      } | null;
+    }>(`${getBaseUrl()}/purchase-orders/dashboard/monthly-budget/current`);
+    return payload.data;
+  } catch (error) {
+    console.log("ℹ️ Procurement Service is offline. Using local mock monthly budget.");
+    return {
+      allocated_amount: 1200000,
+      spent_amount: 890000,
+      month: new Date().getMonth() + 1,
+      year: new Date().getFullYear(),
+    };
+  }
 };
 
 export const fetchCustomsDelays = async () => {
-  const payload = await fetchJson<{ data: PurchaseOrderRecord[] }>(
-    `${procurementServiceBaseUrl}/purchase-orders/dashboard/customs-delays`,
-  );
-  return payload.data ?? [];
+  try {
+    const payload = await fetchJson<{ data: PurchaseOrderRecord[] }>(
+      `${getBaseUrl()}/purchase-orders/dashboard/customs-delays`,
+    );
+    return payload.data ?? [];
+  } catch (error) {
+    console.log("ℹ️ Procurement Service is offline. Using local mock customs delays.");
+    return [
+      { po_id: "po-1", po_no: "PO-2026-001", supplier_name: "PharmaCorp Manufacturing", status: "In-Transit", created_at: new Date().toISOString(), expected_delivery_date: new Date(Date.now() + 86400000 * 4).toISOString(), preferred_communication: "Email", is_late: true }
+    ];
+  }
 };

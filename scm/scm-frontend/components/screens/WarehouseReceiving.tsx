@@ -7,7 +7,6 @@ import {
 } from "react";
 import {
   ScanBarcode,
-  Camera,
   CheckCircle,
   Package,
   Plus,
@@ -50,6 +49,12 @@ import {
   RadioGroup,
   RadioGroupItem,
 } from "../ui/radio-group";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "../ui/accordion";
 import { toast } from "sonner";
 import { postGRN } from "@/utils/postGRN";
 import { supabase, supabaseFulfillment } from "@/lib/supabase";
@@ -62,6 +67,11 @@ import {
   saveGrnDraft,
   scheduleWarehouseDelivery,
 } from "@/lib/warehouseReceivingService";
+import { fetchSuppliers, type SupplierRecord } from "@/lib/supplierService";
+import {
+  listCatalogProducts,
+  type ProductCatalogRecord,
+} from "@/lib/productCatalogService";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -193,6 +203,8 @@ export function WarehouseReceiving() {
     contact_phone: "",
     notes: "",
   });
+  const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
+  const [warehouseLocations, setWarehouseLocations] = useState<string[]>([]);
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const scanVideoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -220,6 +232,44 @@ export function WarehouseReceiving() {
       inventory.filter((item) => item.status === "zero").length,
     [inventory],
   );
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadReferenceLists = async () => {
+      try {
+        const [supplierRows, productRows] = await Promise.all([
+          fetchSuppliers(),
+          listCatalogProducts({ limit: 1000 }),
+        ]);
+
+        if (!isMounted) return;
+
+        setSuppliers(supplierRows);
+        setWarehouseLocations(
+          Array.from(
+            new Set(
+              (productRows as ProductCatalogRecord[])
+                .map((product) => product.warehouse_location?.trim())
+                .filter((location): location is string => Boolean(location)),
+            ),
+          ).sort((a, b) => a.localeCompare(b)),
+        );
+      } catch (error) {
+        console.error("Failed to load warehouse reference lists:", error);
+        if (isMounted) {
+          setSuppliers([]);
+          setWarehouseLocations([]);
+        }
+      }
+    };
+
+    void loadReferenceLists();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const pagedInventory = useMemo(() => {
     const start = (inventoryPage - 1) * warehouseRowsPerPage;
@@ -532,8 +582,7 @@ export function WarehouseReceiving() {
     setIsScanListening(true);
     setScanInput("");
     toast.success("Scanner ready", {
-      description:
-        "Scan barcode now, then press Enter (or use hardware scanner Enter).",
+      description: "Enter Barcode/SKU in Scanner Input.",
     });
   };
 
@@ -1178,7 +1227,7 @@ export function WarehouseReceiving() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Button
           onClick={handleScan}
           className="h-20 bg-[#00A3AD] hover:bg-[#0891B2] text-white flex flex-col gap-2 shadow-md"
@@ -1189,18 +1238,6 @@ export function WarehouseReceiving() {
           </span>
         </Button>
         <Button
-          onClick={() => {
-            setIsScanListening(false);
-            setScanInput("");
-            setShowCameraScanner(true);
-          }}
-          variant="outline"
-          className="h-20 border-[#0891B2] text-[#0891B2] hover:bg-[#0891B2]/10 flex flex-col gap-2"
-        >
-          <Camera className="w-8 h-8" />
-          <span className="font-semibold">Camera Scan</span>
-        </Button>
-        <Button
           onClick={handleViewGrn}
           variant="outline"
           className="h-20 border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10 flex flex-col gap-2"
@@ -1209,52 +1246,6 @@ export function WarehouseReceiving() {
           <span className="font-semibold">View GRN</span>
         </Button>
       </div>
-      <Dialog
-        open={showCameraScanner}
-        onOpenChange={setShowCameraScanner}
-      >
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle className="text-[#111827]">
-              Mobile Camera Scanner
-            </DialogTitle>
-            <DialogDescription className="text-[#6B7280]">
-              Point camera to barcode. Successful scan
-              automatically increments Actual Received by 1.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="rounded-lg border border-[#111827]/10 bg-black overflow-hidden">
-              <video
-                ref={scanVideoRef}
-                className="w-full h-72 object-cover"
-                muted
-                playsInline
-              />
-            </div>
-            {cameraError ? (
-              <div className="text-sm text-[#B45309] bg-[#FFFBEB] border border-[#FDE68A] rounded-md px-3 py-2">
-                {cameraError}
-              </div>
-            ) : (
-              <div className="text-sm text-[#0F766E] bg-[#ECFEFF] border border-[#A5F3FC] rounded-md px-3 py-2">
-                {isCameraScanning
-                  ? "Scanner is active. Hold camera steady over barcode."
-                  : "Starting camera..."}
-              </div>
-            )}
-            <div className="flex justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setShowCameraScanner(false)}
-                className="border-[#111827]/20 text-[#111827]"
-              >
-                Close
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
       {isScanListening && (
         <Card className="bg-white border-[#00A3AD]/30 shadow-sm">
           <CardContent className="pt-4 space-y-2">
@@ -1320,14 +1311,45 @@ export function WarehouseReceiving() {
             </div>
 
             <div>
-              <Label className="text-[#6B7280]">Supplier Name *</Label>
-              <Input
+              <Label className="text-[#6B7280]">Supplier *</Label>
+              <Select
                 value={deliveryForm.supplier_name}
-                onChange={(e) => setDeliveryForm({ ...deliveryForm, supplier_name: e.target.value })}
-                placeholder="Enter supplier name"
-                className="mt-2 border-[#111827]/10"
-                disabled={schedulingDelivery}
-              />
+                onValueChange={(value) => {
+                  const supplier = suppliers.find(
+                    (row) => row.supplier_name === value,
+                  );
+                  setDeliveryForm({
+                    ...deliveryForm,
+                    supplier_name: value,
+                    contact_person_name:
+                      supplier?.contact_person ??
+                      deliveryForm.contact_person_name,
+                    contact_phone:
+                      supplier?.phone ?? deliveryForm.contact_phone,
+                  });
+                }}
+                disabled={schedulingDelivery || suppliers.length === 0}
+              >
+                <SelectTrigger className="mt-2 border-[#111827]/10">
+                  <SelectValue
+                    placeholder={
+                      suppliers.length === 0
+                        ? "No active suppliers found"
+                        : "Select supplier"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {suppliers.map((supplier) => (
+                    <SelectItem
+                      key={supplier.id}
+                      value={supplier.supplier_name}
+                    >
+                      {supplier.supplier_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div>
@@ -1370,16 +1392,23 @@ export function WarehouseReceiving() {
               <Select
                 value={deliveryForm.warehouse_location}
                 onValueChange={(value) => setDeliveryForm({ ...deliveryForm, warehouse_location: value })}
-                disabled={schedulingDelivery}
+                disabled={schedulingDelivery || warehouseLocations.length === 0}
               >
                 <SelectTrigger className="mt-2 border-[#111827]/10">
-                  <SelectValue placeholder="Select warehouse location" />
+                  <SelectValue
+                    placeholder={
+                      warehouseLocations.length === 0
+                        ? "No Product Master locations found"
+                        : "Select warehouse location"
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Zone A-01">Zone A-01</SelectItem>
-                  <SelectItem value="Zone B-02">Zone B-02</SelectItem>
-                  <SelectItem value="Zone C-03">Zone C-03</SelectItem>
-                  <SelectItem value="Zone D-04">Zone D-04</SelectItem>
+                  {warehouseLocations.map((location) => (
+                    <SelectItem key={location} value={location}>
+                      {location}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1457,13 +1486,21 @@ export function WarehouseReceiving() {
       </Dialog>
 
       {showGrnForm && (
-        <>
+        <Accordion
+          type="multiple"
+          defaultValue={["grn-header", "pharma-checks", "line-items"]}
+          className="space-y-4"
+        >
+          <AccordionItem value="grn-header" className="border-0">
           <Card className="bg-white border-[#111827]/10 shadow-lg">
             <CardHeader>
-              <CardTitle className="text-[#111827] font-semibold">
-                GRN Header
-              </CardTitle>
+              <AccordionTrigger className="py-0 hover:no-underline">
+                <CardTitle className="text-[#111827] font-semibold">
+                  GRN Header
+                </CardTitle>
+              </AccordionTrigger>
             </CardHeader>
+            <AccordionContent className="pb-0">
             <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <Label className="text-[#6B7280]">Received Date</Label>
@@ -1477,14 +1514,41 @@ export function WarehouseReceiving() {
               </div>
 
               <div>
-                <Label className="text-[#6B7280]">Supplier Name</Label>
-                <Input
+                <Label className="text-[#6B7280]">Supplier</Label>
+                <Select
                   value={supplierName}
-                  onChange={(e) => setSupplierName(e.target.value)}
-                  placeholder="Enter supplier name"
-                  className="mt-2 border-[#111827]/10"
-                  disabled={isPosted}
-                />
+                  onValueChange={(value) => {
+                    const supplier = suppliers.find(
+                      (row) => row.supplier_name === value,
+                    );
+                    setSupplierName(value);
+                    setSupplierContact(
+                      supplier?.phone || supplier?.email || "",
+                    );
+                    setSupplierAddress(supplier?.address || "");
+                  }}
+                  disabled={isPosted || suppliers.length === 0}
+                >
+                  <SelectTrigger className="mt-2 border-[#111827]/10">
+                    <SelectValue
+                      placeholder={
+                        suppliers.length === 0
+                          ? "No active suppliers found"
+                          : "Select supplier"
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {suppliers.map((supplier) => (
+                      <SelectItem
+                        key={supplier.id}
+                        value={supplier.supplier_name}
+                      >
+                        {supplier.supplier_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div>
@@ -1520,18 +1584,24 @@ export function WarehouseReceiving() {
                 />
               </div>
             </CardContent>
+            </AccordionContent>
           </Card>
+          </AccordionItem>
 
           {/* Pharma Checks Section */}
+          <AccordionItem value="pharma-checks" className="border-0">
           <Card className="bg-white border-[#111827]/10 shadow-lg">
             <CardHeader>
-              <CardTitle className="text-[#111827] font-semibold">
-                Pharma Checks
-              </CardTitle>
+              <AccordionTrigger className="py-0 hover:no-underline">
+                <CardTitle className="text-[#111827] font-semibold">
+                  Pharma Checks
+                </CardTitle>
+              </AccordionTrigger>
               <p className="text-sm text-[#6B7280]">
                 Complete the checklist and upload proof if needed.
               </p>
             </CardHeader>
+            <AccordionContent className="pb-0">
             <CardContent>
               <div className="rounded-lg border border-[#E5E7EB] p-4 bg-[#F8FAFC] space-y-4">
                 {[
@@ -1692,14 +1762,20 @@ export function WarehouseReceiving() {
                 </div>
               </div>
             </CardContent>
+            </AccordionContent>
           </Card>
+          </AccordionItem>
 
+          <AccordionItem value="line-items" className="border-0">
           <Card className="bg-white border-[#111827]/10 shadow-lg">
             <CardHeader>
-              <CardTitle className="text-[#111827] font-semibold">
-                Line Items
-              </CardTitle>
+              <AccordionTrigger className="py-0 hover:no-underline">
+                <CardTitle className="text-[#111827] font-semibold">
+                  Line Items
+                </CardTitle>
+              </AccordionTrigger>
             </CardHeader>
+            <AccordionContent className="pb-0">
             <CardContent className="space-y-4">
               {lines.map((line, index) => {
                 const expected = Number(line.qtyExpected);
@@ -1942,8 +2018,10 @@ export function WarehouseReceiving() {
                 Add Line Item
               </Button>
             </CardContent>
+            </AccordionContent>
           </Card>
-        </>
+          </AccordionItem>
+        </Accordion>
       )}
 
       <Card className="bg-white border-[#111827]/10 shadow-sm">

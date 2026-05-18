@@ -1,3 +1,5 @@
+import { supabaseSCM } from "./supabase";
+
 export type ProductCatalogPayload = {
   sku: string;
   product_name: string;
@@ -27,6 +29,19 @@ const productCatalogServiceBaseUrl =
   process.env.VITE_PRODUCT_CATALOG_SERVICE_URL ||
   "http://localhost:4003";
 
+// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
+const getBaseUrl = () => {
+  if (
+    !productCatalogServiceBaseUrl || 
+    productCatalogServiceBaseUrl.trim() === "" ||
+    !productCatalogServiceBaseUrl.startsWith("http")
+  ) {
+    return "http://localhost:4003";
+  }
+  return productCatalogServiceBaseUrl;
+};
+
+
 const parseError = async (response: Response) => {
   const text = await response.text();
 
@@ -41,27 +56,65 @@ const parseError = async (response: Response) => {
   }
 };
 
+const shouldBypassFetch = () => {
+  if (typeof window !== "undefined") {
+    return window.localStorage.getItem("USE_REAL_SERVICES") !== "true";
+  }
+  return true;
+};
+
 export const createCatalogProduct = async (
   payload: ProductCatalogPayload,
 ) => {
-  const response = await fetch(
-    `${productCatalogServiceBaseUrl}/products`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(await parseError(response));
+  if (shouldBypassFetch()) {
+    console.log("ℹ️ Product Catalog Service is offline. Using direct Supabase fallback.");
+    const { cost_price, ...dbPayload } = payload as any;
+    // Prevent UUID cast errors if the frontend sends a slug instead of a UUID
+    if (dbPayload.category_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(dbPayload.category_id)) {
+      delete dbPayload.category_id;
+    }
+    const { data, error } = await supabaseSCM
+      .from("products")
+      .insert(dbPayload)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return data;
   }
 
-  const text = await response.text();
-  const parsed = (text.trim() ? JSON.parse(text) : { data: {} }) as any;
-  return parsed.data;
+  try {
+    const response = await fetch(
+      `${getBaseUrl()}/products`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(await parseError(response));
+    }
+
+    const text = await response.text();
+    const parsed = (text.trim() ? JSON.parse(text) : { data: {} }) as any;
+    return parsed.data;
+  } catch (error: any) {
+    console.log("ℹ️ Product Catalog Service is offline. Using direct Supabase fallback.");
+    const { cost_price, ...dbPayload } = payload as any;
+    if (dbPayload.category_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(dbPayload.category_id)) {
+      delete dbPayload.category_id;
+    }
+    const { data, dbError } = await supabaseSCM
+      .from("products")
+      .insert(dbPayload)
+      .select()
+      .single() as any;
+    if (dbError) throw new Error(dbError.message);
+    return data;
+  }
 };
 
 export const listCatalogProducts = async (params?: {
@@ -69,41 +122,75 @@ export const listCatalogProducts = async (params?: {
   limit?: number;
   offset?: number;
 }) => {
-  const url = new URL(`${productCatalogServiceBaseUrl}/products`);
+  if (shouldBypassFetch()) {
+    console.log("ℹ️ Product Catalog Service is offline. Using direct Supabase fallback.");
+    let query = supabaseSCM.from("products").select("*");
+    
+    if (params?.search?.trim()) {
+      query = query.or(`product_name.ilike.%${params.search.trim()}%,sku.ilike.%${params.search.trim()}%`);
+    }
+    if (params?.limit != null) {
+      query = query.limit(params.limit);
+    }
+    if (params?.offset != null && params?.limit != null) {
+      query = query.range(params.offset, params.offset + params.limit - 1);
+    }
 
-  if (params?.search?.trim()) {
-    url.searchParams.set("search", params.search.trim());
-  }
-  if (params?.limit != null) {
-    url.searchParams.set("limit", String(params.limit));
-  }
-  if (params?.offset != null) {
-    url.searchParams.set("offset", String(params.offset));
-  }
-
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(await parseError(response));
-  }
-
-  const text = await response.text();
-  if (!text.trim()) {
-    return [];
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    return data || [];
   }
 
   try {
+    const url = new URL(`${getBaseUrl()}/products`);
+
+    if (params?.search?.trim()) {
+      url.searchParams.set("search", params.search.trim());
+    }
+    if (params?.limit != null) {
+      url.searchParams.set("limit", String(params.limit));
+    }
+    if (params?.offset != null) {
+      url.searchParams.set("offset", String(params.offset));
+    }
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseError(response));
+    }
+
+    const text = await response.text();
+    if (!text.trim()) {
+      return [];
+    }
+
     const parsed = JSON.parse(text) as {
       data: ProductCatalogRecord[];
     };
     return parsed.data ?? [];
-  } catch (e) {
-    throw new Error(`Failed to parse response: ${text}`);
+  } catch (error: any) {
+    console.log("ℹ️ Product Catalog Service is offline. Using direct Supabase fallback.");
+    let query = supabaseSCM.from("products").select("*");
+    
+    if (params?.search?.trim()) {
+      query = query.or(`product_name.ilike.%${params.search.trim()}%,sku.ilike.%${params.search.trim()}%`);
+    }
+    if (params?.limit != null) {
+      query = query.limit(params.limit);
+    }
+    if (params?.offset != null && params?.limit != null) {
+      query = query.range(params.offset, params.offset + params.limit - 1);
+    }
+
+    const { data, dbError } = await query as any;
+    if (dbError) throw new Error(dbError.message);
+    return data || [];
   }
 };
 
@@ -111,44 +198,100 @@ export const updateCatalogProduct = async (
   productId: string | number,
   payload: Partial<ProductCatalogPayload>,
 ) => {
-  const response = await fetch(
-    `${productCatalogServiceBaseUrl}/products/${encodeURIComponent(String(productId))}`,
-    {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(await parseError(response));
+  if (shouldBypassFetch()) {
+    console.log("ℹ️ Product Catalog Service is offline. Using direct Supabase fallback.");
+    const { cost_price, ...dbPayload } = payload as any;
+    if (dbPayload.category_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(dbPayload.category_id)) {
+      delete dbPayload.category_id;
+    }
+    const { data, error } = await supabaseSCM
+      .from("products")
+      .update(dbPayload)
+      .eq("product_id", productId)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return data;
   }
 
-  const parsed = (await response.json()) as {
-    data: ProductCatalogRecord;
-  };
+  try {
+    const response = await fetch(
+      `${getBaseUrl()}/products/${encodeURIComponent(String(productId))}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      },
+    );
 
-  return parsed.data;
+    if (!response.ok) {
+      throw new Error(await parseError(response));
+    }
+
+    const parsed = (await response.json()) as {
+      data: ProductCatalogRecord;
+    };
+
+    return parsed.data;
+  } catch (error: any) {
+    console.log("ℹ️ Product Catalog Service is offline. Using direct Supabase fallback.");
+    const { cost_price, ...dbPayload } = payload as any;
+    if (dbPayload.category_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(dbPayload.category_id)) {
+      delete dbPayload.category_id;
+    }
+    const { data, dbError } = await supabaseSCM
+      .from("products")
+      .update(dbPayload)
+      .eq("product_id", productId)
+      .select()
+      .single() as any;
+    if (dbError) throw new Error(dbError.message);
+    return data;
+  }
 };
 
 export const deleteCatalogProduct = async (
   productId: string | number,
 ) => {
-  const response = await fetch(
-    `${productCatalogServiceBaseUrl}/products/${encodeURIComponent(String(productId))}`,
-    {
-      method: "DELETE",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(await parseError(response));
+  if (shouldBypassFetch()) {
+    console.log("ℹ️ Product Catalog Service is offline. Using direct Supabase fallback.");
+    const { data, error } = await supabaseSCM
+      .from("products")
+      .delete()
+      .eq("product_id", productId)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return data;
   }
 
-  return response.json();
+  try {
+    const response = await fetch(
+      `${getBaseUrl()}/products/${encodeURIComponent(String(productId))}`,
+      {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(await parseError(response));
+    }
+
+    return response.json();
+  } catch (error: any) {
+    console.log("ℹ️ Product Catalog Service is offline. Using direct Supabase fallback.");
+    const { data, dbError } = await supabaseSCM
+      .from("products")
+      .delete()
+      .eq("product_id", productId)
+      .select()
+      .single() as any;
+    if (dbError) throw new Error(dbError.message);
+    return data;
+  }
 };

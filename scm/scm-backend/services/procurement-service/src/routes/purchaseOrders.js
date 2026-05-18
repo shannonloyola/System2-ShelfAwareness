@@ -2,6 +2,7 @@ import express from "express";
 import { hasDatabaseConfig, hasSupabaseRestConfig } from "../lib/database.js";
 import { asyncHandler, createHttpError } from "../lib/http.js";
 import {
+  validateFreightQuotePayload,
   validateApprovalPayload,
   parsePagination,
   validateDocumentPayload,
@@ -10,13 +11,16 @@ import {
   validatePurchaseOrderItemPayload,
   validatePurchaseOrderPayload,
   validateStatusTransition,
+  validateTransitStatusPayload,
 } from "../lib/validation.js";
 import {
   appendPurchaseOrderStatusHistory,
+  createFreightQuote,
   createPurchaseOrder,
   createPurchaseOrderItem,
   deletePurchaseOrderItem,
   generateNextPONumber,
+  getFreightQuotes,
   getCurrentMonthlyBudget,
   getPurchaseOrderById,
   importPurchaseOrder,
@@ -27,11 +31,13 @@ import {
   listPurchaseOrderStatusHistory,
   listPurchaseOrders,
   runExpirationCheck,
+  setWinnerFreightQuote,
   updateLatestPurchaseOrderDocument,
   updatePurchaseOrderApproval,
   updatePurchaseOrderEta,
   updatePurchaseOrder,
   updatePurchaseOrderItem,
+  updateTransitStatus,
 } from "../repositories/purchaseOrdersRepository.js";
 
 export const purchaseOrdersRouter = express.Router();
@@ -164,6 +170,48 @@ purchaseOrdersRouter.patch(
   asyncHandler(async (req, res) => {
     const payload = validateEtaPayload(req.body);
     const purchaseOrder = await updatePurchaseOrderEta(req.params.id, payload);
+    res.json({ data: purchaseOrder });
+  }),
+);
+
+purchaseOrdersRouter.get(
+  "/:id/freight-quotes",
+  asyncHandler(async (req, res) => {
+    const quotes = await getFreightQuotes(req.params.id);
+    res.json({ data: quotes });
+  }),
+);
+
+purchaseOrdersRouter.post(
+  "/:id/freight-quotes",
+  asyncHandler(async (req, res) => {
+    const payload = validateFreightQuotePayload(req.body);
+    const purchaseOrder = await getPurchaseOrderById(req.params.id);
+    const quote = await createFreightQuote(
+      req.params.id,
+      purchaseOrder.po_no,
+      payload,
+    );
+    res.status(201).json({ data: quote });
+  }),
+);
+
+purchaseOrdersRouter.patch(
+  "/:id/freight-quotes/:quoteId/winner",
+  asyncHandler(async (req, res) => {
+    const quote = await setWinnerFreightQuote(
+      req.params.id,
+      req.params.quoteId,
+    );
+    res.json({ data: quote });
+  }),
+);
+
+purchaseOrdersRouter.patch(
+  "/:id/transit-status",
+  asyncHandler(async (req, res) => {
+    const payload = validateTransitStatusPayload(req.body);
+    const purchaseOrder = await updateTransitStatus(req.params.id, payload);
     res.json({ data: purchaseOrder });
   }),
 );

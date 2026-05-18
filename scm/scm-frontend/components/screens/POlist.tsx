@@ -7,17 +7,19 @@ import {
   useState,
 } from "react";
 import {
-  AlertCircle,
   Building2,
+  Check,
+  ChevronDown,
+  ChevronUp,
   ChevronLeft,
+  Circle,
   Clock,
   FileDown,
   Hash,
   Package,
-  Plane,
   RefreshCw,
   QrCode,
-  Ship,
+  Truck,
   Upload,
 } from "lucide-react";
 import QRCode from "react-qr-code";
@@ -30,12 +32,6 @@ import {
   CardTitle,
 } from "../ui/card";
 import { Button } from "../ui/button";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "../ui/tabs";
 import { toast } from "sonner";
 import { supabase, supabaseSCM, supabaseFulfillment } from "@/lib/supabase";
 import { PerItemTracker } from "../PerItemTracker";
@@ -46,9 +42,11 @@ import {
 } from "@/imports/expirationService";
 import {
   fetchPurchaseOrderById,
+  fetchFreightQuotes,
   fetchPurchaseOrderItems,
   fetchPurchaseOrders,
   fetchPurchaseOrderStatusHistory,
+  updatePurchaseOrderTransitStatus,
   updatePurchaseOrderApproval,
   updatePurchaseOrderEta,
   updatePurchaseOrderLatestDocument,
@@ -56,12 +54,14 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
+import { Badge } from "../ui/badge";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import {
   Select,
@@ -70,6 +70,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
+import { Switch } from "../ui/switch";
 
 interface POItem {
   po_item_id: string;
@@ -88,8 +89,38 @@ interface PurchaseOrder {
   approved_by: string | null;
   approved_at: string | null;
   is_late: boolean;
+  customs_entry_date?: string | null;
+  customs_release_date?: string | null;
+  duties_paid?: number | null;
+  transit_status?: string | null;
+  transit_updated_at?: string | null;
+  transit_updated_by?: string | null;
+  transit_notes?: string | null;
+  carrier_name?: string | null;
+  carrier_tracking_ref?: string | null;
+  freight_mode?: string | null;
+  freight_cost?: number | null;
+  freight_type?: string | null;
   item_count?: number;
   items: POItem[];
+}
+
+interface FreightQuote {
+  id: string;
+  provider: string;
+  freight_type: string;
+  cost: number;
+  estimated_days: number;
+  is_winner: boolean;
+}
+
+interface DeliverySchedule {
+  id: string;
+  delivery_datetime: string;
+  warehouse_location: string;
+  contact_person_name: string | null;
+  contact_phone: string | null;
+  status: string;
 }
 
 interface POStatusHistory {
@@ -132,6 +163,19 @@ const formatDateOnly = (value: string | null) => {
     month: "short",
     day: "numeric",
     year: "numeric",
+  });
+};
+
+const formatDateTime = (value: string | null | undefined) => {
+  if (!value) return "N/A";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   });
 };
 
@@ -179,6 +223,83 @@ const formatCurrency = (value: string) => {
 
 const parseCurrency = (value: string) =>
   Number(value.replace(/[^0-9.]/g, "")) || 0;
+
+const formatPhpAmount = (value: number | null | undefined) => {
+  if (value == null || Number.isNaN(Number(value))) return "N/A";
+  return new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+    minimumFractionDigits: 2,
+  }).format(Number(value));
+};
+
+const getFreightMode = (po: PurchaseOrder | null) =>
+  (po?.freight_mode ?? "").trim();
+
+const getTransitSteps = (freightMode: string | null | undefined) => {
+  const normalized = normalizeOptional(freightMode);
+  if (normalized === "air" || normalized === "sea") {
+    return [
+      "pending",
+      "confirmed",
+      "dispatched",
+      "in_transit",
+      "arrived_port",
+      "customs_clearance",
+      "customs_released",
+      "out_for_delivery",
+      "arrived_warehouse",
+      "received",
+    ];
+  }
+  return [
+    "pending",
+    "confirmed",
+    "dispatched",
+    "in_transit",
+    "out_for_delivery",
+    "arrived_warehouse",
+    "received",
+  ];
+};
+
+const transitStepLabels: Record<string, string> = {
+  pending: "Pending",
+  confirmed: "Confirmed",
+  dispatched: "Dispatched",
+  in_transit: "In Transit",
+  arrived_port: "Arrived at Port",
+  customs_clearance: "Customs Clearance",
+  customs_released: "Customs Released",
+  out_for_delivery: "Out for Delivery",
+  arrived_warehouse: "Arrived at Warehouse",
+  received: "Received",
+};
+
+const getCurrentTransitStepIndex = (
+  transitStatus: string | null | undefined,
+  steps: string[],
+) => {
+  const normalized = normalizeOptional(transitStatus) || "pending";
+  const currentIndex = steps.indexOf(normalized);
+  return currentIndex >= 0 ? currentIndex : 0;
+};
+
+const getNextTransitOptions = (
+  transitStatus: string | null | undefined,
+  freightMode: string | null | undefined,
+) => {
+  const steps = getTransitSteps(freightMode);
+  const currentIndex = getCurrentTransitStepIndex(transitStatus, steps);
+  return steps.slice(currentIndex + 1, currentIndex + 2);
+};
+
+const getFreightModeBadgeClass = (freightMode: string | null | undefined) => {
+  const normalized = normalizeOptional(freightMode);
+  if (normalized === "air") return "bg-sky-100 text-sky-700 border-sky-200";
+  if (normalized === "sea") return "bg-teal-100 text-teal-700 border-teal-200";
+  return "bg-slate-100 text-slate-700 border-slate-200";
+};
 
 const getTrackerSteps = (status: string) => {
   const normalized = normalizeStatus(status);
@@ -431,6 +552,18 @@ export function PODetailPage() {
 
   const [uploadingCustoms, setUploadingCustoms] = useState(false);
   const [customsDocumentUrl, setCustomsDocumentUrl] = useState<string | null>(null);
+  const [freightQuotes, setFreightQuotes] = useState<FreightQuote[]>([]);
+  const [deliverySchedule, setDeliverySchedule] = useState<DeliverySchedule | null>(null);
+  const [transitDialogOpen, setTransitDialogOpen] = useState(false);
+  const [savingTransit, setSavingTransit] = useState(false);
+  const [transitStatusDraft, setTransitStatusDraft] = useState("");
+  const [transitNotesDraft, setTransitNotesDraft] = useState("");
+  const [carrierNameDraft, setCarrierNameDraft] = useState("");
+  const [carrierTrackingDraft, setCarrierTrackingDraft] = useState("");
+  const [savingCustoms, setSavingCustoms] = useState(false);
+  const [customsEntryDraft, setCustomsEntryDraft] = useState("");
+  const [customsReleaseDraft, setCustomsReleaseDraft] = useState("");
+  const [dutiesPaidDraft, setDutiesPaidDraft] = useState(false);
 
   const [postingLandedCosts, setPostingLandedCosts] = useState(false);
 
@@ -495,6 +628,18 @@ export function PODetailPage() {
         fetchPurchaseOrderItems(poId),
         fetchPurchaseOrderStatusHistory(poId),
       ]);
+      const quotesPromise = fetchFreightQuotes(poId);
+      const deliveryPromise = poData.supplier_name
+        ? supabaseFulfillment
+            .from("delivery_schedules")
+            .select(
+              "id, delivery_datetime, warehouse_location, contact_person_name, contact_phone, status",
+            )
+            .eq("supplier_name", poData.supplier_name)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null });
 
       try {
         const { data: shipmentData } = await supabaseFulfillment
@@ -523,6 +668,18 @@ export function PODetailPage() {
         approved_by: poData.approved_by ?? null,
         approved_at: poData.approved_at ?? null,
         is_late: Boolean(poData.is_late),
+        customs_entry_date: poData.customs_entry_date ?? null,
+        customs_release_date: poData.customs_release_date ?? null,
+        duties_paid: poData.duties_paid ?? null,
+        transit_status: poData.transit_status ?? "pending",
+        transit_updated_at: poData.transit_updated_at ?? null,
+        transit_updated_by: poData.transit_updated_by ?? null,
+        transit_notes: poData.transit_notes ?? null,
+        carrier_name: poData.carrier_name ?? null,
+        carrier_tracking_ref: poData.carrier_tracking_ref ?? null,
+        freight_mode: poData.freight_mode ?? null,
+        freight_cost: poData.freight_cost ?? null,
+        freight_type: poData.freight_type ?? null,
         item_count: poData.item_count ?? itemData.length,
         items: (itemData ?? []).map((it) => ({
           po_item_id: it.po_item_id,
@@ -530,6 +687,21 @@ export function PODetailPage() {
           quantity: it.quantity ?? 0,
         })),
       });
+      setTransitStatusDraft(poData.transit_status ?? "pending");
+      setTransitNotesDraft(poData.transit_notes ?? "");
+      setCarrierNameDraft(poData.carrier_name ?? "");
+      setCarrierTrackingDraft(poData.carrier_tracking_ref ?? "");
+      setCustomsEntryDraft(
+        poData.customs_entry_date
+          ? poData.customs_entry_date.slice(0, 10)
+          : "",
+      );
+      setCustomsReleaseDraft(
+        poData.customs_release_date
+          ? poData.customs_release_date.slice(0, 10)
+          : "",
+      );
+      setDutiesPaidDraft(Number(poData.duties_paid ?? 0) > 0);
 
       setStatusHistory(
         (historyData ?? []).map((entry) => ({
@@ -539,11 +711,28 @@ export function PODetailPage() {
             entry.changed_at ?? new Date().toISOString(),
         })),
       );
+      const [quotesData, deliveryResult] = await Promise.all([
+        quotesPromise,
+        deliveryPromise,
+      ]);
+      setFreightQuotes(
+        (quotesData ?? []).map((quote) => ({
+          id: quote.id,
+          provider: quote.provider,
+          freight_type: quote.freight_type,
+          cost: Number(quote.cost),
+          estimated_days: Number(quote.estimated_days),
+          is_winner: Boolean(quote.is_winner),
+        })),
+      );
+      setDeliverySchedule(deliveryResult.data ?? null);
     } catch (error) {
       toast.error("Failed to load purchase order", {
         description: toErrorMessage(error),
       });
       setPo(null);
+      setFreightQuotes([]);
+      setDeliverySchedule(null);
     } finally {
       setLoading(false);
     }
@@ -784,6 +973,108 @@ export function PODetailPage() {
     } finally {
       setSavingEta(false);
     }
+  };
+
+  const freightMode = getFreightMode(po);
+  const transitSteps = getTransitSteps(freightMode);
+  const currentTransitStepIndex = getCurrentTransitStepIndex(
+    po?.transit_status,
+    transitSteps,
+  );
+  const nextTransitOptions = getNextTransitOptions(
+    po?.transit_status,
+    freightMode,
+  );
+  const deliveryDate = deliverySchedule?.delivery_datetime
+    ? new Date(deliverySchedule.delivery_datetime)
+    : null;
+  const isDeliveryOverdue = Boolean(
+    deliveryDate &&
+      deliveryDate.getTime() < Date.now() &&
+      normalizeOptional(po.transit_status) !== "received",
+  );
+  const daysUntilArrival =
+    deliveryDate == null
+      ? null
+      : Math.ceil(
+          (deliveryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+        );
+
+  const handleOpenTransitDialog = () => {
+    const firstNextStatus = nextTransitOptions[0] ?? "";
+    setTransitStatusDraft(firstNextStatus);
+    setTransitNotesDraft(po.transit_notes ?? "");
+    setCarrierNameDraft(po.carrier_name ?? "");
+    setCarrierTrackingDraft(po.carrier_tracking_ref ?? "");
+    setTransitDialogOpen(true);
+  };
+
+  const handleSaveTransitStatus = async () => {
+    if (!po) return;
+    if (!transitStatusDraft) {
+      toast.error("Select the next transit status first");
+      return;
+    }
+
+    setSavingTransit(true);
+    try {
+      await updatePurchaseOrderTransitStatus(po.po_id, {
+        transit_status: transitStatusDraft,
+        transit_updated_by: "logistics_coordinator",
+        transit_notes: transitNotesDraft || null,
+        carrier_name: carrierNameDraft || null,
+        carrier_tracking_ref: carrierTrackingDraft || null,
+      });
+      setTransitDialogOpen(false);
+      toast.success("Transit status updated");
+      await loadDetail();
+    } catch (error) {
+      toast.error("Failed to update transit status", {
+        description: toErrorMessage(error),
+      });
+    } finally {
+      setSavingTransit(false);
+    }
+  };
+
+  const handleSaveCustomsDetails = async () => {
+    if (!po) return;
+    setSavingCustoms(true);
+    try {
+      await updatePurchaseOrderTransitStatus(po.po_id, {
+        transit_status: po.transit_status ?? "pending",
+        transit_updated_by: "logistics_coordinator",
+        transit_notes: po.transit_notes ?? null,
+        carrier_name: po.carrier_name ?? null,
+        carrier_tracking_ref: po.carrier_tracking_ref ?? null,
+        customs_entry_date: customsEntryDraft || null,
+        customs_release_date: customsReleaseDraft || null,
+        duties_paid: dutiesPaidDraft,
+      });
+      toast.success("Customs details updated");
+      await loadDetail();
+    } catch (error) {
+      toast.error("Failed to update customs details", {
+        description: toErrorMessage(error),
+      });
+    } finally {
+      setSavingCustoms(false);
+    }
+  };
+
+  const handleReceiveShipment = () => {
+    if (!shipmentTracking) {
+      toast.error("Tracking number is not available yet");
+      return;
+    }
+
+    localStorage.setItem(
+      "warehouseReceivingPrefillTracking",
+      shipmentTracking,
+    );
+    router.push(
+      `/warehouse-receiving?tracking=${encodeURIComponent(shipmentTracking)}`,
+    );
   };
 
   if (loading || !po) {
@@ -1055,33 +1346,313 @@ export function PODetailPage() {
             Freight Monitor
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="air" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-4">
-              <TabsTrigger value="air">
-                <Plane className="w-4 h-4 mr-2" />
-                Freight Air
-              </TabsTrigger>
-              <TabsTrigger value="sea">
-                <Ship className="w-4 h-4 mr-2" />
-                Freight Sea
-              </TabsTrigger>
-            </TabsList>
-            <TabsContent
-              value="air"
-              className="text-sm text-[#6B7280]"
-            >
-              PO {po.po_no} is currently {po.status}. Air
-              freight timeline is placeholder data.
-            </TabsContent>
-            <TabsContent
-              value="sea"
-              className="text-sm text-[#6B7280]"
-            >
-              PO {po.po_no} is currently {po.status}. Sea
-              freight timeline is placeholder data.
-            </TabsContent>
-          </Tabs>
+        <CardContent className="space-y-6">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card className="border-[#D7E4F2] bg-white shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold text-[#111827]">
+                  Freight Details
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Freight Mode</span>
+                  <Badge className={`border ${getFreightModeBadgeClass(freightMode)}`}>
+                    {po.freight_mode || "Ground"}
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Freight Type</span>
+                  <span className="font-medium text-[#111827]">
+                    {po.freight_type || "Not specified"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Carrier</span>
+                  <span className="font-medium text-[#111827]">
+                    {po.carrier_name || "Not specified"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Carrier Reference</span>
+                  <span className="font-medium text-[#111827]">
+                    {po.carrier_tracking_ref || "Not specified"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Freight Cost</span>
+                  <span className="font-semibold text-[#111827]">
+                    {formatPhpAmount(po.freight_cost)}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-[#D7E4F2] bg-white shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold text-[#111827]">
+                  Delivery Schedule
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                {deliverySchedule ? (
+                  <>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[#6B7280]">Expected Arrival</span>
+                      <span className="font-medium text-[#111827]">
+                        {formatDateTime(deliverySchedule.delivery_datetime)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[#6B7280]">Warehouse Location</span>
+                      <span className="font-medium text-[#111827]">
+                        {deliverySchedule.warehouse_location}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[#6B7280]">Contact</span>
+                      <span className="font-medium text-right text-[#111827]">
+                        {deliverySchedule.contact_person_name || "Not specified"}
+                        {deliverySchedule.contact_phone
+                          ? ` • ${deliverySchedule.contact_phone}`
+                          : ""}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[#6B7280]">Days Until Arrival</span>
+                      <span className="font-medium text-[#111827]">
+                        {daysUntilArrival == null ? "N/A" : `${daysUntilArrival} day(s)`}
+                      </span>
+                    </div>
+                    {isDeliveryOverdue && (
+                      <Badge className="w-fit bg-red-100 text-red-700 border border-red-200">
+                        OVERDUE
+                      </Badge>
+                    )}
+                  </>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-4 text-[#6B7280]">
+                    <div className="font-medium text-[#475569]">
+                      No delivery scheduled yet
+                    </div>
+                    <div className="mt-1 text-xs">
+                      Schedule one from the Warehouse page.
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="border-[#D7E4F2] bg-white shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold text-[#111827]">
+                Freight Quotes
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto rounded-lg border border-[#E5E7EB]">
+                <table className="w-full text-sm">
+                  <thead className="bg-[#F8FAFC] text-[#6B7280]">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-semibold">Provider</th>
+                      <th className="px-4 py-3 text-left font-semibold">Type</th>
+                      <th className="px-4 py-3 text-left font-semibold">Cost</th>
+                      <th className="px-4 py-3 text-left font-semibold">Days</th>
+                      <th className="px-4 py-3 text-left font-semibold">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {freightQuotes.map((quote) => (
+                      <tr key={quote.id} className="border-t border-[#E5E7EB]">
+                        <td className="px-4 py-3 text-[#111827]">{quote.provider}</td>
+                        <td className="px-4 py-3 text-[#111827]">{quote.freight_type}</td>
+                        <td className="px-4 py-3 text-[#111827]">{formatPhpAmount(quote.cost)}</td>
+                        <td className="px-4 py-3 text-[#111827]">{quote.estimated_days}</td>
+                        <td className="px-4 py-3">
+                          {quote.is_winner ? (
+                            <Badge className="bg-emerald-100 text-emerald-700 border border-emerald-200">
+                              Selected
+                            </Badge>
+                          ) : (
+                            <span className="text-[#94A3B8]">Submitted</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {freightQuotes.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-6 text-center text-[#6B7280]">
+                          No freight quotes saved yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-4 lg:grid-cols-[1.3fr_0.9fr]">
+            <Card className="border-[#D7E4F2] bg-white shadow-sm">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="text-sm font-semibold text-[#111827]">
+                    Transit Status Timeline
+                  </CardTitle>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleOpenTransitDialog}
+                    disabled={nextTransitOptions.length === 0}
+                    className="bg-[#1A2B47] hover:bg-[#24395e] text-white"
+                  >
+                    Update Transit Status
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="space-y-4">
+                  {transitSteps.map((step, index) => {
+                    const isCompleted = index < currentTransitStepIndex;
+                    const isCurrent = index === currentTransitStepIndex;
+                    return (
+                      <div key={step} className="flex items-start gap-3">
+                        <div className="relative flex h-7 w-7 items-center justify-center">
+                          {isCompleted ? (
+                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500 text-white">
+                              <Check className="h-4 w-4" />
+                            </div>
+                          ) : isCurrent ? (
+                            <>
+                              <span className="absolute inline-flex h-7 w-7 rounded-full bg-[#1A2B47]/15 animate-ping" />
+                              <div className="relative flex h-7 w-7 items-center justify-center rounded-full bg-[#1A2B47] text-white">
+                                <Circle className="h-3 w-3 fill-current" />
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex h-7 w-7 items-center justify-center rounded-full border border-[#CBD5E1] bg-white text-[#94A3B8]">
+                              <Circle className="h-3 w-3" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="pt-1">
+                          <div className={`font-medium ${isCurrent || isCompleted ? "text-[#111827]" : "text-[#94A3B8]"}`}>
+                            {transitStepLabels[step] ?? step}
+                          </div>
+                          {isCurrent && (
+                            <div className="text-xs text-[#6B7280]">
+                              Current stage
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-4 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[#6B7280]">Last Updated</span>
+                    <span className="font-medium text-[#111827]">
+                      {formatDateTime(po.transit_updated_at)}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-3">
+                    <span className="text-[#6B7280]">Updated By</span>
+                    <span className="font-medium text-[#111827]">
+                      {po.transit_updated_by || "Not recorded"}
+                    </span>
+                  </div>
+                  <div className="mt-2">
+                    <div className="text-[#6B7280]">Notes</div>
+                    <div className="mt-1 text-[#111827]">
+                      {po.transit_notes || "No transit notes yet."}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-[#D7E4F2] bg-white shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold text-[#111827]">
+                  Customs Section
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {normalizeOptional(freightMode) === "air" || normalizeOptional(freightMode) === "sea" ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="customs-entry-date">Customs Entry Date</Label>
+                      <Input
+                        id="customs-entry-date"
+                        type="date"
+                        value={customsEntryDraft}
+                        onChange={(e) => setCustomsEntryDraft(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="customs-release-date">Customs Release Date</Label>
+                      <Input
+                        id="customs-release-date"
+                        type="date"
+                        value={customsReleaseDraft}
+                        onChange={(e) => setCustomsReleaseDraft(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-[#E5E7EB] p-3">
+                      <div>
+                        <div className="font-medium text-[#111827]">Duties Paid</div>
+                        <div className="text-xs text-[#6B7280]">
+                          Toggle on once customs duties are settled.
+                        </div>
+                      </div>
+                      <Switch
+                        checked={dutiesPaidDraft}
+                        onCheckedChange={setDutiesPaidDraft}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={handleSaveCustomsDetails}
+                      disabled={savingCustoms}
+                      className="w-full bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+                    >
+                      {savingCustoms ? "Saving..." : "Save Customs Details"}
+                    </Button>
+                  </>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-4 text-sm text-[#94A3B8]">
+                    Not applicable for ground shipments
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {normalizeOptional(po.transit_status) === "arrived_warehouse" && (
+            <Card className="border-emerald-200 bg-emerald-50 shadow-sm">
+              <CardContent className="flex flex-col gap-4 py-5 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="font-semibold text-emerald-900">
+                    Shipment has arrived at warehouse
+                  </div>
+                  <div className="text-sm text-emerald-800">
+                    Continue directly into Warehouse Receiving with the linked tracking number.
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  onClick={handleReceiveShipment}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                >
+                  <Truck className="mr-2 h-4 w-4" />
+                  Receive This Shipment
+                </Button>
+              </CardContent>
+            </Card>
+          )}
         </CardContent>
       </Card>
 
@@ -1318,6 +1889,88 @@ export function PODetailPage() {
         </div>
       )}
 
+      <Dialog open={transitDialogOpen} onOpenChange={setTransitDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Update Transit Status</DialogTitle>
+            <DialogDescription>
+              Move this shipment to the next valid stage and capture any carrier notes.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="transit-status-select">Next Status</Label>
+              <Select
+                value={transitStatusDraft}
+                onValueChange={setTransitStatusDraft}
+              >
+                <SelectTrigger id="transit-status-select">
+                  <SelectValue placeholder="Select next status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {nextTransitOptions.map((step) => (
+                    <SelectItem key={step} value={step}>
+                      {transitStepLabels[step] ?? step}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="transit-notes">Notes</Label>
+              <Textarea
+                id="transit-notes"
+                value={transitNotesDraft}
+                onChange={(e) => setTransitNotesDraft(e.target.value)}
+                placeholder="Optional transit note..."
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="carrier-name">Carrier Name</Label>
+              <Input
+                id="carrier-name"
+                value={carrierNameDraft}
+                onChange={(e) => setCarrierNameDraft(e.target.value)}
+                placeholder="Optional carrier name"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="carrier-tracking-ref">
+                Carrier Tracking Reference
+              </Label>
+              <Input
+                id="carrier-tracking-ref"
+                value={carrierTrackingDraft}
+                onChange={(e) => setCarrierTrackingDraft(e.target.value)}
+                placeholder="Optional tracking reference"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setTransitDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={handleSaveTransitStatus}
+                disabled={!transitStatusDraft || savingTransit}
+                className="bg-[#1A2B47] hover:bg-[#24395e] text-white"
+              >
+                {savingTransit ? "Saving..." : "Save"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={editEtaOpen} onOpenChange={setEditEtaOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -1377,6 +2030,8 @@ export function POList() {
   const [expiredPOs, setExpiredPOs] = useState<ReservationPO[]>(
     [],
   );
+  const [showExpiringSoon, setShowExpiringSoon] = useState(true);
+  const [showExpiredPOs, setShowExpiredPOs] = useState(true);
   const [reservationLoading, setReservationLoading] =
     useState(false);
   const [runningExpiration, setRunningExpiration] =
@@ -1548,7 +2203,7 @@ export function POList() {
         <CardHeader>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <CardTitle className="text-[#111827] font-semibold">
-              Reservation Monitor (Order Stock Hold)
+              Reservation Status
             </CardTitle>
             <div className="flex items-center gap-2">
               <Button
@@ -1563,51 +2218,10 @@ export function POList() {
                 />
                 Refresh
               </Button>
-              <Button
-                size="sm"
-                onClick={handleRunExpirationCheck}
-                disabled={runningExpiration}
-                className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
-              >
-                <Clock className="w-4 h-4 mr-1" />
-                {runningExpiration
-                  ? "Running..."
-                  : "Run Expiration"}
-              </Button>
             </div>
           </div>
-          <p className="text-xs text-[#6B7280]">
-            Available = Total - Reserved. Reservations
-            auto-expire after 24 hours.
-            {lastExpirationRun && (
-              <>
-                {" "}
-                Last run:{" "}
-                {new Date(lastExpirationRun).toLocaleString()}.
-              </>
-            )}
-          </p>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="rounded-lg border border-[#FDE68A] bg-[#FFFBEB] p-3">
-              <p className="text-xs text-[#92400E]">
-                Expiring Soon (2 hrs)
-              </p>
-              <p className="text-2xl font-bold text-[#B45309]">
-                {expiringSoon.length}
-              </p>
-            </div>
-            <div className="rounded-lg border border-[#FECACA] bg-[#FEF2F2] p-3">
-              <p className="text-xs text-[#991B1B]">
-                Expired Reservations
-              </p>
-              <p className="text-2xl font-bold text-[#B91C1C]">
-                {expiredPOs.length}
-              </p>
-            </div>
-          </div>
-
           {reservationLoading ? (
             <p className="text-sm text-[#6B7280]">
               Loading reservation data...
@@ -1615,77 +2229,102 @@ export function POList() {
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <div className="rounded-lg border border-[#E5E7EB] p-3 space-y-2">
-                <p className="text-xs font-semibold text-[#6B7280] uppercase">
-                  Expiring Soon
-                </p>
-                {expiringSoon.length === 0 ? (
-                  <p className="text-sm text-[#6B7280]">
-                    No reservations expiring soon.
-                  </p>
-                ) : (
-                  expiringSoon.slice(0, 5).map((po) => (
-                    <div
-                      key={po.po_id}
-                      className="rounded-md border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2"
-                    >
-                      <p className="text-sm font-semibold text-[#111827]">
-                        {po.po_no}
-                      </p>
-                      <p className="text-xs text-[#6B7280]">
-                        {po.supplier_name}
-                      </p>
-                      <p className="text-xs text-[#92400E]">
-                        Expires:{" "}
-                        {new Date(
-                          po.expires_at,
-                        ).toLocaleString()}
-                      </p>
-                    </div>
-                  ))
-                )}
+                <button
+                  type="button"
+                  onClick={() => setShowExpiringSoon((prev) => !prev)}
+                  className="flex w-full items-center justify-between gap-3 text-left"
+                >
+                  <div>
+                    <p className="text-xs font-semibold text-[#6B7280] uppercase">
+                      Expiring Soon
+                    </p>
+                    <p className="text-sm font-semibold text-[#B45309]">
+                      {expiringSoon.length}
+                    </p>
+                  </div>
+                  {showExpiringSoon ? (
+                    <ChevronUp className="w-4 h-4 text-[#6B7280]" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-[#6B7280]" />
+                  )}
+                </button>
+                {showExpiringSoon &&
+                  (expiringSoon.length === 0 ? (
+                    <p className="text-sm text-[#6B7280]">
+                      No reservations expiring soon.
+                    </p>
+                  ) : (
+                    expiringSoon.map((po) => (
+                      <div
+                        key={po.po_id}
+                        className="rounded-md border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2"
+                      >
+                        <p className="text-sm font-semibold text-[#111827]">
+                          {po.po_no}
+                        </p>
+                        <p className="text-xs text-[#6B7280]">
+                          {po.supplier_name}
+                        </p>
+                        <p className="text-xs text-[#92400E]">
+                          Expires:{" "}
+                          {new Date(
+                            po.expires_at,
+                          ).toLocaleString()}
+                        </p>
+                      </div>
+                    ))
+                  ))}
               </div>
 
               <div className="rounded-lg border border-[#E5E7EB] p-3 space-y-2">
-                <p className="text-xs font-semibold text-[#6B7280] uppercase">
-                  Expired (Released)
-                </p>
-                {expiredPOs.length === 0 ? (
-                  <p className="text-sm text-[#6B7280]">
-                    No expired reservations.
-                  </p>
-                ) : (
-                  expiredPOs.slice(0, 5).map((po) => (
-                    <div
-                      key={po.po_id}
-                      className="rounded-md border border-[#FECACA] bg-[#FEF2F2] px-3 py-2"
-                    >
-                      <p className="text-sm font-semibold text-[#7F1D1D]">
-                        {po.po_no}
-                      </p>
-                      <p className="text-xs text-[#6B7280]">
-                        {po.supplier_name}
-                      </p>
-                      <p className="text-xs text-[#991B1B]">
-                        Expired:{" "}
-                        {new Date(
-                          po.expires_at,
-                        ).toLocaleString()}
-                      </p>
-                    </div>
-                  ))
-                )}
+                <button
+                  type="button"
+                  onClick={() => setShowExpiredPOs((prev) => !prev)}
+                  className="flex w-full items-center justify-between gap-3 text-left"
+                >
+                  <div>
+                    <p className="text-xs font-semibold text-[#6B7280] uppercase">
+                      Expired (Released)
+                    </p>
+                    <p className="text-sm font-semibold text-[#B91C1C]">
+                      {expiredPOs.length}
+                    </p>
+                  </div>
+                  {showExpiredPOs ? (
+                    <ChevronUp className="w-4 h-4 text-[#6B7280]" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-[#6B7280]" />
+                  )}
+                </button>
+                {showExpiredPOs &&
+                  (expiredPOs.length === 0 ? (
+                    <p className="text-sm text-[#6B7280]">
+                      No expired reservations.
+                    </p>
+                  ) : (
+                    expiredPOs.map((po) => (
+                      <div
+                        key={po.po_id}
+                        className="rounded-md border border-[#FECACA] bg-[#FEF2F2] px-3 py-2"
+                      >
+                        <p className="text-sm font-semibold text-[#7F1D1D]">
+                          {po.po_no}
+                        </p>
+                        <p className="text-xs text-[#6B7280]">
+                          {po.supplier_name}
+                        </p>
+                        <p className="text-xs text-[#991B1B]">
+                          Expired:{" "}
+                          {new Date(
+                            po.expires_at,
+                          ).toLocaleString()}
+                        </p>
+                      </div>
+                    ))
+                  ))}
               </div>
             </div>
           )}
-          <div className="rounded-md border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2 text-xs text-[#1E3A8A] flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>
-              This monitor depends on DB functions
-              (`reserve_product_stock`, `expire_reservations`)
-              and fields (`reserved_at`, `expires_at`) on
-              `purchase_orders`.
-            </span>
-          </div>
         </CardContent>
       </Card>
 

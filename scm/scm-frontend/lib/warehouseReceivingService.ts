@@ -14,6 +14,19 @@ const warehouseReceivingServiceBaseUrl =
   process.env.VITE_WAREHOUSE_RECEIVING_SERVICE_URL ||
   "http://localhost:4005";
 
+// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
+const getBaseUrl = () => {
+  if (
+    !warehouseReceivingServiceBaseUrl || 
+    warehouseReceivingServiceBaseUrl.trim() === "" ||
+    !warehouseReceivingServiceBaseUrl.startsWith("http")
+  ) {
+    return "http://localhost:4005";
+  }
+  return warehouseReceivingServiceBaseUrl;
+};
+
+
 const parseError = async (response: Response) => {
   const text = await response.text();
 
@@ -41,7 +54,7 @@ export const saveGrnDraft = async (
   linePayload: object[],
 ) => {
   const payload = await fetchJson<{ data: unknown }>(
-    `${warehouseReceivingServiceBaseUrl}/grn-drafts`,
+    `${getBaseUrl()}/grn-drafts`,
     {
       method: "POST",
       headers: {
@@ -61,7 +74,7 @@ export const postGrnDraft = async (
   postedBy = "warehouse_operator",
 ) => {
   const payload = await fetchJson<{ data: PostGrnResult }>(
-    `${warehouseReceivingServiceBaseUrl}/grn-drafts/${encodeURIComponent(grnDraftId)}/post`,
+    `${getBaseUrl()}/grn-drafts/${encodeURIComponent(grnDraftId)}/post`,
     {
       method: "POST",
       headers: {
@@ -83,7 +96,7 @@ export const scheduleWarehouseDelivery = async (payload: {
   notes?: string | null;
 }) => {
   const response = await fetchJson<{ data: unknown }>(
-    `${warehouseReceivingServiceBaseUrl}/delivery-schedules`,
+    `${getBaseUrl()}/delivery-schedules`,
     {
       method: "POST",
       headers: {

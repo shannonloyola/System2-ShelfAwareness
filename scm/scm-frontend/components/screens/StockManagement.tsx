@@ -100,12 +100,8 @@ interface BackorderAlertRow {
   created_at: string;
 }
 
-const warehouseLocations = [
-  "Main Warehouse Manila",
-  "Satellite Hub Quezon City",
-  "Satellite Hub Makati",
-  "Cold Storage Facility",
-];
+const STOCK_ROWS_PER_PAGE = 10;
+const CARD_ROWS_PER_PAGE = 5;
 
 const EMPTY_FORM = {
   product_id: 0,
@@ -143,6 +139,50 @@ const getCalendarAgeDays = (createdAt: string): number => {
   );
 };
 
+function ListPager({
+  page,
+  totalPages,
+  onPrevious,
+  onNext,
+}: {
+  page: number;
+  totalPages: number;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  if (totalPages <= 1) return null;
+
+  return (
+    <div className="flex items-center justify-between border-t border-[#E5E7EB] pt-3">
+      <span className="text-xs text-[#6B7280]">
+        Page {page} of {totalPages}
+      </span>
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onPrevious}
+          disabled={page <= 1}
+          className="border-[#111827]/20 text-[#111827]"
+        >
+          Previous
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onNext}
+          disabled={page >= totalPages}
+          className="border-[#111827]/20 text-[#111827]"
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function StockManagement() {
   // Inventory states
   const [searchTerm, setSearchTerm] = useState("");
@@ -165,6 +205,10 @@ export function StockManagement() {
   const [realStock, setRealStock] = useState<StockItem[]>([]);
   const [isStockLoading, setIsStockLoading] = useState(false);
   const [movementRefreshKey, setMovementRefreshKey] = useState(0);
+  const [stockPage, setStockPage] = useState(1);
+  const [lowStockPage, setLowStockPage] = useState(1);
+  const [backorderPage, setBackorderPage] = useState(1);
+  const [alertPage, setAlertPage] = useState(1);
 
   // Main tab state
   const [mainTab, setMainTab] = useState("inventory");
@@ -238,18 +282,26 @@ export function StockManagement() {
     const loadRealStock = async () => {
       setIsStockLoading(true);
       try {
-        const data = await fetchInventoryItems();
+        const [data, catalogProducts] = await Promise.all([
+          fetchInventoryItems(),
+          listCatalogProducts({ limit: 1000 }),
+        ]);
+        const productsBySku = new Map<string, any>(
+          catalogProducts.map((product: any) => [product.sku, product]),
+        );
         setRealStock(data.map(item => ({
           id: item.productUuid || item.id, // Use UUID for backend operations
           sku: item.sku,
           name: item.name,
-          location: "Main Warehouse Manila",
-          zone: "Primary",
+          location:
+            productsBySku.get(item.sku)?.warehouse_location ||
+            "Unassigned",
+          zone: "-",
           aisle: "-",
           bin: "-",
           currentStock: item.systemCount,
-          minStock: 1000,
-          maxStock: 20000,
+          minStock: 0,
+          maxStock: item.systemCount,
           status: item.status === "low" ? "low" : item.status === "zero" ? "critical" : "healthy",
           lastRestocked: item.lastUpdated ? new Date(item.lastUpdated).toISOString().split('T')[0] : "N/A"
         })));
@@ -344,6 +396,22 @@ export function StockManagement() {
     return matchesSearch && matchesLocation && matchesStatus;
   });
 
+  const locationOptions = useMemo(
+    () =>
+      Array.from(new Set(realStock.map((item) => item.location)))
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b)),
+    [realStock],
+  );
+
+  const statusOptions = useMemo(
+    () =>
+      Array.from(new Set(realStock.map((item) => item.status)))
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b)),
+    [realStock],
+  );
+
   const lowStockItems = realStock.filter(
     (item) =>
       item.status === "low" || item.status === "critical",
@@ -363,6 +431,55 @@ export function StockManagement() {
     (max, row) => Math.max(max, row.computed_age_days),
     0,
   );
+
+  const stockTotalPages = Math.max(
+    1,
+    Math.ceil(filteredStock.length / STOCK_ROWS_PER_PAGE),
+  );
+  const pagedStock = filteredStock.slice(
+    (stockPage - 1) * STOCK_ROWS_PER_PAGE,
+    stockPage * STOCK_ROWS_PER_PAGE,
+  );
+  const lowStockTotalPages = Math.max(
+    1,
+    Math.ceil(lowStockItems.length / CARD_ROWS_PER_PAGE),
+  );
+  const pagedLowStockItems = lowStockItems.slice(
+    (lowStockPage - 1) * CARD_ROWS_PER_PAGE,
+    lowStockPage * CARD_ROWS_PER_PAGE,
+  );
+  const backorderTotalPages = Math.max(
+    1,
+    Math.ceil(backordersWithAge.length / CARD_ROWS_PER_PAGE),
+  );
+  const pagedBackorders = backordersWithAge.slice(
+    (backorderPage - 1) * CARD_ROWS_PER_PAGE,
+    backorderPage * CARD_ROWS_PER_PAGE,
+  );
+  const alertTotalPages = Math.max(
+    1,
+    Math.ceil(backorderAlerts.length / CARD_ROWS_PER_PAGE),
+  );
+  const pagedBackorderAlerts = backorderAlerts.slice(
+    (alertPage - 1) * CARD_ROWS_PER_PAGE,
+    alertPage * CARD_ROWS_PER_PAGE,
+  );
+
+  useEffect(() => {
+    setStockPage(1);
+  }, [searchTerm, locationFilter, statusFilter]);
+
+  useEffect(() => {
+    setLowStockPage((page) => Math.min(page, lowStockTotalPages));
+  }, [lowStockTotalPages]);
+
+  useEffect(() => {
+    setBackorderPage((page) => Math.min(page, backorderTotalPages));
+  }, [backorderTotalPages]);
+
+  useEffect(() => {
+    setAlertPage((page) => Math.min(page, alertTotalPages));
+  }, [alertTotalPages]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -450,18 +567,26 @@ export function StockManagement() {
       void (async () => {
         setIsStockLoading(true);
         try {
-          const stockData = await fetchInventoryItems();
+          const [stockData, catalogProducts] = await Promise.all([
+            fetchInventoryItems(),
+            listCatalogProducts({ limit: 1000 }),
+          ]);
+          const productsBySku = new Map<string, any>(
+            catalogProducts.map((product: any) => [product.sku, product]),
+          );
           setRealStock(stockData.map(item => ({
             id: item.id,
             sku: item.sku,
             name: item.name,
-            location: "Main Warehouse Manila",
-            zone: "Primary",
+            location:
+              productsBySku.get(item.sku)?.warehouse_location ||
+              "Unassigned",
+            zone: "-",
             aisle: "-",
             bin: "-",
             currentStock: item.systemCount,
-            minStock: 1000,
-            maxStock: 20000,
+            minStock: 0,
+            maxStock: item.systemCount,
             status: item.status === "low" ? "low" : item.status === "zero" ? "critical" : "healthy",
             lastRestocked: item.lastUpdated ? new Date(item.lastUpdated).toISOString().split('T')[0] : "N/A"
           })));
@@ -1052,7 +1177,7 @@ export function StockManagement() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {backordersWithAge.map((row) => (
+                    {pagedBackorders.map((row) => (
                       <div
                         key={row.backorder_id}
                         className="rounded-lg border border-[#E5E7EB] p-3"
@@ -1084,6 +1209,18 @@ export function StockManagement() {
                         </div>
                       </div>
                     ))}
+                    <ListPager
+                      page={backorderPage}
+                      totalPages={backorderTotalPages}
+                      onPrevious={() =>
+                        setBackorderPage((page) => Math.max(1, page - 1))
+                      }
+                      onNext={() =>
+                        setBackorderPage((page) =>
+                          Math.min(backorderTotalPages, page + 1),
+                        )
+                      }
+                    />
                   </div>
                 )}
               </CardContent>
@@ -1105,7 +1242,7 @@ export function StockManagement() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {backorderAlerts.map((alert) => (
+                    {pagedBackorderAlerts.map((alert) => (
                       <div
                         key={alert.id}
                         className="rounded-lg border border-[#BFDBFE] bg-[#EFF6FF] p-3"
@@ -1138,6 +1275,18 @@ export function StockManagement() {
                         )}
                       </div>
                     ))}
+                    <ListPager
+                      page={alertPage}
+                      totalPages={alertTotalPages}
+                      onPrevious={() =>
+                        setAlertPage((page) => Math.max(1, page - 1))
+                      }
+                      onNext={() =>
+                        setAlertPage((page) =>
+                          Math.min(alertTotalPages, page + 1),
+                        )
+                      }
+                    />
                   </div>
                 )}
               </CardContent>
@@ -1153,7 +1302,7 @@ export function StockManagement() {
             </CardHeader>
             <CardContent className="pt-6">
               <div className="space-y-3">
-                {lowStockItems.map((item) => (
+                {pagedLowStockItems.map((item) => (
                   <div
                     key={item.id}
                     className={`p-4 rounded-lg border-2 ${
@@ -1263,6 +1412,18 @@ export function StockManagement() {
                     </div>
                   </div>
                 ))}
+                <ListPager
+                  page={lowStockPage}
+                  totalPages={lowStockTotalPages}
+                  onPrevious={() =>
+                    setLowStockPage((page) => Math.max(1, page - 1))
+                  }
+                  onNext={() =>
+                    setLowStockPage((page) =>
+                      Math.min(lowStockTotalPages, page + 1),
+                    )
+                  }
+                />
               </div>
             </CardContent>
           </Card>
@@ -1301,7 +1462,7 @@ export function StockManagement() {
                       <SelectItem value="all">
                         All Locations
                       </SelectItem>
-                      {warehouseLocations.map((loc) => (
+                      {locationOptions.map((loc) => (
                         <SelectItem key={loc} value={loc}>
                           {loc}
                         </SelectItem>
@@ -1325,18 +1486,11 @@ export function StockManagement() {
                       <SelectItem value="all">
                         All Status
                       </SelectItem>
-                      <SelectItem value="healthy">
-                        Healthy
-                      </SelectItem>
-                      <SelectItem value="low">
-                        Low Stock
-                      </SelectItem>
-                      <SelectItem value="critical">
-                        Critical
-                      </SelectItem>
-                      <SelectItem value="overstock">
-                        Overstock
-                      </SelectItem>
+                      {statusOptions.map((status) => (
+                        <SelectItem key={status} value={status}>
+                          {status.replace(/_/g, " ")}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1442,13 +1596,6 @@ export function StockManagement() {
                             </Select>
                           </div>
                         </div>
-                        {/* DEBUG IDS */}
-                        <div className="bg-[#F8FAFC] p-2 rounded border border-[#CBD5E1] text-[10px] font-mono text-[#475569]">
-                          <div className="font-bold mb-1 uppercase">Technical Debug Info:</div>
-                          <div>PROD_ID: {transferForm.productId || "None"}</div>
-                          <div>FROM_BIN: {transferForm.fromBinId || "None"}</div>
-                          <div>TO_BIN: {transferForm.toBinId || "None"}</div>
-                        </div>
                         <div>
                           <Label>Quantity to Transfer</Label>
                           <Input
@@ -1534,7 +1681,7 @@ export function StockManagement() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredStock.map((item) => (
+                    {pagedStock.map((item) => (
                       <tr
                         key={item.id}
                         className="border-b border-[#E5E7EB] hover:bg-[#F8FAFC] transition-colors"
@@ -1599,6 +1746,39 @@ export function StockManagement() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="flex items-center justify-between border-t border-[#E5E7EB] px-4 py-4">
+                <span className="text-xs text-[#6B7280]">
+                  Page {stockPage} of {stockTotalPages}
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setStockPage((page) => Math.max(1, page - 1))
+                    }
+                    disabled={stockPage <= 1}
+                    className="border-[#111827]/20 text-[#111827]"
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setStockPage((page) =>
+                        Math.min(stockTotalPages, page + 1),
+                      )
+                    }
+                    disabled={stockPage >= stockTotalPages}
+                    className="border-[#111827]/20 text-[#111827]"
+                  >
+                    Next
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

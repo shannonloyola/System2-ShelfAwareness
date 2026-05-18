@@ -16,3 +16,7 @@ logs
 # OS files
 .DS_Store
 Thumbs.db
+
+# Gemini Agent files
+brain/
+scratch/
