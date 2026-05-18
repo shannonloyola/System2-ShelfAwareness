@@ -10,7 +10,9 @@ import {
   CheckCircle2,
   XCircle,
   FileBarChart,
+  Printer,
 } from "lucide-react";
+import { QRLabelModal } from "../shared/QRLabelModal";
 import {
   Card,
   CardContent,
@@ -191,6 +193,8 @@ export function StockManagement() {
   const [modalAction, setModalAction] = useState<
     "approve" | "reject" | null
   >(null);
+  const [selectedBinForQR, setSelectedBinForQR] = useState<any | null>(null);
+  const [showBinQRModal, setShowBinQRModal] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -1524,6 +1528,9 @@ export function StockManagement() {
                       <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
                         Last Restocked
                       </th>
+                      <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
+                        Actions
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1573,6 +1580,20 @@ export function StockManagement() {
                         </td>
                         <td className="py-4 px-4 text-sm text-[#6B7280]">
                           {item.lastRestocked}
+                        </td>
+                        <td className="py-4 px-4 text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-[#00A3AD] text-[#00A3AD] hover:bg-[#00A3AD]/10 h-8 py-0 px-2.5"
+                            onClick={() => {
+                              setSelectedBinForQR(item);
+                              setShowBinQRModal(true);
+                            }}
+                          >
+                            <Printer className="w-4 h-4 mr-1.5 inline-block" />
+                            Print Bin QR
+                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -2062,6 +2083,24 @@ export function StockManagement() {
           <EvaluationReport key="evaluation-report-v1" />
         </TabsContent>
       </Tabs>
+      {selectedBinForQR && (
+        <QRLabelModal
+          isOpen={showBinQRModal}
+          onClose={() => setShowBinQRModal(false)}
+          qrValue={`BIN:${selectedBinForQR.zone}-${selectedBinForQR.aisle}-${selectedBinForQR.bin}`}
+          title={`Bin: ${selectedBinForQR.zone}-${selectedBinForQR.aisle}-${selectedBinForQR.bin}`}
+          subtitle="Bin Location QR Label"
+          fields={[
+            { label: "BIN LOCATION", value: `${selectedBinForQR.zone}-${selectedBinForQR.aisle}-${selectedBinForQR.bin}` },
+            { label: "ZONE", value: selectedBinForQR.zone },
+            { label: "AISLE", value: selectedBinForQR.aisle },
+            { label: "BIN", value: selectedBinForQR.bin },
+            { label: "ASSIGNED SKU", value: selectedBinForQR.sku || "N/A" },
+            { label: "PRODUCT NAME", value: selectedBinForQR.name || "N/A" },
+            { label: "STOCK QUANTITY", value: `${selectedBinForQR.currentStock || 0} units` },
+          ]}
+        />
+      )}
     </div>
   );
 }

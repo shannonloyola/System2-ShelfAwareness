@@ -11,14 +11,18 @@ import {
   Building2,
   ChevronLeft,
   Clock,
+  FileDown,
   Hash,
   Package,
   Plane,
   RefreshCw,
+  QrCode,
   Ship,
   Upload,
 } from "lucide-react";
+import QRCode from "react-qr-code";
 import { useParams, useRouter } from "next/navigation";
+import { QRLabelModal } from "../shared/QRLabelModal";
 import {
   Card,
   CardContent,
@@ -33,7 +37,7 @@ import {
   TabsTrigger,
 } from "../ui/tabs";
 import { toast } from "sonner";
-import { supabase, supabaseSCM } from "@/lib/supabase";
+import { supabase, supabaseSCM, supabaseFulfillment } from "@/lib/supabase";
 import { PerItemTracker } from "../PerItemTracker";
 import {
   fetchExpiredPOs,
@@ -334,6 +338,69 @@ const getStepperState = (
   return "pending";
 };
 
+function QRPrintModal({ open, onOpenChange, po }: { open: boolean; onOpenChange: (open: boolean) => void; po: PurchaseOrder & { trackingNumber?: string } }) {
+  const [modalItems, setModalItems] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!po?.po_id) {
+      setModalItems([]);
+      return;
+    }
+    
+    let active = true;
+    const loadModalItems = async () => {
+      try {
+        const itemData = await fetchPurchaseOrderItems(po.po_id);
+        if (!active) return;
+        
+        const itemsWithSku = await Promise.all(
+          (itemData ?? []).map(async (it: any) => {
+            const { data: prodData } = await supabaseSCM
+              .from("products")
+              .select("sku")
+              .eq("product_name", it.item_name)
+              .maybeSingle();
+            return {
+              sku: prodData?.sku || `SKU-${it.item_name.toUpperCase().replace(/[^A-Z0-9]/g, "").substring(0, 8)}`,
+              name: it.item_name,
+              quantity: it.quantity,
+            };
+          })
+        );
+        
+        setModalItems(itemsWithSku);
+      } catch (err) {
+        console.error("Failed to load modal items:", err);
+      }
+    };
+    
+    void loadModalItems();
+    return () => {
+      active = false;
+    };
+  }, [po]);
+
+  const trackingNum = po.trackingNumber || (po as any).tracking_number || "";
+
+  return (
+    <QRLabelModal
+      isOpen={open}
+      onClose={() => onOpenChange(false)}
+      qrValue={trackingNum}
+      title={trackingNum}
+      subtitle="Fulfillment Shipment Label"
+      fields={[
+        { label: "TRACKING NUMBER", value: trackingNum },
+        { label: "PO NUMBER", value: po.po_no },
+        { label: "SUPPLIER NAME", value: po.supplier_name },
+        { label: "EXPECTED ITEMS", value: `${modalItems.reduce((sum, item) => sum + item.quantity, 0)} units` },
+        { label: "GENERATION TIME", value: new Date().toLocaleString() },
+      ]}
+      items={modalItems}
+    />
+  );
+}
+
 export function PODetailPage() {
   const router = useRouter();
   const params = useParams<{ poId?: string | string[] }>();
@@ -348,6 +415,8 @@ export function PODetailPage() {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
+  const [shipmentTracking, setShipmentTracking] = useState<string | null>(null);
+  const [showPrintModal, setShowPrintModal] = useState(false);
 
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [documentUrl, setDocumentUrl] = useState<string | null>(
@@ -426,6 +495,21 @@ export function PODetailPage() {
         fetchPurchaseOrderItems(poId),
         fetchPurchaseOrderStatusHistory(poId),
       ]);
+
+      try {
+        const { data: shipmentData } = await supabaseFulfillment
+          .from("shipments")
+          .select("tracking_number")
+          .eq("po_id", poId)
+          .maybeSingle();
+        if (shipmentData) {
+          setShipmentTracking(shipmentData.tracking_number);
+        } else {
+          setShipmentTracking(null);
+        }
+      } catch (err) {
+        console.error("Failed to fetch shipment details:", err);
+      }
 
       setPo({
         po_id: poData.po_id,
@@ -578,7 +662,48 @@ export function PODetailPage() {
           : current,
       );
 
-      toast.success("Purchase order approved");
+      // Auto-create shipment record in Fulfillment database for Phase 1
+      const year = new Date().getFullYear();
+      const randomDigits = Math.floor(100000 + Math.random() * 900000);
+      const trackingNumber = `SA-${year}-${randomDigits}`;
+
+      const expectedItems = await Promise.all(
+        (po.items || []).map(async (it) => {
+          const { data: prodData } = await supabaseSCM
+            .from("products")
+            .select("sku")
+            .eq("product_name", it.item_name)
+            .maybeSingle();
+          return {
+            sku: prodData?.sku || `SKU-${it.item_name.toUpperCase().replace(/[^A-Z0-9]/g, "").substring(0, 8)}`,
+            product_name: it.item_name,
+            expected_qty: it.quantity,
+          };
+        })
+      );
+
+      const { error: shipmentError } = await supabaseFulfillment
+        .from("shipments")
+        .insert({
+          shipment_id: crypto.randomUUID(),
+          po_id: po.po_id,
+          po_no: po.po_no,
+          supplier_name: po.supplier_name,
+          expected_items: expectedItems,
+          status: "pending",
+          tracking_number: trackingNumber,
+          created_at: new Date().toISOString(),
+        });
+
+      if (shipmentError) {
+        console.error("Auto-shipment creation failed:", shipmentError);
+        toast.warning("Purchase order approved, but auto-shipment creation failed. Please check database columns.");
+      } else {
+        setShipmentTracking(trackingNumber);
+        toast.success(`Purchase order approved and shipment auto-linked! (Tracking: ${trackingNumber})`);
+      }
+
+      await loadDetail();
     } catch (error) {
       toast.error(`Failed to ${action} purchase order`, {
         description: toErrorMessage(error),
@@ -720,7 +845,9 @@ export function PODetailPage() {
               <div>
                 <p className="text-xs text-[#6B7280]">Status</p>
                 <p className="text-sm font-semibold text-[#111827]">
-                  {po.status}
+                  {po.approval_status === "Approved" && (!po.status || po.status.toLowerCase() === "draft")
+                    ? "Approved"
+                    : po.status}
                 </p>
               </div>
             </div>
@@ -856,6 +983,39 @@ export function PODetailPage() {
           </div>
         </CardContent>
       </Card>
+
+      {shipmentTracking && (
+        <Card className="bg-emerald-50/50 border border-emerald-200/60 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-emerald-800 text-sm font-semibold flex items-center gap-2">
+              <span className="text-emerald-500 font-bold">✓</span>
+              Fulfillment Shipment Linked
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pb-4">
+            <p className="text-xs text-emerald-700 font-medium">
+              A corresponding shipment has been auto-linked in the Fulfillment database for barcode scanner processing.
+            </p>
+            <div className="mt-3 flex flex-col gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-900">
+                <span>Tracking Number:</span>
+                <span className="font-mono bg-emerald-100 px-2 py-0.5 rounded text-xs border border-emerald-200">{shipmentTracking}</span>
+              </div>
+              <div className="mt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowPrintModal(true)}
+                  className="h-8 px-3 border-emerald-600 text-emerald-700 hover:bg-emerald-50 text-xs font-semibold flex items-center gap-1.5 shadow-sm"
+                >
+                  <QrCode className="w-3.5 h-3.5" />
+                  🖨 Print QR Label
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardHeader>
@@ -1191,6 +1351,13 @@ export function PODetailPage() {
           </div>
         </DialogContent>
       </Dialog>
+      {showPrintModal && po && (
+        <QRPrintModal
+          open={showPrintModal}
+          onOpenChange={setShowPrintModal}
+          po={{ ...po, trackingNumber: shipmentTracking || "" }}
+        />
+      )}
     </div>
   );
 }
@@ -1198,6 +1365,7 @@ export function PODetailPage() {
 export function POList() {
   const router = useRouter();
   const [pos, setPos] = useState<PurchaseOrder[]>([]);
+  const [shipmentsMap, setShipmentsMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] =
@@ -1217,10 +1385,31 @@ export function POList() {
     string | null
   >(null);
 
+  const [printPo, setPrintPo] = useState<PurchaseOrder & { trackingNumber?: string } | null>(null);
+  const [showPrintModal, setShowPrintModal] = useState(false);
+
   const fetchPOs = useCallback(async () => {
     setLoading(true);
     try {
       const poData = await fetchPurchaseOrders();
+
+      try {
+        const { data: shipmentsData } = await supabaseFulfillment
+          .from("shipments")
+          .select("po_id, tracking_number");
+        
+        if (shipmentsData) {
+          const map: Record<string, string> = {};
+          for (const s of shipmentsData) {
+            if (s.po_id) {
+              map[s.po_id] = s.tracking_number;
+            }
+          }
+          setShipmentsMap(map);
+        }
+      } catch (err) {
+        console.error("Failed to load shipments map:", err);
+      }
 
       setPos(
         (poData ?? []).map((po) => ({
@@ -1566,6 +1755,9 @@ export function POList() {
                     Status
                   </th>
                   <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">
+                    Shipment Created
+                  </th>
+                  <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">
                     Date Created
                   </th>
                   <th className="text-left px-4 py-3 font-semibold text-[#6B7280] whitespace-nowrap">
@@ -1581,7 +1773,7 @@ export function POList() {
                 {loading && pos.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="text-center py-12 text-[#6B7280]"
                     >
                       Loading purchase orders...
@@ -1590,7 +1782,7 @@ export function POList() {
                 ) : statusFiltered.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="text-center py-12 text-[#6B7280]"
                     >
                       {search
@@ -1635,10 +1827,20 @@ export function POList() {
                             <span className="text-[#6B7280]">{po.status}</span>
                             {badgeText && (
                               <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${badgeClass}`}>
-                                {badgeText}
+                                  {badgeText}
                               </span>
                             )}
                           </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {shipmentsMap[po.po_id] ? (
+                            <div className="flex items-center gap-1.5 text-emerald-600 font-semibold">
+                              <span className="text-emerald-500 font-bold">✓</span>
+                              <span className="text-xs font-mono">{shipmentsMap[po.po_id]}</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-400 font-medium">—</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-[#6B7280] whitespace-nowrap">
                           {formatDate(po.created_at)}
@@ -1652,9 +1854,31 @@ export function POList() {
                           {po.item_count ?? po.items.length}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <span className="text-xs text-[#00A3AD] font-semibold hover:underline">
-                            View details &gt;
-                          </span>
+                          <div className="flex items-center justify-end gap-3" onClick={(e) => e.stopPropagation()}>
+                            {shipmentsMap[po.po_id] && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setPrintPo({
+                                    ...po,
+                                    trackingNumber: shipmentsMap[po.po_id],
+                                  });
+                                  setShowPrintModal(true);
+                                }}
+                                className="h-8 px-2.5 border-emerald-600 text-emerald-700 hover:bg-emerald-50 text-[11px] font-bold flex items-center gap-1.5 shrink-0 shadow-sm transition-all"
+                              >
+                                <QrCode className="w-3.5 h-3.5 text-emerald-600" />
+                                🖨 Print QR
+                              </Button>
+                            )}
+                            <span 
+                              onClick={() => router.push(`/po-list/${po.po_id}`)}
+                              className="text-xs text-[#00A3AD] font-semibold hover:underline cursor-pointer"
+                            >
+                              View details &gt;
+                            </span>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1698,6 +1922,14 @@ export function POList() {
           </div>
         </CardContent>
       </Card>
+
+      {showPrintModal && printPo && (
+        <QRPrintModal
+          open={showPrintModal}
+          onOpenChange={setShowPrintModal}
+          po={printPo}
+        />
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { env } from "../config/env.js";
 import { createHttpError } from "./http.js";
 
 const productSelect =
-  "product_id,product_uuid,sku,product_name,unit,category,category_id,barcode,supplier,warehouse_location,unit_price,currency_code,inventory_on_hand,created_at";
+  "product_id,product_uuid,sku,product_name,unit,category,category_id,barcode,supplier,warehouse_location,unit_price,currency_code,inventory_on_hand,reserved_stock,created_at";
 
 const pricingSelect =
   "pricing_id,product_id,cost_price,selling_price,currency_code,effective_from,effective_to,created_at,created_by,updated_at,updated_by,is_active";
@@ -52,8 +52,9 @@ const mapProductRow = (row, inventoryByProductId = new Map()) => {
     unit_price: Number(row.unit_price ?? 0),
     currency_code: row.currency_code ?? "PHP",
     inventory_on_hand: Number(
-      inventory?.qty_on_hand ?? row.inventory_on_hand ?? 0,
+      inventory?.qty_on_hand ?? row.inventory_on_hand ?? 0
     ),
+    reserved_stock: Number(row.reserved_stock ?? 0),
     inventory_updated_at: inventory?.updated_at ?? null,
     created_at: row.created_at ?? null,
   };

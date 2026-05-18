@@ -10,9 +10,11 @@ import { Logo } from "../Logo";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/contexts/AuthContext";
 
 export function LoginScreen() {
   const router = useRouter();
+  const { loginAsMockAdmin } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -30,6 +32,18 @@ export function LoginScreen() {
     }
 
     setIsLoading(true);
+    
+    // Developer Mock Bypass for Local Testing (Avoid email confirmation lock)
+    if (email === "admin@shelfawareness.com" && password === "password123") {
+      loginAsMockAdmin(email);
+      toast.success("Login Successful (Developer Bypass)", {
+        description: "Logged in as Administrator",
+      });
+      setIsLoading(false);
+      router.push("/dashboard");
+      return;
+    }
+
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,

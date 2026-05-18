@@ -13,6 +13,7 @@ export interface RecentScan {
   receivedAt: string; // ISO string
   status: string;
   itemCount?: number;
+  receivedBy?: string;
 }
 
 export const saveRecentScan = async (shipment: any): Promise<void> => {
@@ -24,6 +25,7 @@ export const saveRecentScan = async (shipment: any): Promise<void> => {
       receivedAt: new Date().toISOString(),
       status: shipment.status,
       itemCount: shipment.item_count,
+      receivedBy: shipment.received_by || shipment.receivedBy || 'Operator',
     };
 
     // Prepend and limit

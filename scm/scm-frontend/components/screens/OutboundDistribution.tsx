@@ -14,8 +14,10 @@ import {
   Download,
   CreditCard,
   History,
-  Info
+  Info,
+  Printer
 } from "lucide-react";
+import { QRLabelModal } from "../shared/QRLabelModal";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -140,6 +142,8 @@ export function OutboundDistribution() {
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [selectedOrderForCartonQR, setSelectedOrderForCartonQR] = useState<RetailOrder | null>(null);
+  const [showCartonQRModal, setShowCartonQRModal] = useState(false);
   const [selectedPaymentOrder, setSelectedPaymentOrder] =
     useState<RetailOrder | null>(null);
   const [cancelReason, setCancelReason] = useState("");
@@ -971,6 +975,20 @@ export function OutboundDistribution() {
                           {order.due_date ? new Date(order.due_date).toLocaleDateString() : "N/A"}
                         </td>
                         <td className="px-6 py-4 text-right space-x-2">
+                          {(order.status === "placed" || order.status === "partially_fulfilled") && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                setSelectedOrderForCartonQR(order);
+                                setShowCartonQRModal(true);
+                              }}
+                              className="text-[#00A3AD] hover:bg-[#00A3AD]/10"
+                              title="Print Carton QR"
+                            >
+                              <Printer className="w-4 h-4" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
@@ -1211,6 +1229,30 @@ export function OutboundDistribution() {
           )}
         </DialogContent>
       </Dialog>
+      {selectedOrderForCartonQR && (
+        <QRLabelModal
+          isOpen={showCartonQRModal}
+          onClose={() => setShowCartonQRModal(false)}
+          qrValue={selectedOrderForCartonQR.order_no}
+          title={`Carton: ${selectedOrderForCartonQR.order_no}`}
+          subtitle="Outbound Carton Label"
+          fields={[
+            { label: "ORDER NUMBER", value: selectedOrderForCartonQR.order_no },
+            { label: "CUSTOMER / DESTINATION", value: selectedOrderForCartonQR.retailer_name },
+            { label: "TOTAL ITEMS", value: `${selectedOrderForCartonQR.retail_order_lines.reduce((sum, line) => sum + line.qty, 0)} units` },
+            { label: "DISPATCH DATE", value: selectedOrderForCartonQR.due_date ? new Date(selectedOrderForCartonQR.due_date).toLocaleDateString() : "As Scheduled" },
+            { label: "PAYMENT TERMS", value: selectedOrderForCartonQR.payment_terms || "N/A" },
+          ]}
+          items={selectedOrderForCartonQR.retail_order_lines.map((line) => {
+            const prod = availableProducts.find((p) => p.sku === line.sku);
+            return {
+              sku: line.sku,
+              name: prod?.product_name || line.sku,
+              quantity: line.qty,
+            };
+          })}
+        />
+      )}
     </div>
   );
 }

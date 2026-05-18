@@ -17,8 +17,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getShipmentByTracking, markAsReceived, type Shipment } from '@/services/shipmentApi';
 import { saveRecentScan } from '@/utils/recentScans';
-import { cleanBarcode, isValidBarcode } from '@/utils/barcodeUtils';
+import { cleanBarcode } from '@/utils/barcodeUtils';
 import { palette, spacing, radius, shadow, typography } from '@/constants/design';
+import * as Haptics from 'expo-haptics';
 
 
 type ScanPhase = 'scan' | 'result' | 'success';
@@ -52,8 +53,11 @@ export default function ScanShipmentScreen() {
 
   const lookupShipment = useCallback(async (tracking: string) => {
     const value = cleanBarcode(tracking);
-    if (!value || !isValidBarcode(value)) {
-      if (value) setLookupError('Invalid tracking format');
+    if (!value || !value.startsWith('SA-')) {
+      if (value) {
+        setLookupError('Invalid code. Please scan a shipment QR label.');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      }
       return;
     }
 
@@ -70,14 +74,17 @@ export default function ScanShipmentScreen() {
       console.log('[SCAN] Shipment Found:', JSON.stringify(data, null, 2));
       if (!data) {
         setLookupError('Shipment not found. Check the tracking number and try again.');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       } else {
         setShipment(data);
         await saveRecentScan(data); // Save to history immediately
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         Vibration.vibrate(50);
       }
     } catch (err: any) {
       console.error('[SCAN] Lookup Error:', err);
       setLookupError(err.message || 'Could not reach the server. Check your connection.');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
     } finally {
       setIsLoading(false);
     }
@@ -211,7 +218,7 @@ export default function ScanShipmentScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
           <Ionicons name="arrow-back" size={22} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Scan Shipment</Text>
+        <Text style={styles.headerTitle}>Scan Shipment QR Code</Text>
         <TouchableOpacity onPress={() => setShowManual((v) => !v)} style={styles.headerBtn}>
           <Ionicons name={showManual ? 'camera-outline' : 'keypad-outline'} size={22} color="#fff" />
         </TouchableOpacity>
@@ -242,7 +249,7 @@ export default function ScanShipmentScreen() {
               <View style={styles.manualRow}>
                 <TextInput
                   style={styles.manualInput}
-                  placeholder="Enter tracking number..."
+                  placeholder="Scan QR or enter SA-XXXX-XXXXXX"
                   placeholderTextColor={palette.textMuted}
                   value={manualInput}
                   onChangeText={setManualInput}

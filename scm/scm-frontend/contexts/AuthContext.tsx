@@ -11,16 +11,32 @@ interface AuthContextType {
   user: User | null;
   role: AppRole | null;
   isLoading: boolean;
+  loginAsMockAdmin: (email?: string) => void;
 }
 
 const AUTH_SERVICE_URL = authUserAccessServiceUrl;
 const ROLE_LOOKUP_TIMEOUT_MS = 8000;
 const ROLE_CACHE_PREFIX = "shelf-awareness-role:";
 
+const SEED_USER_ROLES: Record<string, AppRole> = {
+  "owner@test.com": "owner_president",
+  "finance@test.com": "finance_manager",
+  "procurement@test.com": "procurement_manager",
+  "logistics@test.com": "logistics_coordinator",
+  "warehouse@test.com": "warehouse_manager",
+  "qc@test.com": "qc_inspector",
+  "sales@test.com": "sales_processor",
+  "delivery@test.com": "delivery_person",
+  "b2b@test.com": "b2b_customer",
+  "supplier@test.com": "supplier",
+  "admin@shelfawareness.com": "owner_president",
+};
+
 const AuthContext = createContext<AuthContextType>({
   user: null,
   role: null,
   isLoading: true,
+  loginAsMockAdmin: () => {},
 });
 
 const getRoleCacheKey = (userId: string) =>
@@ -50,6 +66,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const getSession = async () => {
       setIsLoading(true);
+      if (typeof window !== "undefined" && window.localStorage.getItem("mock_admin") === "true") {
+        const savedEmail = window.localStorage.getItem("mock_admin_email") || "admin@shelfawareness.com";
+        setUser({
+          id: "e10f5640-8a6e-4433-8f18-f3d17142f4ff",
+          email: savedEmail,
+          user_metadata: { role: "owner_president", full_name: "Administrator" },
+          app_metadata: { role: "owner_president" },
+        } as any);
+        setRole("owner_president");
+        setIsLoading(false);
+        return;
+      }
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         setUser(session.user);
@@ -79,6 +107,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const resolveRole = (sessionUser: User) => {
+    const email = sessionUser.email?.trim().toLowerCase();
+    if (email && SEED_USER_ROLES[email]) {
+      const staticRole = SEED_USER_ROLES[email];
+      setRole(staticRole);
+      writeCachedRole(sessionUser.id, staticRole);
+      setIsLoading(false);
+      return;
+    }
+
     const appMetaRole = normalizeAppRole(sessionUser.app_metadata?.role);
     if (appMetaRole) {
       setRole(appMetaRole);
@@ -193,8 +230,23 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
+  const loginAsMockAdmin = (email: string = "admin@shelfawareness.com") => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("mock_admin", "true");
+      window.localStorage.setItem("mock_admin_email", email);
+    }
+    setUser({
+      id: "e10f5640-8a6e-4433-8f18-f3d17142f4ff",
+      email: email,
+      user_metadata: { role: "owner_president", full_name: "Administrator" },
+      app_metadata: { role: "owner_president" },
+    } as any);
+    setRole("owner_president");
+    setIsLoading(false);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, role, isLoading }}>
+    <AuthContext.Provider value={{ user, role, isLoading, loginAsMockAdmin }}>
       {children}
     </AuthContext.Provider>
   );

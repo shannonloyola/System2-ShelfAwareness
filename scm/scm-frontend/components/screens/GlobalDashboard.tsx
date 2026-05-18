@@ -29,12 +29,27 @@ import { supabaseFulfillment } from "@/lib/supabase";
 
 // statCards removed
 
+interface DashboardCacheData {
+  realInventory: any[];
+  totalAssets: number;
+  orders: any[];
+  purchaseOrders: any[];
+  backordersCount: number;
+  allocatedAmount: number;
+  spentAmount: number;
+  customsDelays: any[];
+  backendHealth: BackendHealthResponse | null;
+  backendError: string | null;
+}
+
+let globalDashboardCache: DashboardCacheData | null = null;
+
 export function GlobalDashboard() {
-  const [realInventory, setRealInventory] = useState([]);
-  const [totalAssets, setTotalAssets] = useState(0);
-  const [orders, setOrders] = useState([]);
-  const [purchaseOrders, setPurchaseOrders] = useState([]);
-  const [backordersCount, setBackordersCount] = useState(0);
+  const [realInventory, setRealInventory] = useState(globalDashboardCache?.realInventory || []);
+  const [totalAssets, setTotalAssets] = useState(globalDashboardCache?.totalAssets || 0);
+  const [orders, setOrders] = useState(globalDashboardCache?.orders || []);
+  const [purchaseOrders, setPurchaseOrders] = useState(globalDashboardCache?.purchaseOrders || []);
+  const [backordersCount, setBackordersCount] = useState(globalDashboardCache?.backordersCount || 0);
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -46,11 +61,27 @@ export function GlobalDashboard() {
           fetchPurchaseOrders(),
           supabaseFulfillment.from("v_backorder_aging").select("*", { count: 'exact', head: true })
         ]);
-        setRealInventory(inv || []);
-        setTotalAssets(assets || 0);
-        setOrders(distOrders || []);
-        setPurchaseOrders(poData || []);
-        setBackordersCount(backordersRes.count || 0);
+        
+        const nextInv = inv || [];
+        const nextAssets = assets || 0;
+        const nextDistOrders = distOrders || [];
+        const nextPoData = poData || [];
+        const nextBackorders = backordersRes.count || 0;
+
+        setRealInventory(nextInv);
+        setTotalAssets(nextAssets);
+        setOrders(nextDistOrders);
+        setPurchaseOrders(nextPoData);
+        setBackordersCount(nextBackorders);
+
+        globalDashboardCache = {
+          ...globalDashboardCache,
+          realInventory: nextInv,
+          totalAssets: nextAssets,
+          orders: nextDistOrders,
+          purchaseOrders: nextPoData,
+          backordersCount: nextBackorders,
+        } as any;
       } catch (err) {
         console.error("Dashboard fetch error:", err);
       }
@@ -107,21 +138,28 @@ export function GlobalDashboard() {
       currency: "PHP",
     }).format(amount);
 
-  const [allocatedAmount, setAllocatedAmount] = useState(0);
-  const [spentAmount, setSpentAmount] = useState(0);
-  const [customsDelays, setCustomsDelays] = useState<any[]>([]);
+  const [allocatedAmount, setAllocatedAmount] = useState(globalDashboardCache?.allocatedAmount || 0);
+  const [spentAmount, setSpentAmount] = useState(globalDashboardCache?.spentAmount || 0);
+  const [customsDelays, setCustomsDelays] = useState<any[]>(globalDashboardCache?.customsDelays || []);
   const [customsLoading, setCustomsLoading] = useState(false);
   const [backendHealth, setBackendHealth] =
-    useState<BackendHealthResponse | null>(null);
-  const [backendError, setBackendError] = useState<string | null>(null);
+    useState<BackendHealthResponse | null>(globalDashboardCache?.backendHealth || null);
+  const [backendError, setBackendError] = useState<string | null>(globalDashboardCache?.backendError || null);
 
   useEffect(() => {
     const fetchMonthlyBudget = async () => {
       try {
         const data = await fetchCurrentMonthlyBudget();
         if (data) {
-          setAllocatedAmount(data.allocated_amount || 0);
-          setSpentAmount(data.spent_amount || 0);
+          const nextAllocated = data.allocated_amount || 0;
+          const nextSpent = data.spent_amount || 0;
+          setAllocatedAmount(nextAllocated);
+          setSpentAmount(nextSpent);
+          globalDashboardCache = {
+            ...globalDashboardCache,
+            allocatedAmount: nextAllocated,
+            spentAmount: nextSpent,
+          } as any;
         }
       } catch {
         setAllocatedAmount(0);
@@ -133,7 +171,12 @@ export function GlobalDashboard() {
       setCustomsLoading(true);
       try {
         const data = await fetchCustomsDelayRows();
-        setCustomsDelays(data);
+        const nextCustoms = data || [];
+        setCustomsDelays(nextCustoms);
+        globalDashboardCache = {
+          ...globalDashboardCache,
+          customsDelays: nextCustoms,
+        } as any;
       } catch {
         setCustomsDelays([]);
       } finally {
@@ -144,13 +187,23 @@ export function GlobalDashboard() {
     const loadBackendHealth = async () => {
       try {
         const data = await fetchBackendHealth();
-        setBackendHealth(data);
+        const nextHealth = data;
+        setBackendHealth(nextHealth);
         setBackendError(null);
+        globalDashboardCache = {
+          ...globalDashboardCache,
+          backendHealth: nextHealth,
+          backendError: null,
+        } as any;
       } catch (error) {
+        const nextErr = error instanceof Error ? error.message : "Backend unavailable";
         setBackendHealth(null);
-        setBackendError(
-          error instanceof Error ? error.message : "Backend unavailable",
-        );
+        setBackendError(nextErr);
+        globalDashboardCache = {
+          ...globalDashboardCache,
+          backendHealth: null,
+          backendError: nextErr,
+        } as any;
       }
     };
 

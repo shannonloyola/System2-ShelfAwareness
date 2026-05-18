@@ -328,10 +328,6 @@ export function ProductMaster() {
   const [selectedProduct, setSelectedProduct] =
     useState<Product | null>(null);
 
-  const [showDebugPanel, setShowDebugPanel] = useState(false);
-  const [debugLogs, setDebugLogs] = useState<any[]>([]);
-  const [lastPayload, setLastPayload] = useState<any>(null);
-  const [lastResponse, setLastResponse] = useState<any>(null);
 
   const [categories, setCategories] = useState<
     ProductCategory[]
@@ -388,13 +384,6 @@ export function ProductMaster() {
     message: string,
     data?: any,
   ) => {
-    const log = {
-      timestamp: new Date().toISOString(),
-      type,
-      message,
-      data,
-    };
-    setDebugLogs((prev) => [log, ...prev]);
     console.log(`[${type}]`, message, data || "");
   };
 
@@ -1437,7 +1426,6 @@ export function ProductMaster() {
         created_at: new Date().toISOString(),
       };
 
-      setLastPayload(productPayload);
       addDebugLog(
         "info",
         "Payload mapped to product catalog service schema",
@@ -1449,10 +1437,6 @@ export function ProductMaster() {
         cost_price: nextCostPrice,
       });
 
-      setLastResponse({
-        success: true,
-        data: createdProduct,
-      });
       addDebugLog("info", "Product catalog service response", {
         product_id: createdProduct?.product_id,
         product_uuid: createdProduct?.product_uuid,
@@ -3332,101 +3316,6 @@ export function ProductMaster() {
           </CardContent>
         </Card>
       </div>
-
-      <Card className="bg-[#1A2B47] border-[#00A3AD] shadow-xl">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-white font-bold">
-              Developer Debug Panel - Live API Monitor
-            </CardTitle>
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-white/20 text-white hover:bg-white/10"
-              onClick={() => setShowDebugPanel(!showDebugPanel)}
-            >
-              {showDebugPanel ? "Hide" : "Show"} Debug Panel
-            </Button>
-          </div>
-          <p className="text-white/60 text-sm mt-2">
-            Real-time monitoring of API requests, payloads, and
-            responses
-          </p>
-        </CardHeader>
-        {showDebugPanel && (
-          <CardContent className="space-y-4">
-            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <div className="text-xs text-white/60 mb-1">
-                SUPABASE REST API ENDPOINT
-              </div>
-              <div className="text-sm text-white font-mono break-all">
-                {scmRestBaseUrl}/products
-              </div>
-            </div>
-            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <div className="text-xs text-white/60 mb-2">
-                LAST PAYLOAD SENT
-              </div>
-              {lastPayload ? (
-                <pre className="text-xs text-[#00A3AD] font-mono overflow-x-auto">
-                  {JSON.stringify(lastPayload, null, 2)}
-                </pre>
-              ) : (
-                <div className="text-sm text-white/40">
-                  No payload sent yet
-                </div>
-              )}
-            </div>
-            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <div className="text-xs text-white/60 mb-2">
-                LAST API RESPONSE
-              </div>
-              {lastResponse ? (
-                <pre className="text-xs text-white font-mono overflow-x-auto">
-                  {JSON.stringify(lastResponse, null, 2)}
-                </pre>
-              ) : (
-                <div className="text-sm text-white/40">
-                  No response received yet
-                </div>
-              )}
-            </div>
-            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <div className="text-xs text-white/60 mb-2">
-                ACTIVITY LOG
-              </div>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {debugLogs.length > 0 ? (
-                  debugLogs.slice(0, 10).map((log, idx) => (
-                    <div
-                      key={idx}
-                      className="text-xs font-mono"
-                    >
-                      <span
-                        className={`inline-block px-2 py-1 rounded mr-2 ${log.type === "error" ? "bg-[#F97316] text-white" : log.type === "success" ? "bg-[#00A3AD] text-white" : "bg-white/10 text-white"}`}
-                      >
-                        {log.type.toUpperCase()}
-                      </span>
-                      <span className="text-xs text-white/60">
-                        {new Date(
-                          log.timestamp,
-                        ).toLocaleTimeString()}
-                      </span>
-                      <span className="text-white ml-2">
-                        {log.message}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-sm text-white/40">
-                    No activity logged yet
-                  </div>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        )}
-      </Card>
     </div>
   );
 }
