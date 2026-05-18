@@ -117,15 +117,48 @@ export type DashboardAnalyticsData = {
   executive: {
     inventoryValuationTrend: InventoryValuationPoint[];
     criticalStockProducts: CriticalStockProduct[];
-    budgetPosition: BudgetPosition;
+    budgetPosition: BudgetPosition | null;
     topExposureProducts: TopExposureProduct[];
   };
   operations: {
     stockMovementFeed: StockMovementEvent[];
+    backorderDetails: Array<{
+      sku: string;
+      name: string;
+      quantity: number;
+      daysAged: number;
+      bucket: string;
+    }>;
     warehouseZoneHeatmap: WarehouseBin[];
     backorderAging: BackorderBucket[];
     transferVelocityFunnel: TransferFunnelStage[];
     cycleCountAccuracyTrend: CycleCountPoint[];
+  };
+  procurement: {
+    supplierReliabilityScorecards: Array<{
+      supplierName: string;
+      reliabilityScore: number;
+      onTimeDeliveryPct: number;
+      defectRate: number;
+      poApprovalRate: number;
+      riskLevel: string;
+      totalPos: number;
+      totalReceipts: number;
+      leadTimeDays: number | null;
+    }>;
+    poLeadTimeDistribution: Array<{
+      bucket: string;
+      count: number;
+      avgDays: number;
+      color: string;
+    }>;
+    supplierLeadTimeDistribution: Array<{
+      supplierName: string;
+      leadTimeDays: number;
+      totalPos: number;
+      source: string;
+      color: string;
+    }>;
   };
   sources?: {
     errors?: Array<{ source: string; error: string }>;
@@ -147,6 +180,201 @@ const parseError = async (response: Response) => {
   }
 };
 
+const asArray = <T = any>(value: unknown): T[] => (Array.isArray(value) ? value as T[] : []);
+
+const asNumber = (value: unknown, fallback = 0) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+};
+
+const asNullableNumber = (value: unknown) => {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const asText = (value: unknown, fallback = "N/A") => {
+  const text = String(value ?? "").trim();
+  if (!text || ["null", "undefined", "nan"].includes(text.toLowerCase())) {
+    return fallback;
+  }
+  return text;
+};
+
+const sanitizeDashboardPayload = (payload: any): DashboardAnalyticsData => {
+  const kpis = {
+    Executive: asArray(payload?.kpis?.Executive).map((item: any) => ({
+      label: asText(item?.label),
+      value: asText(item?.value, "0"),
+      delta: asNumber(item?.delta),
+      inverseGood: Boolean(item?.inverseGood),
+      trend: asArray(item?.trend).map((value) => asNumber(value)),
+      subLabel: item?.subLabel ? asText(item.subLabel) : undefined,
+    })),
+    Operations: asArray(payload?.kpis?.Operations).map((item: any) => ({
+      label: asText(item?.label),
+      value: asText(item?.value, "0"),
+      delta: asNumber(item?.delta),
+      inverseGood: Boolean(item?.inverseGood),
+      trend: asArray(item?.trend).map((value) => asNumber(value)),
+      subLabel: item?.subLabel ? asText(item.subLabel) : undefined,
+    })),
+    Procurement: asArray(payload?.kpis?.Procurement).map((item: any) => ({
+      label: asText(item?.label),
+      value: asText(item?.value, "0"),
+      delta: asNumber(item?.delta),
+      inverseGood: Boolean(item?.inverseGood),
+      trend: asArray(item?.trend).map((value) => asNumber(value)),
+      subLabel: item?.subLabel ? asText(item.subLabel) : undefined,
+    })),
+  };
+
+  const budget = payload?.executive?.budgetPosition;
+
+  return {
+    generatedAt: asText(payload?.generatedAt, new Date().toISOString()),
+    kpis,
+    executive: {
+      inventoryValuationTrend: asArray(payload?.executive?.inventoryValuationTrend).map((item: any) => ({
+        date: asText(item?.date),
+        value: asNumber(item?.value),
+        category: item?.category ? asText(item.category) : undefined,
+        isAnomaly: Boolean(item?.isAnomaly),
+      })),
+      criticalStockProducts: asArray(payload?.executive?.criticalStockProducts).map((item: any) => ({
+        sku: asText(item?.sku),
+        name: asText(item?.name, "Unnamed SKU"),
+        category: asText(item?.category, "Uncategorized"),
+        stockLevel: asNumber(item?.stockLevel),
+        reservedStock: asNumber(item?.reservedStock),
+        dailyMovement: asNullableNumber(item?.dailyMovement),
+        daysOfCover: asNullableNumber(item?.daysOfCover),
+        value: asNumber(item?.value),
+        status: asText(item?.status, "monitored"),
+      })),
+      budgetPosition: budget
+        ? {
+            allocated: asNumber(budget.allocated),
+            spent: asNumber(budget.spent),
+            committed: asNumber(budget.committed),
+            remaining: asNumber(budget.remaining),
+            usedPct: asNumber(budget.usedPct),
+            categories: asArray(budget.categories).map((item: any) => ({
+              category: asText(item?.category, "Current Budget"),
+              allocated: asNumber(item?.allocated),
+              spent: asNumber(item?.spent),
+              committed: asNumber(item?.committed),
+            })),
+          }
+        : null,
+      topExposureProducts: asArray(payload?.executive?.topExposureProducts).map((item: any) => ({
+        rank: asNumber(item?.rank),
+        sku: asText(item?.sku),
+        name: asText(item?.name, "Unnamed SKU"),
+        category: asText(item?.category, "Uncategorized"),
+        exposure: asNumber(item?.exposure),
+        trend: asArray(item?.trend).map((value) => asNumber(value)),
+        budgetUtilizationPct: asNumber(item?.budgetUtilizationPct),
+        budgetRemaining: asNumber(item?.budgetRemaining),
+      })),
+    },
+    operations: {
+      stockMovementFeed: asArray(payload?.operations?.stockMovementFeed).map((item: any) => ({
+        id: asText(item?.id),
+        timestamp: asText(item?.timestamp, new Date(0).toISOString()),
+        type: ["TRANSFER", "ADJUSTMENT", "RECEIVING", "DISPATCH", "CYCLE_COUNT"].includes(item?.type) ? item.type : "ADJUSTMENT",
+        severity: ["info", "warning", "critical"].includes(item?.severity) ? item.severity : "info",
+        sku: asText(item?.sku),
+        productName: asText(item?.productName, "N/A"),
+        fromLocation: asText(item?.fromLocation, "N/A"),
+        toLocation: asText(item?.toLocation, "N/A"),
+        quantity: asNumber(item?.quantity),
+        unit: asText(item?.unit, "units"),
+        triggeredBy: asText(item?.triggeredBy, "Microservice"),
+        status: asText(item?.status, "updated"),
+      })),
+      backorderDetails: asArray(payload?.operations?.backorderDetails).map((item: any) => ({
+        sku: asText(item?.sku),
+        name: asText(item?.name, "N/A"),
+        quantity: asNumber(item?.quantity),
+        daysAged: asNumber(item?.daysAged),
+        bucket: asText(item?.bucket, "N/A"),
+      })),
+      warehouseZoneHeatmap: asArray(payload?.operations?.warehouseZoneHeatmap).map((item: any) => ({
+        zone: asText(item?.zone),
+        aisle: asText(item?.aisle),
+        bin: asText(item?.bin),
+        capacity: asNumber(item?.capacity),
+        currentStock: asNumber(item?.currentStock),
+        utilizationPct: asNumber(item?.utilizationPct),
+        topProduct: asText(item?.topProduct, "N/A"),
+        skuCount: asNumber(item?.skuCount),
+        hasAlert: Boolean(item?.hasAlert),
+      })),
+      backorderAging: asArray(payload?.operations?.backorderAging).map((item: any) => ({
+        bucket: asText(item?.bucket),
+        emoji: asText(item?.emoji, ""),
+        count: asNumber(item?.count),
+        historicalAvg: asNumber(item?.historicalAvg),
+        historicalStdDev: asNumber(item?.historicalStdDev),
+        value: asNumber(item?.value),
+        critical: asNumber(item?.critical),
+        avgDaysWaiting: asNumber(item?.avgDaysWaiting),
+        color: asText(item?.color, "#00A3AD"),
+        isAnomaly: Boolean(item?.isAnomaly),
+      })),
+      transferVelocityFunnel: asArray(payload?.operations?.transferVelocityFunnel).map((item: any) => ({
+        stage: asText(item?.stage),
+        count: asNumber(item?.count),
+        avgHoursInStage: asNumber(item?.avgHoursInStage),
+        dropoffCount: asNumber(item?.dropoffCount),
+        dropoffPct: asNumber(item?.dropoffPct),
+      })),
+      cycleCountAccuracyTrend: asArray(payload?.operations?.cycleCountAccuracyTrend).map((item: any) => ({
+        week: asText(item?.week),
+        accuracy: asNumber(item?.accuracy),
+        discrepancyCount: asNumber(item?.discrepancyCount),
+        systemCount: asNumber(item?.systemCount),
+        actualCount: asNumber(item?.actualCount),
+        variancePct: asText(item?.variancePct, "0%"),
+        isAnomaly: Boolean(item?.isAnomaly),
+      })),
+    },
+    procurement: {
+      supplierReliabilityScorecards: asArray(payload?.procurement?.supplierReliabilityScorecards).map((item: any) => ({
+        supplierName: asText(item?.supplierName),
+        reliabilityScore: asNumber(item?.reliabilityScore),
+        onTimeDeliveryPct: asNumber(item?.onTimeDeliveryPct),
+        defectRate: asNumber(item?.defectRate),
+        poApprovalRate: asNumber(item?.poApprovalRate),
+        riskLevel: asText(item?.riskLevel, "medium"),
+        totalPos: asNumber(item?.totalPos),
+        totalReceipts: asNumber(item?.totalReceipts),
+        leadTimeDays: asNullableNumber(item?.leadTimeDays),
+      })),
+      poLeadTimeDistribution: asArray(payload?.procurement?.poLeadTimeDistribution).map((item: any) => ({
+        bucket: asText(item?.bucket),
+        count: asNumber(item?.count),
+        avgDays: asNumber(item?.avgDays),
+        color: asText(item?.color, "#00A3AD"),
+      })),
+      supplierLeadTimeDistribution: asArray(payload?.procurement?.supplierLeadTimeDistribution).map((item: any) => ({
+        supplierName: asText(item?.supplierName),
+        leadTimeDays: asNumber(item?.leadTimeDays),
+        totalPos: asNumber(item?.totalPos),
+        source: asText(item?.source, "Supplier master"),
+        color: asText(item?.color, "#00A3AD"),
+      })),
+    },
+    sources: {
+      errors: asArray(payload?.sources?.errors).map((item: any) => ({
+        source: asText(item?.source),
+        error: asText(item?.error, "Unknown service error"),
+      })),
+    },
+  };
+};
+
 export const fetchDashboardAnalytics = async () => {
   const response = await fetch(`${reportingAnalyticsServiceBaseUrl}/reporting/dashboard-data`, {
     cache: "no-store",
@@ -154,5 +382,5 @@ export const fetchDashboardAnalytics = async () => {
   if (!response.ok) {
     throw new Error(await parseError(response));
   }
-  return (await response.json()) as DashboardAnalyticsData;
+  return sanitizeDashboardPayload(await response.json());
 };

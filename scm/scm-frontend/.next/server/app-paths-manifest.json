@@ -1,16 +1,16 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
-  "/page": "app/page.js",
-  "/login/page": "app/login/page.js",
   "/icon.svg/route": "app/icon.svg/route.js",
+  "/login/page": "app/login/page.js",
+  "/page": "app/page.js",
   "/(dashboard)/count/page": "app/(dashboard)/count/page.js",
   "/(dashboard)/dashboard/page": "app/(dashboard)/dashboard/page.js",
-  "/(dashboard)/distribution/page": "app/(dashboard)/distribution/page.js",
+  "/(dashboard)/discrepancies/page": "app/(dashboard)/discrepancies/page.js",
   "/(dashboard)/po-list/[poId]/page": "app/(dashboard)/po-list/[poId]/page.js",
   "/(dashboard)/po-list/page": "app/(dashboard)/po-list/page.js",
-  "/(dashboard)/stock/page": "app/(dashboard)/stock/page.js",
+  "/(dashboard)/distribution/page": "app/(dashboard)/distribution/page.js",
   "/(dashboard)/procurement/page": "app/(dashboard)/procurement/page.js",
-  "/(dashboard)/warehouse/page": "app/(dashboard)/warehouse/page.js",
   "/(dashboard)/products/page": "app/(dashboard)/products/page.js",
-  "/(dashboard)/discrepancies/page": "app/(dashboard)/discrepancies/page.js"
+  "/(dashboard)/stock/page": "app/(dashboard)/stock/page.js",
+  "/(dashboard)/warehouse/page": "app/(dashboard)/warehouse/page.js"
 }

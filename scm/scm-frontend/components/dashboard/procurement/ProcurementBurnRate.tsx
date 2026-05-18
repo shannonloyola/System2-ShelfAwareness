@@ -31,9 +31,6 @@ export default function ProcurementBurnRate() {
           <div style={{ width: `${remainingPct}%`, backgroundColor: "var(--accent-green)" }} />
         </div>
       </div>
-      <div className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
-        Backend utilization: {budget.usedPct.toFixed(1)}%
-      </div>
     </div>
   );
 }

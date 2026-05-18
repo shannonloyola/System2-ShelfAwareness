@@ -19,8 +19,7 @@ export default function CriticalStockRiskMatrix() {
 
   const criticalItems = useMemo(() => {
     return (data?.executive?.criticalStockProducts || [])
-      .sort((a, b) => (a.daysOfCover ?? 999) - (b.daysOfCover ?? 999) || b.value - a.value)
-      .slice(0, 3);
+      .sort((a, b) => (a.daysOfCover ?? 999) - (b.daysOfCover ?? 999) || b.value - a.value);
   }, [data]);
 
   if (!criticalItems.length) {
@@ -62,7 +61,7 @@ export default function CriticalStockRiskMatrix() {
         </div>
       </div>
 
-      <div className="mt-2 flex-1 overflow-hidden">
+      <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-1" style={{ scrollbarGutter: "stable" }}>
         <div className="space-y-1.5">
           {criticalItems.map((item) => {
             const isActive = activeSkuFilter === item.sku;

@@ -41,6 +41,7 @@ const getSeverityColor = (sev: Severity) => {
 
 const relativeTime = (dateValue: string) => {
   const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return 'N/A';
   const diff = Math.floor((Date.now() - date.getTime()) / 1000);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
