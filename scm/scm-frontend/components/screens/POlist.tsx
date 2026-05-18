@@ -1198,82 +1198,45 @@ export function PODetailPage() {
         </CardContent>
       </Card>
 
-      <Card className="bg-white border-[#111827]/10 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-[#111827] text-base">
-            Order Status Progress
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-between gap-2 sm:gap-4">
-            {["Draft", "Posted", "In-Transit", "Received"].map((step) => {
-              const state = getStepperState(step, statusHistory, po.status);
-              const isCompleted = state === "completed";
-              const isCurrent = state === "current";
 
-              return (
-                <div key={step} className="flex flex-col items-center flex-1">
-                  <div
-                    className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-sm sm:text-base font-bold transition-all ${
-                      isCompleted
-                        ? "bg-[#00A3AD] text-white"
-                        : isCurrent
-                          ? "bg-white border-2 border-[#00A3AD] text-[#00A3AD]"
-                          : "bg-[#E5E7EB] text-[#6B7280]"
-                    }`}
-                  >
-                    {step[0]}
-                  </div>
-                  <div
-                    className={`text-[10px] sm:text-xs mt-2 text-center font-medium ${
-                      isCompleted || isCurrent ? "text-[#111827]" : "text-[#6B7280]"
-                    }`}
-                  >
-                    {step}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="bg-white border-[#111827]/10 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-[#111827] text-base">
-            Purchase Approval
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-[#6B7280]">
-            Review this purchase order and sign off if it is
-            ready to move forward.
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setShowRejectModal(true)}
-              disabled={approvalSubmitting !== null}
-              className="border-[#DC2626] text-[#DC2626] hover:bg-[#FEF2F2]"
-            >
-              Reject
-            </Button>
-            <Button
-              type="button"
-              onClick={() =>
-                void handleApprovalAction("approve")
-              }
-              disabled={approvalSubmitting !== null}
-              className="bg-[#16A34A] hover:bg-[#15803D] text-white"
-            >
-              {approvalSubmitting === "approve"
-                ? "Approving..."
-                : "Approve"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      {po.approval_status !== "Approved" && po.approval_status !== "Rejected" && (
+        <Card className="bg-white border-[#111827]/10 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-[#111827] text-base">
+              Purchase Approval
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-[#6B7280]">
+              Review this purchase order and sign off if it is
+              ready to move forward.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowRejectModal(true)}
+                disabled={approvalSubmitting !== null}
+                className="border-[#DC2626] text-[#DC2626] hover:bg-[#FEF2F2]"
+              >
+                Reject
+              </Button>
+              <Button
+                type="button"
+                onClick={() =>
+                  void handleApprovalAction("approve")
+                }
+                disabled={approvalSubmitting !== null}
+                className="bg-[#16A34A] hover:bg-[#15803D] text-white"
+              >
+                {approvalSubmitting === "approve"
+                  ? "Approving..."
+                  : "Approve"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {shipmentTracking && (
         <Card className="bg-emerald-50/50 border border-emerald-200/60 shadow-sm">
@@ -1493,143 +1456,85 @@ export function PODetailPage() {
             </CardContent>
           </Card>
 
-          <div className="grid gap-4 lg:grid-cols-[1.3fr_0.9fr]">
-            <Card className="border-[#D7E4F2] bg-white shadow-sm">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between gap-3">
-                  <CardTitle className="text-sm font-semibold text-[#111827]">
-                    Transit Status Timeline
-                  </CardTitle>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleOpenTransitDialog}
-                    disabled={nextTransitOptions.length === 0}
-                    className="bg-[#1A2B47] hover:bg-[#24395e] text-white"
-                  >
-                    Update Transit Status
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-4">
-                  {transitSteps.map((step, index) => {
-                    const isCompleted = index < currentTransitStepIndex;
-                    const isCurrent = index === currentTransitStepIndex;
-                    return (
-                      <div key={step} className="flex items-start gap-3">
-                        <div className="relative flex h-7 w-7 items-center justify-center">
-                          {isCompleted ? (
-                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500 text-white">
-                              <Check className="h-4 w-4" />
-                            </div>
-                          ) : isCurrent ? (
-                            <>
-                              <span className="absolute inline-flex h-7 w-7 rounded-full bg-[#1A2B47]/15 animate-ping" />
-                              <div className="relative flex h-7 w-7 items-center justify-center rounded-full bg-[#1A2B47] text-white">
-                                <Circle className="h-3 w-3 fill-current" />
-                              </div>
-                            </>
-                          ) : (
-                            <div className="flex h-7 w-7 items-center justify-center rounded-full border border-[#CBD5E1] bg-white text-[#94A3B8]">
-                              <Circle className="h-3 w-3" />
-                            </div>
-                          )}
-                        </div>
-                        <div className="pt-1">
-                          <div className={`font-medium ${isCurrent || isCompleted ? "text-[#111827]" : "text-[#94A3B8]"}`}>
-                            {transitStepLabels[step] ?? step}
-                          </div>
-                          {isCurrent && (
-                            <div className="text-xs text-[#6B7280]">
-                              Current stage
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-4 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[#6B7280]">Last Updated</span>
-                    <span className="font-medium text-[#111827]">
-                      {formatDateTime(po.transit_updated_at)}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-3">
-                    <span className="text-[#6B7280]">Updated By</span>
-                    <span className="font-medium text-[#111827]">
-                      {po.transit_updated_by || "Not recorded"}
-                    </span>
-                  </div>
-                  <div className="mt-2">
-                    <div className="text-[#6B7280]">Notes</div>
-                    <div className="mt-1 text-[#111827]">
-                      {po.transit_notes || "No transit notes yet."}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-[#D7E4F2] bg-white shadow-sm">
-              <CardHeader className="pb-3">
+          <Card className="border-[#D7E4F2] bg-white shadow-sm">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-3">
                 <CardTitle className="text-sm font-semibold text-[#111827]">
-                  Customs Section
+                  Transit Status Timeline
                 </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {normalizeOptional(freightMode) === "air" || normalizeOptional(freightMode) === "sea" ? (
-                  <>
-                    <div className="space-y-2">
-                      <Label htmlFor="customs-entry-date">Customs Entry Date</Label>
-                      <Input
-                        id="customs-entry-date"
-                        type="date"
-                        value={customsEntryDraft}
-                        onChange={(e) => setCustomsEntryDraft(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="customs-release-date">Customs Release Date</Label>
-                      <Input
-                        id="customs-release-date"
-                        type="date"
-                        value={customsReleaseDraft}
-                        onChange={(e) => setCustomsReleaseDraft(e.target.value)}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg border border-[#E5E7EB] p-3">
-                      <div>
-                        <div className="font-medium text-[#111827]">Duties Paid</div>
-                        <div className="text-xs text-[#6B7280]">
-                          Toggle on once customs duties are settled.
-                        </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleOpenTransitDialog}
+                  disabled={nextTransitOptions.length === 0}
+                  className="bg-[#1A2B47] hover:bg-[#24395e] text-white"
+                >
+                  Update Transit Status
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-4">
+                {transitSteps.map((step, index) => {
+                  const isCompleted = index < currentTransitStepIndex;
+                  const isCurrent = index === currentTransitStepIndex;
+                  return (
+                    <div key={step} className="flex items-start gap-3">
+                      <div className="relative flex h-7 w-7 items-center justify-center">
+                        {isCompleted ? (
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500 text-white">
+                            <Check className="h-4 w-4" />
+                          </div>
+                        ) : isCurrent ? (
+                          <>
+                            <span className="absolute inline-flex h-7 w-7 rounded-full bg-[#1A2B47]/15 animate-ping" />
+                            <div className="relative flex h-7 w-7 items-center justify-center rounded-full bg-[#1A2B47] text-white">
+                              <Circle className="h-3 w-3 fill-current" />
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full border border-[#CBD5E1] bg-white text-[#94A3B8]">
+                            <Circle className="h-3 w-3" />
+                          </div>
+                        )}
                       </div>
-                      <Switch
-                        checked={dutiesPaidDraft}
-                        onCheckedChange={setDutiesPaidDraft}
-                      />
+                      <div className="pt-1">
+                        <div className={`font-medium ${isCurrent || isCompleted ? "text-[#111827]" : "text-[#94A3B8]"}`}>
+                          {transitStepLabels[step] ?? step}
+                        </div>
+                        {isCurrent && (
+                          <div className="text-xs text-[#6B7280]">
+                            Current stage
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <Button
-                      type="button"
-                      onClick={handleSaveCustomsDetails}
-                      disabled={savingCustoms}
-                      className="w-full bg-[#00A3AD] hover:bg-[#0891B2] text-white"
-                    >
-                      {savingCustoms ? "Saving..." : "Save Customs Details"}
-                    </Button>
-                  </>
-                ) : (
-                  <div className="rounded-lg border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-4 text-sm text-[#94A3B8]">
-                    Not applicable for ground shipments
+                  );
+                })}
+              </div>
+
+              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-4 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Last Updated</span>
+                  <span className="font-medium text-[#111827]">
+                    {formatDateTime(po.transit_updated_at)}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Updated By</span>
+                  <span className="font-medium text-[#111827]">
+                    {po.transit_updated_by || "Not recorded"}
+                  </span>
+                </div>
+                <div className="mt-2">
+                  <div className="text-[#6B7280]">Notes</div>
+                  <div className="mt-1 text-[#111827]">
+                    {po.transit_notes || "No transit notes yet."}
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {normalizeOptional(po.transit_status) === "arrived_warehouse" && (
             <Card className="border-emerald-200 bg-emerald-50 shadow-sm">
@@ -1656,19 +1561,6 @@ export function PODetailPage() {
         </CardContent>
       </Card>
 
-      <Card className="bg-white border-[#111827]/10 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-[#111827] text-base">
-            Per-Order Item Status Tracker
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <PerItemTracker
-            poNumber={po.po_no}
-            steps={getTrackerSteps(po.status)}
-          />
-        </CardContent>
-      </Card>
 
       <Card className="bg-white border-[#111827]/10 shadow-sm">
         <CardHeader>
