@@ -19,6 +19,7 @@ interface PanelWrapperProps {
   chartType?: 'line' | 'bar' | 'gauge' | 'kanban' | 'mixed' | 'table';
   infoTooltip?: string;
   style?: React.CSSProperties;
+  contentOverflow?: "auto" | "hidden" | "visible";
 }
 
 const ShimmerSkeleton = ({ type }: { type?: string }) => {
@@ -82,7 +83,8 @@ export default function PanelWrapper({
   filterActive = false,
   chartType,
   infoTooltip,
-  style
+  style,
+  contentOverflow = "auto",
 }: PanelWrapperProps) {
   const setExpandedPanel = useDashboardStore(state => state.setExpandedPanel);
 
@@ -168,7 +170,7 @@ export default function PanelWrapper({
         style={{
           padding: '8px',
           flex: '1',
-          overflow: 'auto',
+          overflow: contentOverflow,
           minHeight: '0'
         }}
       >

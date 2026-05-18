@@ -46,4 +46,20 @@ export const env = {
     process.env.DOMAIN5_SUPABASE_ANON_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_SUPPORT_INTEL_ANON_KEY ||
     "",
+  inventoryServiceUrl:
+    process.env.INVENTORY_SERVICE_URL ||
+    process.env.NEXT_PUBLIC_INVENTORY_SERVICE_URL ||
+    "http://localhost:4004",
+  productCatalogServiceUrl:
+    process.env.PRODUCT_CATALOG_SERVICE_URL ||
+    process.env.NEXT_PUBLIC_PRODUCT_CATALOG_SERVICE_URL ||
+    "http://localhost:4003",
+  procurementServiceUrl:
+    process.env.PROCUREMENT_SERVICE_URL ||
+    process.env.NEXT_PUBLIC_PROCUREMENT_SERVICE_URL ||
+    "http://localhost:4002",
+  distributionServiceUrl:
+    process.env.DISTRIBUTION_SERVICE_URL ||
+    process.env.NEXT_PUBLIC_DISTRIBUTION_SERVICE_URL ||
+    "http://localhost:4006",
 };

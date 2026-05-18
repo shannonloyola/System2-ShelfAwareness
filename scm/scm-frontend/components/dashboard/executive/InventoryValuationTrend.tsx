@@ -1,63 +1,34 @@
 "use client";
 
-import { useMemo } from 'react';
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-  Dot
-} from 'recharts';
-import { useDashboardStore } from '@/store/dashboardStore';
-
-// Generate 90 days of mock data
-const generateMockData = () => {
-  const data = [];
-  const now = new Date();
-  let currentValue = 12000000;
-  
-  for (let i = 89; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    
-    // Create an anomaly on day 45
-    if (i === 45) {
-      currentValue = 9000000; // Big drop
-    } else {
-      currentValue = currentValue + (Math.random() * 500000 - 200000); // Random walk with upward trend
-    }
-    
-    data.push({
-      date: d.toISOString().split('T')[0],
-      value: currentValue,
-      category: 'total'
-    });
-  }
-  return data;
-};
+import { useMemo } from "react";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { useDashboardStore } from "@/store/dashboardStore";
+import { EmptyDashboardState, useDashboardData } from "../DashboardDataContext";
 
 const formatToMillions = (value: number) => {
   if (value >= 1000000) {
-    return `₱${(value / 1000000).toFixed(1)}M`;
+    return `PHP ${(value / 1000000).toFixed(1)}M`;
   }
-  return `₱${value.toLocaleString()}`;
+  return `PHP ${value.toLocaleString()}`;
 };
+
+const formatDateLabel = (value: string) =>
+  new Date(value).toLocaleDateString("en-PH", { month: "short", day: "numeric" });
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     const dataPoint = payload[0].payload;
     return (
-      <div className="p-3 border rounded shadow-lg" style={{ backgroundColor: '#1A3A5C', borderColor: 'var(--accent-teal)' }}>
-        <p className="text-[11px] mb-1" style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-label)' }}>{label}</p>
-        <p className="text-[14px] font-bold" style={{ color: '#FFFFFF', fontFamily: 'var(--font-data)' }}>
-          ₱{dataPoint.value.toLocaleString('en-PH', { maximumFractionDigits: 0 })}
+      <div className="rounded border p-3 shadow-lg" style={{ backgroundColor: "#1A3A5C", borderColor: "var(--accent-teal)" }}>
+        <p className="mb-1 text-[11px]" style={{ color: "var(--text-secondary)", fontFamily: "var(--font-label)" }}>
+          {formatDateLabel(label)}
+        </p>
+        <p className="text-[14px] font-bold" style={{ color: "#FFFFFF", fontFamily: "var(--font-data)" }}>
+          {new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 0 }).format(dataPoint.value)}
         </p>
         {dataPoint.isAnomaly && (
-          <p className="text-[11px] font-bold mt-1" style={{ color: 'var(--accent-red)', fontFamily: 'var(--font-label)' }}>
-            ⚠ Anomaly Detected
+          <p className="mt-1 text-[11px] font-bold" style={{ color: "var(--accent-amber)", fontFamily: "var(--font-label)" }}>
+            Review variance
           </p>
         )}
       </div>
@@ -66,82 +37,80 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-const CustomDot = (props: any) => {
-  const { cx, cy, payload } = props;
-  if (payload.isAnomaly) {
-    return (
-      <circle cx={cx} cy={cy} r={4} fill="var(--accent-red)" stroke="none" />
-    );
-  }
-  return null;
-};
-
 export default function InventoryValuationTrend() {
   const setFilter = useDashboardStore((state) => state.setFilter);
   const dateRange = useDashboardStore((state) => state.dateRange);
+  const { data, isLoading } = useDashboardData();
 
   const processedData = useMemo(() => {
-    let data = generateMockData();
-    
-    if (dateRange === '7D') data = data.slice(-7);
-    else if (dateRange === '30D') data = data.slice(-30);
-    
-    // Compute Z-score
-    const values = data.map(d => d.value);
-    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-    const stdDev = Math.sqrt(values.reduce((sq, n) => sq + Math.pow(n - mean, 2), 0) / values.length);
-    
-    return data.map(d => ({
-      ...d,
-      zScore: Math.abs((d.value - mean) / stdDev),
-      isAnomaly: Math.abs((d.value - mean) / stdDev) > 2.0
+    let chartData = data?.executive?.inventoryValuationTrend || [];
+
+    if (dateRange === "7D") chartData = chartData.slice(-7);
+    else if (dateRange === "30D") chartData = chartData.slice(-30);
+
+    const values = chartData.map((item) => item.value);
+    if (values.length === 0) return [];
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const stdDev = Math.sqrt(values.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) / values.length);
+
+    return chartData.map((item) => ({
+      ...item,
+      isAnomaly: stdDev > 0 && Math.abs((item.value - mean) / stdDev) > 2.0,
     }));
-  }, [dateRange]);
+  }, [data, dateRange]);
+
+  if (!processedData.length) {
+    return <EmptyDashboardState message={isLoading ? "Loading backend valuation data..." : "No backend valuation trend available."} />;
+  }
 
   return (
     <ResponsiveContainer width="100%" height="100%">
       <AreaChart
         data={processedData}
-        margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-        onClick={(e) => {
-          if (e && e.activePayload) {
-            // Setting filter by date as an example
-            setFilter('status', e.activePayload[0].payload.date);
+        margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+        onClick={(event) => {
+          if (event?.activePayload) {
+            setFilter("status", event.activePayload[0].payload.date);
           }
         }}
       >
         <defs>
           <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="var(--accent-teal)" stopOpacity={0.8}/>
-            <stop offset="95%" stopColor="var(--accent-teal)" stopOpacity={0}/>
+            <stop offset="5%" stopColor="var(--accent-teal)" stopOpacity={0.75} />
+            <stop offset="95%" stopColor="var(--accent-teal)" stopOpacity={0} />
           </linearGradient>
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} />
-        <XAxis 
-          dataKey="date" 
-          tickFormatter={(val, i) => i % 14 === 0 ? val : ''} 
-          tick={{ fontSize: 10, fill: 'var(--text-secondary)', fontFamily: 'var(--font-label)' }}
+        <XAxis
+          dataKey="date"
+          tickFormatter={(value, index) =>
+            index % Math.max(1, Math.floor(processedData.length / 4)) === 0 ? formatDateLabel(value) : ""
+          }
+          tick={{ fontSize: 9, fill: "var(--text-secondary)", fontFamily: "var(--font-label)" }}
           tickLine={false}
-          axisLine={{ stroke: 'var(--border-subtle)' }}
+          axisLine={{ stroke: "var(--border-subtle)" }}
+          minTickGap={24}
         />
-        <YAxis 
+        <YAxis
           tickFormatter={formatToMillions}
-          tick={{ fontSize: 10, fill: 'var(--text-secondary)', fontFamily: 'var(--font-label)' }}
+          tick={{ fontSize: 9, fill: "var(--text-secondary)", fontFamily: "var(--font-label)" }}
           tickLine={false}
           axisLine={false}
-          width={60}
+          width={52}
         />
         <Tooltip content={<CustomTooltip />} />
-        <Area 
-          type="monotone" 
-          dataKey="value" 
-          stroke="var(--accent-teal)" 
+        <Area
+          type="monotone"
+          dataKey="value"
+          stroke="var(--accent-teal)"
           strokeWidth={2}
-          fillOpacity={1} 
-          fill="url(#colorValue)" 
+          fillOpacity={1}
+          fill="url(#colorValue)"
           animationDuration={1200}
-          activeDot={{ r: 6, fill: 'var(--accent-teal)', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
-          dot={<CustomDot />}
+          activeDot={{ r: 5, fill: "var(--accent-teal)", stroke: "var(--bg-surface)", strokeWidth: 2 }}
+          dot={(props: any) =>
+            props.payload?.isAnomaly ? <circle cx={props.cx} cy={props.cy} r={4} fill="var(--accent-amber)" stroke="none" /> : null
+          }
         />
       </AreaChart>
     </ResponsiveContainer>
