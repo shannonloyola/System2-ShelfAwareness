@@ -1,9 +1,9 @@
-const defaultGatewayBaseUrl = "http://localhost:3001/api";
+const defaultGatewayBaseUrl = "http://localhost:3021/api";
 
 export const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  process.env.VITE_API_BASE_URL ??
-  process.env.REACT_APP_API_BASE_URL ??
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_API_BASE_URL ??
+  process.env.VITE_SCM_FRONTEND_API_BASE_URL ??
+  process.env.REACT_APP_SCM_FRONTEND_API_BASE_URL ??
   defaultGatewayBaseUrl;
 
 export function buildGatewayUrl(path: string) {

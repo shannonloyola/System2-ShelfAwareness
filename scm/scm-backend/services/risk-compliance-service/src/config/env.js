@@ -32,23 +32,23 @@ const parseBoolean = (value, fallback) => {
 
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
-  port: Number(process.env.PORT || 4010),
+  port: Number(process.env.SCM_RISK_COMPLIANCE_PORT || 4010),
   databaseUrl:
-    process.env.SUPABASE_QUALITY_DATABASE_URL ||
-    process.env.DOMAIN4_DATABASE_URL ||
+    process.env.SCM_RISK_COMPLIANCE_SUPABASE_QUALITY_DATABASE_URL ||
+    process.env.SCM_RISK_COMPLIANCE_DOMAIN4_DATABASE_URL ||
     "",
-  dbSsl: parseBoolean(process.env.DB_SSL, true),
+  dbSsl: parseBoolean(process.env.SCM_RISK_COMPLIANCE_DB_SSL, true),
   supabaseUrl:
-    process.env.DOMAIN4_SUPABASE_URL ||
+    process.env.SCM_RISK_COMPLIANCE_DOMAIN4_SUPABASE_URL ||
     "",
   supabaseAnonKey:
-    process.env.DOMAIN4_SUPABASE_ANON_KEY ||
+    process.env.SCM_RISK_COMPLIANCE_DOMAIN4_SUPABASE_ANON_KEY ||
     "",
   scmSupabaseUrl:
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_URL ||
+    process.env.NEXT_PUBLIC_SCM_RISK_COMPLIANCE_SUPABASE_SUPPLY_CHAIN_URL ||
     "",
   scmSupabaseAnonKey:
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SCM_RISK_COMPLIANCE_SUPABASE_SUPPLY_CHAIN_ANON_KEY ||
     "",
-  cronTimezone: process.env.CRON_TIMEZONE || "Asia/Manila",
+  cronTimezone: process.env.SCM_RISK_COMPLIANCE_CRON_TIMEZONE || "Asia/Manila",
 };

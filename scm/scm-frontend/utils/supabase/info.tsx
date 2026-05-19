@@ -16,7 +16,7 @@ const FALLBACKS = {
   supportIntelUrl: "https://gxeqtthumaujxjbnrsqd.supabase.co",
   supportIntelAnonKey:
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4ZXF0dGh1bWF1anhqYm5yc3FkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0OTcyMTQsImV4cCI6MjA5NDA3MzIxNH0.UhDc9kQ_U9Nfb-Jcc3MMNMkHnCBVkdf8jY6-x4cNg7c",
-  authUserAccessServiceUrl: "http://localhost:4014",
+  authUserAccessServiceUrl: "http://localhost:3026",
 } as const;
 
 const trimValue = (value: string | undefined) =>
@@ -34,47 +34,47 @@ const getProjectId = (url: string) => {
 };
 
 export const identityUrl = readUrl(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_SUPABASE_URL,
   FALLBACKS.identityUrl,
 );
 export const publicAnonKey =
-  trimValue(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) ||
+  trimValue(process.env.NEXT_PUBLIC_SCM_FRONTEND_SUPABASE_ANON_KEY) ||
   FALLBACKS.identityAnonKey;
 
 export const scmSupabaseUrl = readUrl(
-  process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_URL,
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_SUPABASE_SUPPLY_CHAIN_URL,
   FALLBACKS.scmUrl,
 );
 export const scmPublicAnonKey =
-  trimValue(process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_ANON_KEY) ||
+  trimValue(process.env.NEXT_PUBLIC_SCM_FRONTEND_SUPABASE_SUPPLY_CHAIN_ANON_KEY) ||
   FALLBACKS.scmAnonKey;
 
 export const fulfillmentSupabaseUrl = readUrl(
-  process.env.NEXT_PUBLIC_SUPABASE_FULFILLMENT_URL,
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_SUPABASE_FULFILLMENT_URL,
   FALLBACKS.fulfillmentUrl,
 );
 export const fulfillmentPublicAnonKey =
-  trimValue(process.env.NEXT_PUBLIC_SUPABASE_FULFILLMENT_ANON_KEY) ||
+  trimValue(process.env.NEXT_PUBLIC_SCM_FRONTEND_SUPABASE_FULFILLMENT_ANON_KEY) ||
   FALLBACKS.fulfillmentAnonKey;
 
 export const qualitySupabaseUrl = readUrl(
-  process.env.NEXT_PUBLIC_SUPABASE_QUALITY_URL,
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_SUPABASE_QUALITY_URL,
   FALLBACKS.qualityUrl,
 );
 export const qualityPublicAnonKey =
-  trimValue(process.env.NEXT_PUBLIC_SUPABASE_QUALITY_ANON_KEY) ||
+  trimValue(process.env.NEXT_PUBLIC_SCM_FRONTEND_SUPABASE_QUALITY_ANON_KEY) ||
   FALLBACKS.qualityAnonKey;
 
 export const supportIntelSupabaseUrl = readUrl(
-  process.env.NEXT_PUBLIC_SUPABASE_SUPPORT_INTEL_URL,
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_SUPABASE_SUPPORT_INTEL_URL,
   FALLBACKS.supportIntelUrl,
 );
 export const supportIntelPublicAnonKey =
-  trimValue(process.env.NEXT_PUBLIC_SUPABASE_SUPPORT_INTEL_ANON_KEY) ||
+  trimValue(process.env.NEXT_PUBLIC_SCM_FRONTEND_SUPABASE_SUPPORT_INTEL_ANON_KEY) ||
   FALLBACKS.supportIntelAnonKey;
 
 export const authUserAccessServiceUrl = readUrl(
-  process.env.NEXT_PUBLIC_AUTH_USER_ACCESS_SERVICE_URL,
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_AUTH_USER_ACCESS_SERVICE_URL,
   FALLBACKS.authUserAccessServiceUrl,
 );
 

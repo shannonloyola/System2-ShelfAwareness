@@ -32,18 +32,18 @@ const parseBoolean = (value, fallback) => {
 
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
-  port: Number(process.env.PORT || 4011),
+  port: Number(process.env.SCM_NOTIFICATION_PORT || 3023),
   databaseUrl:
-    process.env.SUPABASE_SUPPORT_INTEL_DATABASE_URL ||
-    process.env.DOMAIN5_DATABASE_URL ||
+    process.env.SCM_NOTIFICATION_SUPABASE_SUPPORT_INTEL_DATABASE_URL ||
+    process.env.SCM_NOTIFICATION_DOMAIN5_DATABASE_URL ||
     "",
-  dbSsl: parseBoolean(process.env.DB_SSL, true),
+  dbSsl: parseBoolean(process.env.SCM_NOTIFICATION_DB_SSL, true),
   supabaseUrl:
-    process.env.DOMAIN5_SUPABASE_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPORT_INTEL_URL ||
+    process.env.SCM_NOTIFICATION_DOMAIN5_SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SCM_NOTIFICATION_SUPABASE_SUPPORT_INTEL_URL ||
     "",
   supabaseAnonKey:
-    process.env.DOMAIN5_SUPABASE_ANON_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPORT_INTEL_ANON_KEY ||
+    process.env.SCM_NOTIFICATION_DOMAIN5_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SCM_NOTIFICATION_SUPABASE_SUPPORT_INTEL_ANON_KEY ||
     "",
 };

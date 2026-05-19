@@ -32,33 +32,33 @@ const parseBoolean = (value, fallback) => {
 
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
-  port: Number(process.env.PORT || 4007),
+  port: Number(process.env.SCM_DISCREPANCY_QC_PORT || 4007),
   databaseUrl:
-    process.env.SUPABASE_QUALITY_DATABASE_URL ||
-    process.env.DOMAIN4_DATABASE_URL ||
+    process.env.SCM_DISCREPANCY_QC_SUPABASE_QUALITY_DATABASE_URL ||
+    process.env.SCM_DISCREPANCY_QC_DOMAIN4_DATABASE_URL ||
     "",
-  dbSsl: parseBoolean(process.env.DB_SSL, true),
+  dbSsl: parseBoolean(process.env.SCM_DISCREPANCY_QC_DB_SSL, true),
   // Fulfillment Project (Consolidated)
   supabaseUrl: (
-    process.env.SUPABASE_FULFILLMENT_URL ||
-    process.env.DOMAIN3_SUPABASE_URL ||
-    process.env.DOMAIN4_SUPABASE_URL ||
+    process.env.SCM_DISCREPANCY_QC_SUPABASE_FULFILLMENT_URL ||
+    process.env.SCM_DISCREPANCY_QC_DOMAIN3_SUPABASE_URL ||
+    process.env.SCM_DISCREPANCY_QC_DOMAIN4_SUPABASE_URL ||
     ""
   ).trim(),
   supabaseAnonKey: (
-    process.env.SUPABASE_FULFILLMENT_ANON_KEY ||
-    process.env.DOMAIN3_SUPABASE_ANON_KEY ||
-    process.env.DOMAIN4_SUPABASE_ANON_KEY ||
+    process.env.SCM_DISCREPANCY_QC_SUPABASE_FULFILLMENT_ANON_KEY ||
+    process.env.SCM_DISCREPANCY_QC_DOMAIN3_SUPABASE_ANON_KEY ||
+    process.env.SCM_DISCREPANCY_QC_DOMAIN4_SUPABASE_ANON_KEY ||
     ""
   ).trim(),
 
   // Supply‑Chain Project (Operational data)
   scmSupabaseUrl: (
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_URL ||
+    process.env.NEXT_PUBLIC_SCM_DISCREPANCY_QC_SUPABASE_SUPPLY_CHAIN_URL ||
     "https://wbktqkjdsqrvqxxtitsg.supabase.co"
   ).trim(),
   scmSupabaseAnonKey: (
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SCM_DISCREPANCY_QC_SUPABASE_SUPPLY_CHAIN_ANON_KEY ||
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6India3Rxa2pkc3FydnF4eHRpdHNnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0NzQ2MTIsImV4cCI6MjA5NDA1MDYxMn0.rWnlQ2PZVAWnK5kao1GPgHHexqCquzD9XE711MWOfck"
   ).trim(),
 };

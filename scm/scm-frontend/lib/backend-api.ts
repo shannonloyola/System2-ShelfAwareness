@@ -6,9 +6,9 @@ export interface BackendHealthResponse {
 }
 
 const backendBaseUrl =
-  process.env.NEXT_PUBLIC_BACKEND_API_URL ??
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  "http://localhost:3001";
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_BACKEND_API_URL ??
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_API_BASE_URL ??
+  "http://localhost:3021";
 
 // Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
 const getBaseUrl = () => {
@@ -17,7 +17,7 @@ const getBaseUrl = () => {
     backendBaseUrl.trim() === "" ||
     !backendBaseUrl.startsWith("http")
   ) {
-    return "http://localhost:3001";
+    return "http://localhost:3021";
   }
   return backendBaseUrl;
 };

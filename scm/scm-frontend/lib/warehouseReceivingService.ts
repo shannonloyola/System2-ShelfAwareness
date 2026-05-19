@@ -10,8 +10,8 @@ export type PostGrnResult = {
 };
 
 const warehouseReceivingServiceBaseUrl =
-  process.env.NEXT_PUBLIC_WAREHOUSE_RECEIVING_SERVICE_URL ||
-  process.env.VITE_WAREHOUSE_RECEIVING_SERVICE_URL ||
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_WAREHOUSE_RECEIVING_SERVICE_URL ||
+  process.env.VITE_SCM_FRONTEND_WAREHOUSE_RECEIVING_SERVICE_URL ||
   "http://localhost:4005";
 
 // Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port

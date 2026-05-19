@@ -46,9 +46,9 @@ export type CreateSupplierPayload = {
 };
 
 const supplierServiceBaseUrl =
-  process.env.NEXT_PUBLIC_SUPPLIER_SERVICE_URL ||
-  process.env.VITE_SUPPLIER_SERVICE_URL ||
-  "http://localhost:4001";
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_SUPPLIER_SERVICE_URL ||
+  process.env.VITE_SCM_FRONTEND_SUPPLIER_SERVICE_URL ||
+  "http://localhost:3022";
 
 // Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
 const getBaseUrl = () => {
@@ -57,7 +57,7 @@ const getBaseUrl = () => {
     supplierServiceBaseUrl.trim() === "" ||
     !supplierServiceBaseUrl.startsWith("http")
   ) {
-    return "http://localhost:4001";
+    return "http://localhost:3022";
   }
   return supplierServiceBaseUrl;
 };

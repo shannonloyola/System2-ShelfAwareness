@@ -21,8 +21,8 @@ export type BackorderAlertRecord = {
 };
 
 const inventoryServiceBaseUrl =
-  process.env.NEXT_PUBLIC_INVENTORY_SERVICE_URL ||
-  process.env.VITE_INVENTORY_SERVICE_URL ||
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_INVENTORY_SERVICE_URL ||
+  process.env.VITE_SCM_FRONTEND_INVENTORY_SERVICE_URL ||
   "http://localhost:4004";
 
 // Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port

@@ -166,9 +166,9 @@ export type DashboardAnalyticsData = {
 };
 
 const reportingAnalyticsServiceBaseUrl =
-  process.env.NEXT_PUBLIC_REPORTING_ANALYTICS_SERVICE_URL ||
-  process.env.VITE_REPORTING_ANALYTICS_SERVICE_URL ||
-  "http://localhost:4012";
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_REPORTING_ANALYTICS_SERVICE_URL ||
+  process.env.VITE_SCM_FRONTEND_REPORTING_ANALYTICS_SERVICE_URL ||
+  "http://localhost:3024";
 
 const parseError = async (response: Response) => {
   const text = await response.text();

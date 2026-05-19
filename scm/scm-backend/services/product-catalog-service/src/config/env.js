@@ -32,16 +32,16 @@ const parseBoolean = (value, fallback) => {
 
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
-  port: Number(process.env.PORT || 4003),
+  port: Number(process.env.SCM_PRODUCT_CATALOG_PORT || 4003),
   databaseUrl:
-    process.env.SUPABASE_SUPPLY_CHAIN_DATABASE_URL ||
-    process.env.SCM_DATABASE_URL ||
+    process.env.SCM_PRODUCT_CATALOG_SUPABASE_SUPPLY_CHAIN_DATABASE_URL ||
+    process.env.SCM_PRODUCT_CATALOG_SCM_DATABASE_URL ||
     "",
-  dbSsl: parseBoolean(process.env.DB_SSL, true),
+  dbSsl: parseBoolean(process.env.SCM_PRODUCT_CATALOG_DB_SSL, true),
   supabaseUrl:
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_URL ||
+    process.env.NEXT_PUBLIC_SCM_PRODUCT_CATALOG_SUPABASE_SUPPLY_CHAIN_URL ||
     "",
   supabaseAnonKey:
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SCM_PRODUCT_CATALOG_SUPABASE_SUPPLY_CHAIN_ANON_KEY ||
     "",
 };

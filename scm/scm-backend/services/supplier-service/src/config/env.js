@@ -32,41 +32,41 @@ const parseBoolean = (value, fallback) => {
 
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
-  port: Number(process.env.PORT || 4001),
+  port: Number(process.env.SCM_SUPPLIER_PORT || 3022),
   databaseUrl:
-    process.env.SUPABASE_SUPPLY_CHAIN_DATABASE_URL ||
-    process.env.SCM_DATABASE_URL ||
+    process.env.SCM_SUPPLIER_SUPABASE_SUPPLY_CHAIN_DATABASE_URL ||
+    process.env.SCM_SUPPLIER_SCM_DATABASE_URL ||
     "",
-  dbSsl: parseBoolean(process.env.DB_SSL, true),
+  dbSsl: parseBoolean(process.env.SCM_SUPPLIER_DB_SSL, true),
   supabaseUrl: (
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_URL ||
+    process.env.NEXT_PUBLIC_SCM_SUPPLIER_SUPABASE_SUPPLY_CHAIN_URL ||
     ""
   ).trim(),
   supabaseAnonKey: (
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SCM_SUPPLIER_SUPABASE_SUPPLY_CHAIN_ANON_KEY ||
     ""
   ).trim(),
   supabaseServiceRoleKey: (
-    process.env.SUPABASE_SUPPLY_CHAIN_SERVICE_ROLE_KEY ||
-    process.env.SCM_SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SCM_SUPPLIER_SUPABASE_SUPPLY_CHAIN_SERVICE_ROLE_KEY ||
+    process.env.SCM_SUPPLIER_SCM_SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SCM_SUPPLIER_SUPABASE_SERVICE_ROLE_KEY ||
     ""
   ).trim(),
   scmSupabaseUrl: (
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_URL ||
+    process.env.NEXT_PUBLIC_SCM_SUPPLIER_SUPABASE_SUPPLY_CHAIN_URL ||
     "https://wbktqkjdsqrvqxxtitsg.supabase.co"
   ).trim(),
   scmSupabaseAnonKey: (
-    process.env.NEXT_PUBLIC_SUPABASE_SUPPLY_CHAIN_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SCM_SUPPLIER_SUPABASE_SUPPLY_CHAIN_ANON_KEY ||
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6India3Rxa2pkc3FydnF4eHRpdHNnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0NzQ2MTIsImV4cCI6MjA5NDA1MDYxMn0.rWnlQ2PZVAWnK5kao1GPgHHexqCquzD9XE711MWOfck"
   ).trim(),
   qualitySupabaseUrl: (
-    process.env.DOMAIN4_SUPABASE_URL ||
+    process.env.SCM_SUPPLIER_DOMAIN4_SUPABASE_URL ||
     ""
   ).trim(),
   qualitySupabaseAnonKey: (
-    process.env.DOMAIN4_SUPABASE_ANON_KEY ||
+    process.env.SCM_SUPPLIER_DOMAIN4_SUPABASE_ANON_KEY ||
     ""
   ).trim(),
-  cronTimezone: process.env.CRON_TIMEZONE || "Asia/Manila",
+  cronTimezone: process.env.SCM_SUPPLIER_CRON_TIMEZONE || "Asia/Manila",
 };

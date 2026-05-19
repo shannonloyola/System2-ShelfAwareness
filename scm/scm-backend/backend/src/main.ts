@@ -13,7 +13,7 @@ async function bootstrap() {
     credentials: true,
   });
   app.setGlobalPrefix("api", { exclude: ["health", "api/health"] });
-  await app.listen(process.env.PORT ?? 3001);
+  await app.listen(process.env.SCM_GATEWAY_PORT ?? 3001);
 }
 
 void bootstrap();

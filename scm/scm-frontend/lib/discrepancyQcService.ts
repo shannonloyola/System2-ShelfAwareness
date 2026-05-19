@@ -18,8 +18,8 @@ export type ShipmentDiscrepancyRecord = {
 };
 
 const discrepancyQcServiceBaseUrl =
-  process.env.NEXT_PUBLIC_DISCREPANCY_QC_SERVICE_URL ||
-  process.env.VITE_DISCREPANCY_QC_SERVICE_URL ||
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_DISCREPANCY_QC_SERVICE_URL ||
+  process.env.VITE_SCM_FRONTEND_DISCREPANCY_QC_SERVICE_URL ||
   "http://localhost:4007";
 
 // Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port

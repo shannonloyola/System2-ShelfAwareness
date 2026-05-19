@@ -70,8 +70,8 @@ type PurchaseOrderPayload = {
 };
 
 const procurementServiceBaseUrl =
-  process.env.NEXT_PUBLIC_PROCUREMENT_SERVICE_URL ||
-  process.env.VITE_PROCUREMENT_SERVICE_URL ||
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_PROCUREMENT_SERVICE_URL ||
+  process.env.VITE_SCM_FRONTEND_PROCUREMENT_SERVICE_URL ||
   "http://localhost:4002";
 
 // Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port

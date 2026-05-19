@@ -118,7 +118,7 @@ export default function LiveStockMovementFeed() {
           
           return (
             <div 
-              key={evt.id}
+              key={`${evt.id}-${idx}`}
               onClick={() => setGlobalFilter('sku', activeSku === evt.sku ? null : evt.sku)}
               className="flex items-center gap-3 p-2 rounded border cursor-pointer hover:scale-[1.01] transition-all overflow-hidden relative shrink-0"
               style={{

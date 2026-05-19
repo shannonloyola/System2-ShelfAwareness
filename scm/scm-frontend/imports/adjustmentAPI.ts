@@ -27,8 +27,8 @@ export interface StockAdjustment {
 }
 
 const stockAdjustmentServiceBaseUrl =
-  process.env.NEXT_PUBLIC_STOCK_ADJUSTMENT_SERVICE_URL ||
-  process.env.VITE_STOCK_ADJUSTMENT_SERVICE_URL ||
+  process.env.NEXT_PUBLIC_SCM_FRONTEND_STOCK_ADJUSTMENT_SERVICE_URL ||
+  process.env.VITE_SCM_FRONTEND_STOCK_ADJUSTMENT_SERVICE_URL ||
   "http://localhost:4008";
 
 const parseError = async (response: Response) => {
