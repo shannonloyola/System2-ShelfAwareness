@@ -6,6 +6,7 @@ import {
   createPurchaseOrderRest,
   deletePurchaseOrderItemRest,
   deletePurchaseOrderRest,
+  getProductAssociationRulesRest,
   getPurchaseOrderByIdRest,
   getCurrentMonthlyBudgetRest,
   listFreightQuotesRest,
@@ -30,6 +31,7 @@ const poSelect = `
   supplier_name,
   status,
   created_at,
+  updated_at,
   paid_at,
   expected_delivery_date,
   preferred_communication,
@@ -95,6 +97,7 @@ const mapPO = (row) => ({
   supplier_name: row.supplier_name,
   status: row.status,
   created_at: row.created_at,
+  updated_at: row.updated_at ?? row.created_at,
   paid_at: row.paid_at,
   expected_delivery_date: row.expected_delivery_date,
   preferred_communication: row.preferred_communication,
@@ -135,6 +138,112 @@ const mapPOItem = (row) => ({
   item_name: row.item_name,
   quantity: row.quantity,
 });
+
+const mapProductAssociation = (row) => ({
+  product_name: row.product_name,
+  support: Number(row.support),
+  confidence: Number(row.confidence),
+  co_occurrences: Number(row.co_occurrences),
+});
+
+const normalizeAssociationKey = (value) =>
+  String(value ?? "").trim().toLowerCase();
+
+const computeAssociationRulesFromRows = ({
+  productName,
+  purchaseOrders,
+  itemRowsByPoId,
+  minSupport,
+  minConfidence,
+  maxResults,
+}) => {
+  const targetKey = normalizeAssociationKey(productName);
+  const validStatuses = new Set(["draft", "cancelled", "rejected"]);
+
+  const baskets = purchaseOrders
+    .filter((po) => !validStatuses.has(normalizeAssociationKey(po.status)))
+    .map((po) => {
+      const items = itemRowsByPoId.get(po.po_id) ?? [];
+      const deduped = new Map();
+
+      items.forEach((item) => {
+        const itemName = String(item.item_name ?? "").trim();
+        if (!itemName) return;
+        const key = normalizeAssociationKey(itemName);
+        if (!deduped.has(key)) {
+          deduped.set(key, itemName);
+        }
+      });
+
+      return deduped;
+    })
+    .filter((basket) => basket.size > 0);
+
+  const totalPOs = baskets.length;
+  const targetBaskets = baskets.filter((basket) => basket.has(targetKey));
+  const targetOccurrences = targetBaskets.length;
+
+  if (totalPOs === 0 || targetOccurrences === 0) {
+    return {
+      product: String(productName ?? "").trim(),
+      associations: [],
+      totalPOs,
+      targetOccurrences,
+      thresholds: {
+        minSupport,
+        minConfidence,
+      },
+    };
+  }
+
+  const coOccurrenceCounts = new Map();
+
+  targetBaskets.forEach((basket) => {
+    basket.forEach((label, key) => {
+      if (key === targetKey) return;
+      const current = coOccurrenceCounts.get(key) ?? {
+        product_name: label,
+        co_occurrences: 0,
+      };
+      current.co_occurrences += 1;
+      coOccurrenceCounts.set(key, current);
+    });
+  });
+
+  const associations = Array.from(coOccurrenceCounts.values())
+    .map((entry) => ({
+      product_name: entry.product_name,
+      support: Number((entry.co_occurrences / totalPOs).toFixed(4)),
+      confidence: Number(
+        (entry.co_occurrences / targetOccurrences).toFixed(4),
+      ),
+      co_occurrences: entry.co_occurrences,
+    }))
+    .filter(
+      (entry) =>
+        entry.support >= minSupport &&
+        entry.confidence >= minConfidence,
+    )
+    .sort(
+      (left, right) =>
+        right.confidence - left.confidence ||
+        right.support - left.support ||
+        right.co_occurrences - left.co_occurrences ||
+        left.product_name.localeCompare(right.product_name),
+    )
+    .slice(0, maxResults);
+
+  return {
+    product: String(productName ?? "").trim(),
+    associations,
+    totalPOs,
+    targetOccurrences,
+    thresholds: {
+      minSupport,
+      minConfidence,
+    },
+  };
+};
 
 const mapPOStatusHistory = (row) => ({
   history_id: row.history_id,
@@ -248,6 +357,275 @@ export const listPurchaseOrderItems = async (poId) => {
   );
 
   return result.rows.map(mapPOItem);
+};
+
+export const getProductAssociationRules = async ({
+  productName,
+  minSupport = 0.05,
+  minConfidence = 0.3,
+  maxResults = 5,
+}) => {
+  const normalizedProductName = String(productName ?? "").trim();
+  if (!normalizedProductName) {
+    throw createHttpError(400, "product_name is required");
+  }
+
+  const statsQuery = `
+    WITH filtered_orders AS (
+      SELECT po_id
+      FROM purchase_orders
+      WHERE COALESCE(LOWER(TRIM(status)), '') NOT IN ('draft', 'cancelled', 'rejected')
+    ),
+    distinct_items AS (
+      SELECT DISTINCT
+        poi.po_id,
+        LOWER(TRIM(poi.item_name)) AS item_key
+      FROM purchase_order_items poi
+      INNER JOIN filtered_orders fo ON fo.po_id = poi.po_id
+      WHERE COALESCE(TRIM(poi.item_name), '') <> ''
+    )
+    SELECT
+      (SELECT COUNT(DISTINCT po_id)::int FROM distinct_items) AS total_pos,
+      (
+        SELECT COUNT(DISTINCT po_id)::int
+        FROM distinct_items
+        WHERE item_key = LOWER(TRIM($1))
+      ) AS target_occurrences
+  `;
+
+  const associationQuery = `
+    WITH filtered_orders AS (
+      SELECT po_id
+      FROM purchase_orders
+      WHERE COALESCE(LOWER(TRIM(status)), '') NOT IN ('draft', 'cancelled', 'rejected')
+    ),
+    distinct_items AS (
+      SELECT DISTINCT
+        poi.po_id,
+        LOWER(TRIM(poi.item_name)) AS item_key,
+        TRIM(poi.item_name) AS product_name
+      FROM purchase_order_items poi
+      INNER JOIN filtered_orders fo ON fo.po_id = poi.po_id
+      WHERE COALESCE(TRIM(poi.item_name), '') <> ''
+    ),
+    basket_totals AS (
+      SELECT COUNT(DISTINCT po_id)::numeric AS total_pos
+      FROM distinct_items
+    ),
+    target_baskets AS (
+      SELECT DISTINCT po_id
+      FROM distinct_items
+      WHERE item_key = LOWER(TRIM($1))
+    ),
+    target_totals AS (
+      SELECT COUNT(*)::numeric AS target_occurrences
+      FROM target_baskets
+    ),
+    co_occurrences AS (
+      SELECT
+        di.item_key,
+        MIN(di.product_name) AS product_name,
+        COUNT(*)::int AS co_occurrences
+      FROM distinct_items di
+      INNER JOIN target_baskets tb ON tb.po_id = di.po_id
+      WHERE di.item_key <> LOWER(TRIM($1))
+      GROUP BY di.item_key
+    )
+    SELECT
+      co.product_name,
+      ROUND((co.co_occurrences::numeric / NULLIF(bt.total_pos, 0)), 4) AS support,
+      ROUND((co.co_occurrences::numeric / NULLIF(tt.target_occurrences, 0)), 4) AS confidence,
+      co.co_occurrences
+    FROM co_occurrences co
+    CROSS JOIN basket_totals bt
+    CROSS JOIN target_totals tt
+    WHERE (co.co_occurrences::numeric / NULLIF(bt.total_pos, 0)) >= $2
+      AND (co.co_occurrences::numeric / NULLIF(tt.target_occurrences, 0)) >= $3
+    ORDER BY confidence DESC, support DESC, co.co_occurrences DESC, co.product_name ASC
+    LIMIT $4
+  `;
+
+  let totalPOs = 0;
+  let targetOccurrences = 0;
+  let associationRows = [];
+
+  if (useRestFallback()) {
+    try {
+      const statsRows = await getProductAssociationRulesRest({
+        target_product: normalizedProductName,
+        min_support: 0,
+        min_confidence: 0,
+        max_results: 100,
+      });
+
+      const allRows = Array.isArray(statsRows) ? statsRows : [];
+      totalPOs = Number(allRows[0]?.total_pos ?? 0);
+      targetOccurrences = Number(allRows[0]?.target_occurrences ?? 0);
+      associationRows = allRows.filter((row) => {
+        const support = Number(row.support);
+        const confidence = Number(row.confidence);
+        return support >= minSupport && confidence >= minConfidence;
+      });
+    } catch (error) {
+      const purchaseOrders = await listPurchaseOrders({
+        limit: 500,
+        offset: 0,
+        search: "",
+        status: "",
+      });
+      const itemRowsByPoId = new Map();
+      await Promise.all(
+        purchaseOrders.map(async (po) => {
+          const items = await listPurchaseOrderItems(po.po_id);
+          itemRowsByPoId.set(po.po_id, items);
+        }),
+      );
+
+      return computeAssociationRulesFromRows({
+        productName: normalizedProductName,
+        purchaseOrders,
+        itemRowsByPoId,
+        minSupport,
+        minConfidence,
+        maxResults,
+      });
+    }
+  } else {
+    const pool = getPool();
+    const statsResult = await pool.query(statsQuery, [normalizedProductName]);
+    totalPOs = Number(statsResult.rows[0]?.total_pos ?? 0);
+    targetOccurrences = Number(
+      statsResult.rows[0]?.target_occurrences ?? 0,
+    );
+
+    if (targetOccurrences > 0) {
+      const associationResult = await pool.query(associationQuery, [
+        normalizedProductName,
+        minSupport,
+        minConfidence,
+        maxResults,
+      ]);
+      associationRows = associationResult.rows;
+    }
+  }
+
+  return {
+    product: normalizedProductName,
+    associations: associationRows.map(mapProductAssociation).slice(0, maxResults),
+    totalPOs,
+    targetOccurrences,
+    thresholds: {
+      minSupport,
+      minConfidence,
+    },
+  };
+};
+
+export const getProductAssociationDiagnostics = async ({
+  minCoOccurrences = 1,
+  maxResults = 25,
+}) => {
+  const validStatuses = new Set(["draft", "cancelled", "rejected"]);
+  const purchaseOrders = await listPurchaseOrders({
+    limit: 500,
+    offset: 0,
+    search: "",
+    status: "",
+  });
+
+  const itemRowsByPoId = new Map();
+  await Promise.all(
+    purchaseOrders.map(async (po) => {
+      const items = await listPurchaseOrderItems(po.po_id);
+      itemRowsByPoId.set(po.po_id, items);
+    }),
+  );
+
+  const baskets = purchaseOrders
+    .filter((po) => !validStatuses.has(normalizeAssociationKey(po.status)))
+    .map((po) => {
+      const items = itemRowsByPoId.get(po.po_id) ?? [];
+      const deduped = Array.from(
+        new Map(
+          items
+            .map((item) => {
+              const label = String(item.item_name ?? "").trim();
+              return [normalizeAssociationKey(label), label];
+            })
+            .filter(([key, label]) => key && label),
+        ).entries(),
+      );
+
+      return deduped;
+    })
+    .filter((basket) => basket.length > 1);
+
+  const totalPOs = baskets.length;
+  const itemCounts = new Map();
+  const pairCounts = new Map();
+
+  baskets.forEach((basket) => {
+    basket.forEach(([key]) => {
+      itemCounts.set(key, (itemCounts.get(key) ?? 0) + 1);
+    });
+
+    for (let leftIndex = 0; leftIndex < basket.length; leftIndex += 1) {
+      for (
+        let rightIndex = leftIndex + 1;
+        rightIndex < basket.length;
+        rightIndex += 1
+      ) {
+        const [leftKey, leftLabel] = basket[leftIndex];
+        const [rightKey, rightLabel] = basket[rightIndex];
+        const pairKey = [leftKey, rightKey].sort().join("||");
+        const current = pairCounts.get(pairKey) ?? {
+          product_a: leftLabel,
+          product_b: rightLabel,
+          co_occurrences: 0,
+          left_key: leftKey,
+          right_key: rightKey,
+        };
+        current.co_occurrences += 1;
+        pairCounts.set(pairKey, current);
+      }
+    }
+  });
+
+  const pairs = Array.from(pairCounts.values())
+    .filter((pair) => pair.co_occurrences >= minCoOccurrences)
+    .map((pair) => {
+      const occurrencesA = itemCounts.get(pair.left_key) ?? 0;
+      const occurrencesB = itemCounts.get(pair.right_key) ?? 0;
+      return {
+        product_a: pair.product_a,
+        product_b: pair.product_b,
+        co_occurrences: pair.co_occurrences,
+        support: totalPOs
+          ? Number((pair.co_occurrences / totalPOs).toFixed(4))
+          : 0,
+        confidence_a_to_b: occurrencesA
+          ? Number((pair.co_occurrences / occurrencesA).toFixed(4))
+          : 0,
+        confidence_b_to_a: occurrencesB
+          ? Number((pair.co_occurrences / occurrencesB).toFixed(4))
+          : 0,
+        occurrences_a: occurrencesA,
+        occurrences_b: occurrencesB,
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.co_occurrences - left.co_occurrences ||
+        right.support - left.support ||
+        left.product_a.localeCompare(right.product_a) ||
+        left.product_b.localeCompare(right.product_b),
+    )
+    .slice(0, maxResults);
+
+  return {
+    totalPOs,
+    pairs,
+  };
 };
 
 export const listPurchaseOrderStatusHistory = async (poId) => {

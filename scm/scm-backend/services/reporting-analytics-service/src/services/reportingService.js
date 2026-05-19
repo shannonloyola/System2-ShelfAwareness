@@ -115,6 +115,16 @@ const normalizePurchaseOrder = (row) => ({
   receivedAt: row.received_at || row.paid_at || row.fulfilled_at || row.updated_at,
 });
 
+const CLOSED_PURCHASE_ORDER_STATUSES = new Set([
+  "received",
+  "completed",
+  "closed",
+  "cancelled",
+]);
+
+const isClosedPurchaseOrder = (po) =>
+  CLOSED_PURCHASE_ORDER_STATUSES.has(cleanText(po?.status, "").toLowerCase());
+
 const normalizeOrder = (row) => ({
   id: row.order_id || row.id || row.distribution_order_id,
   status: String(row.status || row.order_status || "").toLowerCase(),
@@ -381,20 +391,23 @@ const buildDashboardPayload = ({
     .sort((a, b) => (a.daysOfCover ?? 999) - (b.daysOfCover ?? 999) || b.value - a.value)
     .slice(0, 10);
 
-  const committed = purchaseOrders
-    .filter((po) => !["received", "completed", "cancelled", "closed"].includes(po.status))
+  const openPurchaseOrders = purchaseOrders.filter((po) => !isClosedPurchaseOrder(po));
+  const committed = openPurchaseOrders
     .reduce((sum, po) => sum + po.totalAmount, 0);
   const hasBudget = Boolean(budget && budget.allocated_amount !== undefined && budget.allocated_amount !== null);
   const allocated = hasBudget ? toNumber(budget?.allocated_amount) : null;
   const spent = hasBudget ? toNumber(budget?.spent_amount) : null;
   const remaining = hasBudget ? Math.max(0, allocated - spent - committed) : null;
-  const inventoryTotal = toNumber(inventoryValue?.total_inventory_value_php) || exposureProducts.reduce((sum, item) => sum + item.exposure, 0);
+  const computedInventoryTotal = exposureProducts.reduce((sum, item) => sum + item.exposure, 0);
+  const inventoryTotal = computedInventoryTotal > 0
+    ? computedInventoryTotal
+    : toNumber(inventoryValue?.total_inventory_value_php);
   const orderLineCount = orders.length;
   const fulfilledOrders = orders.filter((order) => ["fulfilled", "completed", "delivered", "shipped"].includes(order.status)).length;
   const fillRate = orderLineCount > 0 ? (fulfilledOrders / orderLineCount) * 100 : 0;
   const backorderCount = backorders.reduce((sum, item) => sum + (item.count || 1), 0);
   const pendingApprovals = purchaseOrders.filter((po) => po.approvalStatus.includes("pending") || po.status.includes("pending")).length;
-  const pendingTransfers = purchaseOrders.filter((po) => !["received", "completed", "cancelled", "closed"].includes(po.status)).length;
+  const pendingTransfers = openPurchaseOrders.length;
   const receivedPurchaseOrders = purchaseOrders.filter((po) => ["received", "completed", "closed"].includes(po.status));
   const leadTimeSamples = [
     ...suppliers.map((supplier) => supplier.leadTimeDays).filter((days) => days > 0),
@@ -540,7 +553,7 @@ const buildDashboardPayload = ({
           : []),
       ],
       Procurement: [
-        buildKpi({ label: "Open POs", value: String(purchaseOrders.length), trend: [purchaseOrders.length, purchaseOrders.length] }),
+        buildKpi({ label: "Open POs", value: String(openPurchaseOrders.length), trend: [openPurchaseOrders.length, openPurchaseOrders.length] }),
         ...(avgLeadTimeDays !== null
           ? [buildKpi({ label: "Avg Lead Time (Days)", value: avgLeadTimeDays.toFixed(1), trend: [avgLeadTimeDays, avgLeadTimeDays], inverseGood: true })]
           : []),

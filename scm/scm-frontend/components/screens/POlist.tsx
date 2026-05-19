@@ -33,6 +33,7 @@ import {
 } from "../ui/card";
 import { Button } from "../ui/button";
 import { toast } from "sonner";
+import { notifyDashboardDataChanged } from "@/lib/dashboardInvalidation";
 import { supabase, supabaseSCM, supabaseFulfillment } from "@/lib/supabase";
 import { PerItemTracker } from "../PerItemTracker";
 import {
@@ -886,9 +887,11 @@ export function PODetailPage() {
 
       if (shipmentError) {
         console.error("Auto-shipment creation failed:", shipmentError);
+        notifyDashboardDataChanged("procurement:po-approved");
         toast.warning("Purchase order approved, but auto-shipment creation failed. Please check database columns.");
       } else {
         setShipmentTracking(trackingNumber);
+        notifyDashboardDataChanged("procurement:po-approved");
         toast.success(`Purchase order approved and shipment auto-linked! (Tracking: ${trackingNumber})`);
       }
 
@@ -930,6 +933,7 @@ export function PODetailPage() {
 
       setShowRejectModal(false);
       setRejectReason("");
+      notifyDashboardDataChanged("procurement:po-rejected");
       toast.success("Purchase order rejected");
     } catch (error) {
       toast.error("Failed to reject purchase order", {
@@ -955,6 +959,7 @@ export function PODetailPage() {
       });
 
       setEditEtaOpen(false);
+      notifyDashboardDataChanged("procurement:eta-updated");
       toast.success("ETA updated");
 
       setPo((current) =>
@@ -1026,6 +1031,7 @@ export function PODetailPage() {
         carrier_tracking_ref: carrierTrackingDraft || null,
       });
       setTransitDialogOpen(false);
+      notifyDashboardDataChanged("procurement:transit-updated");
       toast.success("Transit status updated");
       await loadDetail();
     } catch (error) {
@@ -1051,6 +1057,7 @@ export function PODetailPage() {
         customs_release_date: customsReleaseDraft || null,
         duties_paid: dutiesPaidDraft,
       });
+      notifyDashboardDataChanged("procurement:customs-updated");
       toast.success("Customs details updated");
       await loadDetail();
     } catch (error) {
@@ -2190,7 +2197,9 @@ export function POList() {
                           {po.po_no}
                         </td>
                         <td className="px-4 py-3 text-[#111827]">
-                          {po.supplier_name}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span>{po.supplier_name}</span>
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">

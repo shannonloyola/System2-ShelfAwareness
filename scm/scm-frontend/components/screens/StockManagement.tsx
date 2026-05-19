@@ -44,6 +44,7 @@ import {
 } from "../ui/dialog";
 import { Label } from "../ui/label";
 import { toast } from "sonner";
+import { notifyDashboardDataChanged } from "@/lib/dashboardInvalidation";
 import {
   Tabs,
   TabsContent,
@@ -548,6 +549,7 @@ export function StockManagement() {
       toast.success("Stock Transfer Successful", {
         description: `${transferForm.qty} units moved. Log ID: ${data.log_id || "N/A"}`,
       });
+      notifyDashboardDataChanged("operations:stock-transfer");
       
       setShowTransferDialog(false);
       setTransferForm({
@@ -661,6 +663,7 @@ export function StockManagement() {
       });
       setAdjustments((p) => [result, ...p]);
       setForm(EMPTY_FORM);
+      notifyDashboardDataChanged("operations:adjustment-submitted");
       toast.success("Adjustment Submitted", {
         description: "Awaiting manager approval",
       });
@@ -708,6 +711,7 @@ export function StockManagement() {
         ),
       );
       closeModal();
+      notifyDashboardDataChanged("operations:adjustment-approved");
       toast.success("Adjustment Approved", {
         description: `Approved by ${managerName} — stock updated`,
       });
@@ -742,6 +746,7 @@ export function StockManagement() {
         ),
       );
       closeModal();
+      notifyDashboardDataChanged("operations:adjustment-rejected");
       toast.success("Adjustment Rejected");
     } catch (e: any) {
       toast.error("Rejection Failed", {

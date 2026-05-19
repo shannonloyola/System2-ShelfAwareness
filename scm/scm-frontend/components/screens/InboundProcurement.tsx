@@ -52,6 +52,7 @@ import {
   fetchPurchaseOrderById,
   fetchFreightQuotes,
   fetchPurchaseOrderItems,
+  fetchProductAssociations,
   updatePurchaseOrder,
   updatePurchaseOrderStatus,
   createPurchaseOrder,
@@ -63,6 +64,7 @@ import {
   selectWinnerFreightQuote,
   type FreightQuoteRecord,
 } from "../../lib/procurementService";
+import { notifyDashboardDataChanged } from "@/lib/dashboardInvalidation";
 import { listCatalogProducts } from "../../lib/productCatalogService";
 import { CSVUploader } from "../CSVUploader";
 import type { CSVRow } from "../../lib/csvParser";
@@ -81,7 +83,6 @@ import {
   TableHeader, 
   TableRow 
 } from "../ui/table";
-
 type TabFilter = "all" | "draft" | "posted";
 
 interface PurchaseOrderRow {
@@ -161,6 +162,11 @@ interface FreightQuoteRow {
   cost: number;
   days: number;
   winner: boolean;
+}
+
+interface BundleSuggestionState {
+  triggerProduct: string;
+  recommendedProduct: string;
 }
 
 const DEFAULT_PO_STATUS = "Draft";
@@ -327,6 +333,8 @@ export function InboundProcurement() {
   >([]);
   const [showCreateSupplierDialog, setShowCreateSupplierDialog] =
     useState(false);
+  const [bundleSuggestion, setBundleSuggestion] =
+    useState<BundleSuggestionState | null>(null);
   const [supplierForm, setSupplierForm] = useState<SupplierFormState>(
     createEmptySupplierForm(),
   );
@@ -571,6 +579,7 @@ export function InboundProcurement() {
 
       await fetchPurchaseOrders();
       await fetchPOItems(target.po_id);
+      notifyDashboardDataChanged("procurement:draft-saved");
       toast.success("Saved to drafts", {
         description: `${target.po_no ?? "Purchase order"} is now in Drafts.`,
       });
@@ -652,6 +661,7 @@ export function InboundProcurement() {
       );
       setSelectedPO(updated);
       await fetchPurchaseOrders();
+      notifyDashboardDataChanged("procurement:po-posted");
       toast.success("Sent to supplier", {
         description: `${updated.po_no ?? "Purchase order"} is now Posted.`,
       });
@@ -722,6 +732,7 @@ export function InboundProcurement() {
         });
         setShowImportPreview(false);
         await fetchPurchaseOrders();
+        notifyDashboardDataChanged("procurement:po-imported");
 
         // Attempt to select the newly created PO using returned UUID if present
         const newId = typeof data === "string" ? data : null;
@@ -768,6 +779,49 @@ export function InboundProcurement() {
     ],
   );
 
+  const addRecommendedItem = useCallback((productName: string) => {
+    const duplicateExists = selectedPOItems.some(
+      (item) =>
+        (item.item_name ?? "").trim().toLowerCase() ===
+        productName.trim().toLowerCase(),
+    );
+    if (duplicateExists) {
+      toast.info("Product already in PO", {
+        description: `${productName} is already a line item in this PO.`
+      });
+      return;
+    }
+
+    setLineItemForms(prev => [
+      ...prev,
+      {
+        formId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        editingPoItemId: null,
+        product: productName,
+        qty: "100",
+      }
+    ]);
+
+    toast.success("Recommendation prefilled!", {
+      description: `Adjust quantity and save to add ${productName.split(" - ")[1] || productName} to PO.`
+    });
+  }, [selectedPOItems]);
+
+  const checkAssociationsForProduct = useCallback(async (productName: string) => {
+    try {
+      const res = await fetchProductAssociations(productName);
+      if (res && res.associations && res.associations.length > 0) {
+        const topRec = res.associations[0];
+        setBundleSuggestion({
+          triggerProduct: productName,
+          recommendedProduct: topRec.product_name,
+        });
+      }
+    } catch (e) {
+      console.error("Error in associations check", e);
+    }
+  }, []);
+
   const savePOItem = useCallback(
     async (formId: string) => {
       const form = lineItemForms.find(
@@ -799,6 +853,7 @@ export function InboundProcurement() {
         setSelectedPOItems(prev => [...prev, newItem]);
         setLineItemForms(prev => prev.filter(f => f.formId !== formId));
         toast.success("Item added to local draft");
+        void checkAssociationsForProduct(form.product);
         return;
       }
 
@@ -854,12 +909,19 @@ export function InboundProcurement() {
         prev.filter((f) => f.formId !== formId),
       );
       await fetchPOItems(selectedPO.po_id);
+      notifyDashboardDataChanged(
+        form.editingPoItemId
+          ? "procurement:po-item-updated"
+          : "procurement:po-item-created",
+      );
+      void checkAssociationsForProduct(form.product);
     },
     [
       fetchPOItems,
       lineItemForms,
       selectedPO?.po_id,
       selectedPOItems,
+      checkAssociationsForProduct,
     ],
   );
 
@@ -895,6 +957,7 @@ export function InboundProcurement() {
         prev.filter((f) => f.formId !== formId),
       );
       await fetchPOItems(selectedPO.po_id);
+      notifyDashboardDataChanged("procurement:po-item-deleted");
     },
     [fetchPOItems, lineItemForms, selectedPO?.po_id],
   );
@@ -988,6 +1051,7 @@ export function InboundProcurement() {
         );
         setSelectedPO(updated as PurchaseOrderRow);
         await fetchPurchaseOrders();
+        notifyDashboardDataChanged("procurement:status-updated");
         toast.success("Status updated", {
           description: `${updated.po_no ?? "Purchase order"} is now ${targetStatus}.`,
         });
@@ -1108,6 +1172,7 @@ export function InboundProcurement() {
         days: Number(newQuote.days),
       });
       await loadQuotes(selectedPO.po_id);
+      notifyDashboardDataChanged("procurement:freight-quote-created");
       setNewQuote({ provider: "", freightType: "", cost: "", days: "" });
       toast.success("Quote added");
     } catch (error) {
@@ -1126,6 +1191,7 @@ export function InboundProcurement() {
     try {
       await selectWinnerFreightQuote(selectedPO.po_id, id);
       await loadQuotes(selectedPO.po_id);
+      notifyDashboardDataChanged("procurement:freight-quote-selected");
       toast.success("Freight quote selected as winner");
     } catch (error) {
       toast.error("Failed to select winner", {
@@ -1501,6 +1567,7 @@ export function InboundProcurement() {
                     </div>
                   </div>
                 )}
+
                 {selectedSupplierId && (
                   <div className="mt-2 text-xs text-[#6B7280]">
                     Supplier service ID: {selectedSupplierId}
@@ -2118,6 +2185,61 @@ export function InboundProcurement() {
               {savingSupplier ? "Saving..." : "Apply Supplier"}
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(bundleSuggestion)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setBundleSuggestion(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Suggested item for this PO</DialogTitle>
+            <DialogDescription className="text-[#6B7280]">
+              {bundleSuggestion
+                ? `${bundleSuggestion.recommendedProduct.split(" - ")[1] || bundleSuggestion.recommendedProduct} is often included when ${bundleSuggestion.triggerProduct.split(" - ")[1] || bundleSuggestion.triggerProduct} is ordered.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          {bundleSuggestion ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-[#1A2B47]/10 bg-[#F8FAFC] p-4">
+                <p className="text-sm font-medium text-[#111827]">
+                  Would you like to add this item to the purchase order too?
+                </p>
+                <p className="mt-2 text-sm text-[#4B5563]">
+                  {bundleSuggestion.recommendedProduct}
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setBundleSuggestion(null)}
+                >
+                  Not now
+                </Button>
+                <Button
+                  type="button"
+                  className="bg-[#00A3AD] text-white hover:bg-[#00838B]"
+                  onClick={() => {
+                    addRecommendedItem(
+                      bundleSuggestion.recommendedProduct,
+                    );
+                    setBundleSuggestion(null);
+                  }}
+                >
+                  Add to PO
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
 

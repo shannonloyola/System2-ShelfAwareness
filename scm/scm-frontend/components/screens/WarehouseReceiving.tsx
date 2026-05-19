@@ -57,6 +57,7 @@ import {
   AccordionTrigger,
 } from "../ui/accordion";
 import { toast } from "sonner";
+import { notifyDashboardDataChanged } from "@/lib/dashboardInvalidation";
 import { postGRN } from "@/utils/postGRN";
 import { supabase, supabaseFulfillment } from "@/lib/supabase";
 import {
@@ -1010,6 +1011,7 @@ export function WarehouseReceiving() {
       toast.success(`GRN ${grnNumber} posted!`, {
         description: `${result.lines_processed} line(s) - ${result.products_updated} product(s) updated`,
       });
+      notifyDashboardDataChanged("operations:grn-posted");
 
       await new Promise((r) => setTimeout(r, 600));
       await fetchInventory();

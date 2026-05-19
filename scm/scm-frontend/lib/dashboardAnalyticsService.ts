@@ -384,3 +384,71 @@ export const fetchDashboardAnalytics = async () => {
   }
   return sanitizeDashboardPayload(await response.json());
 };
+
+// ── Data Mining: PO Delay Risk Classification ──
+
+export type DelayRiskResult = {
+  risk: "low" | "medium" | "high" | "unknown";
+  confidence: number;
+  factors: string[];
+  stats?: {
+    totalPos: number;
+    latePos: number;
+    lateRatio: number;
+    onTimeDeliveryPct: number;
+    defectRate: number;
+    reliabilityScore: number;
+  };
+};
+
+export const fetchPODelayRisk = async (supplierName: string): Promise<DelayRiskResult> => {
+  try {
+    const response = await fetch(
+      `${reportingAnalyticsServiceBaseUrl}/reporting/po-delay-risk?supplier_name=${encodeURIComponent(supplierName)}`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) {
+      console.error("Delay risk fetch failed:", response.status);
+      return { risk: "unknown", confidence: 0, factors: ["Service unavailable"] };
+    }
+    return (await response.json()) as DelayRiskResult;
+  } catch (error) {
+    console.error("Delay risk fetch error:", error);
+    return { risk: "unknown", confidence: 0, factors: ["Service unavailable"] };
+  }
+};
+
+// ── Data Mining: Product Association Rules ──
+
+export type ProductAssociation = {
+  product_name: string;
+  support: number;
+  confidence: number;
+  co_occurrences: number;
+};
+
+export type AssociationResult = {
+  product: string;
+  associations: ProductAssociation[];
+  totalPOs: number;
+  targetOccurrences: number;
+  message?: string;
+};
+
+export const fetchProductAssociations = async (productName: string): Promise<AssociationResult> => {
+  try {
+    const response = await fetch(
+      `${reportingAnalyticsServiceBaseUrl}/reporting/product-associations?product_name=${encodeURIComponent(productName)}`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) {
+      console.error("Association rules fetch failed:", response.status);
+      return { product: productName, associations: [], totalPOs: 0, targetOccurrences: 0 };
+    }
+    return (await response.json()) as AssociationResult;
+  } catch (error) {
+    console.error("Association rules fetch error:", error);
+    return { product: productName, associations: [], totalPOs: 0, targetOccurrences: 0 };
+  }
+};
+

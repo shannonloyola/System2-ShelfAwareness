@@ -20,6 +20,8 @@ import {
   createPurchaseOrderItem,
   deletePurchaseOrderItem,
   generateNextPONumber,
+  getProductAssociationDiagnostics,
+  getProductAssociationRules,
   getFreightQuotes,
   getCurrentMonthlyBudget,
   getPurchaseOrderById,
@@ -131,6 +133,57 @@ purchaseOrdersRouter.post(
     const payload = validateBulkImportPayload(req.body);
     const purchaseOrder = await importPurchaseOrder(payload);
     res.status(201).json({ data: purchaseOrder });
+  }),
+);
+
+purchaseOrdersRouter.get(
+  "/product-associations/diagnostics",
+  asyncHandler(async (req, res) => {
+    const minCoOccurrences = Number(req.query.min_co_occurrences ?? 1);
+    const maxResults = Number(req.query.limit ?? 25);
+
+    const result = await getProductAssociationDiagnostics({
+      minCoOccurrences:
+        Number.isFinite(minCoOccurrences) && minCoOccurrences > 0
+          ? minCoOccurrences
+          : 1,
+      maxResults:
+        Number.isFinite(maxResults) && maxResults > 0
+          ? maxResults
+          : 25,
+    });
+
+    res.json({ data: result });
+  }),
+);
+
+purchaseOrdersRouter.get(
+  "/product-associations",
+  asyncHandler(async (req, res) => {
+    const productName = String(req.query.product_name ?? "").trim();
+    if (!productName) {
+      return res
+        .status(400)
+        .json({ error: "product_name query parameter is required" });
+    }
+
+    const minSupport = Number(req.query.min_support ?? 0.05);
+    const minConfidence = Number(req.query.min_confidence ?? 0.3);
+    const maxResults = Number(req.query.limit ?? 5);
+
+    const result = await getProductAssociationRules({
+      productName,
+      minSupport: Number.isFinite(minSupport) ? minSupport : 0.05,
+      minConfidence: Number.isFinite(minConfidence)
+        ? minConfidence
+        : 0.3,
+      maxResults:
+        Number.isFinite(maxResults) && maxResults > 0
+          ? maxResults
+          : 5,
+    });
+
+    res.json({ data: result });
   }),
 );
 

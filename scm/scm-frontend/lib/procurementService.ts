@@ -50,6 +50,24 @@ export type PurchaseOrderItemRecord = {
   quantity: number | null;
 };
 
+export type ProductAssociationRecord = {
+  product_name: string;
+  support: number;
+  confidence: number;
+  co_occurrences: number;
+};
+
+export type ProductAssociationResponse = {
+  product: string;
+  associations: ProductAssociationRecord[];
+  totalPOs: number;
+  targetOccurrences: number;
+  thresholds: {
+    minSupport: number;
+    minConfidence: number;
+  };
+};
+
 export type PurchaseOrderStatusHistoryRecord = {
   history_id: string;
   po_id: string;
@@ -181,6 +199,17 @@ export const fetchPurchaseOrderItems = async (poId: string) => {
     `${getBaseUrl()}/purchase-orders/${encodeURIComponent(poId)}/items`,
   );
   return payload.data ?? [];
+};
+
+export const fetchProductAssociations = async (
+  productName: string,
+) => {
+  const payload = await fetchJson<{
+    data: ProductAssociationResponse;
+  }>(
+    `${getBaseUrl()}/purchase-orders/product-associations?product_name=${encodeURIComponent(productName)}&min_support=0.05&min_confidence=0.3&limit=5`,
+  );
+  return payload.data;
 };
 
 export const fetchPurchaseOrderStatusHistory = async (poId: string) => {

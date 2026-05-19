@@ -431,6 +431,21 @@ export const createPurchaseOrderItemRest = async (payload) => {
   return data[0] ?? null;
 };
 
+export const getProductAssociationRulesRest = async (payload) => {
+  ensureRestConfig();
+
+  const response = await fetch(
+    `${env.supabaseUrl}/rest/v1/rpc/get_product_association_rules`,
+    {
+      method: "POST",
+      headers: buildHeaders(),
+      body: JSON.stringify(payload),
+    },
+  );
+
+  return handleResponse(response);
+};
+
 export const updatePurchaseOrderItemRest = async (poId, poItemId, payload) => {
   ensureRestConfig();
 
