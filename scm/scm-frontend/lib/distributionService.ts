@@ -54,6 +54,19 @@ const distributionServiceBaseUrl =
   process.env.VITE_DISTRIBUTION_SERVICE_URL ||
   "http://localhost:4006";
 
+// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
+const getBaseUrl = () => {
+  if (
+    !distributionServiceBaseUrl || 
+    distributionServiceBaseUrl.trim() === "" ||
+    !distributionServiceBaseUrl.startsWith("http")
+  ) {
+    return "http://localhost:4006";
+  }
+  return distributionServiceBaseUrl;
+};
+
+
 const parseError = async (response: Response) => {
   const text = await response.text();
 
@@ -78,30 +91,45 @@ const fetchJson = async <T>(input: string, init?: RequestInit) => {
 };
 
 export const fetchDistributionOrders = async () => {
-  const payload = await fetchJson<{ data: DistributionOrderRecord[] }>(
-    `${distributionServiceBaseUrl}/orders`,
-  );
-  return payload.data ?? [];
+  try {
+    const payload = await fetchJson<{ data: DistributionOrderRecord[] }>(
+      `${getBaseUrl()}/orders`,
+    );
+    return payload.data ?? [];
+  } catch (error) {
+    console.error("Distribution orders unavailable.", error);
+    return [];
+  }
 };
 
 export const fetchDistributionInventoryValueTotal = async () => {
-  const payload = await fetchJson<{
-    data: { total_inventory_value_php: number | null };
-  }>(`${distributionServiceBaseUrl}/inventory-value/total`);
-  return payload.data?.total_inventory_value_php ?? null;
+  try {
+    const payload = await fetchJson<{
+      data: { total_inventory_value_php: number | null };
+    }>(`${getBaseUrl()}/inventory-value/total`);
+    return payload.data?.total_inventory_value_php ?? null;
+  } catch (error) {
+    console.error("Distribution inventory value unavailable.", error);
+    return null;
+  }
 };
 
 export const fetchDistributionInventoryValueByCategory = async () => {
-  const payload = await fetchJson<{
-    data: Array<{ category_name: string; total_value_php: number }>;
-  }>(`${distributionServiceBaseUrl}/inventory-value/by-category`);
-  return payload.data ?? [];
+  try {
+    const payload = await fetchJson<{
+      data: Array<{ category_name: string; total_value_php: number }>;
+    }>(`${getBaseUrl()}/inventory-value/by-category`);
+    return payload.data ?? [];
+  } catch (error) {
+    console.error("Distribution inventory value by category unavailable.", error);
+    return [];
+  }
 };
 
 export const fetchDistributionAvailableProducts = async () => {
   const payload = await fetchJson<{
     data: DistributionAvailableProductRecord[];
-  }>(`${distributionServiceBaseUrl}/products/availability`);
+  }>(`${getBaseUrl()}/products/availability`);
   return payload.data ?? [];
 };
 
@@ -110,7 +138,7 @@ export const updateDistributionOrderLines = async (
   lines: Array<{ sku: string; qty: number }>,
 ) => {
   const payload = await fetchJson<{ data: { updated: boolean } }>(
-    `${distributionServiceBaseUrl}/orders/${encodeURIComponent(orderId)}/lines`,
+    `${getBaseUrl()}/orders/${encodeURIComponent(orderId)}/lines`,
     {
       method: "PATCH",
       headers: {
@@ -127,7 +155,7 @@ export const cancelDistributionOrder = async (
   reason: string,
 ) => {
   const payload = await fetchJson<{ data: { success?: boolean; error?: string } }>(
-    `${distributionServiceBaseUrl}/orders/${encodeURIComponent(orderId)}/cancel`,
+    `${getBaseUrl()}/orders/${encodeURIComponent(orderId)}/cancel`,
     {
       method: "POST",
       headers: {
@@ -146,7 +174,7 @@ export const fetchDistributionInvoiceSummary = async (params: {
   orderTotal: number;
 }) => {
   const url = new URL(
-    `${distributionServiceBaseUrl}/orders/${encodeURIComponent(params.orderId)}/payments`,
+    `${getBaseUrl()}/orders/${encodeURIComponent(params.orderId)}/payments`,
   );
   url.searchParams.set("retailer_name", params.retailerName);
   url.searchParams.set("order_no", params.orderNo);
@@ -167,7 +195,7 @@ export const createDistributionPayment = async (payload: {
   notes: string;
 }) => {
   const response = await fetchJson<{ data: { saved: boolean } }>(
-    `${distributionServiceBaseUrl}/payments`,
+    `${getBaseUrl()}/payments`,
     {
       method: "POST",
       headers: {
@@ -193,7 +221,7 @@ export const createDistributionOrder = async (payload: {
       fulfillment?: Record<string, unknown>;
       [key: string]: unknown;
     };
-  }>(`${distributionServiceBaseUrl}/orders`, {
+  }>(`${getBaseUrl()}/orders`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -205,7 +233,7 @@ export const createDistributionOrder = async (payload: {
 
 export const downloadDistributionInvoice = async (orderId: string) => {
   const response = await fetch(
-    `${distributionServiceBaseUrl}/orders/${encodeURIComponent(orderId)}/invoice`,
+    `${getBaseUrl()}/orders/${encodeURIComponent(orderId)}/invoice`,
     {
       method: "GET",
     },

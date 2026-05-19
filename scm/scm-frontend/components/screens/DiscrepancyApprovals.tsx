@@ -1000,7 +1000,7 @@ export function DiscrepancyApprovals() {
             </div>
 
             <div className="px-6 py-5 space-y-5">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="rounded-md border border-[#E5E7EB] p-3">
                   <p className="text-xs text-[#6B7280]">
                     Discrepancy ID
@@ -1015,19 +1015,6 @@ export function DiscrepancyApprovals() {
                     {normalizeStatus(
                       selectedDetail.status,
                     ).replace(/_/g, " ")}
-                  </p>
-                </div>
-                <div className="rounded-md border border-[#E5E7EB] p-3">
-                  <p className="text-xs text-[#6B7280]">
-                    Disposition
-                  </p>
-                  <p className="font-semibold text-[#111827] capitalize">
-                    {selectedDetail.disposition
-                      ? selectedDetail.disposition.replace(
-                          /_/g,
-                          " ",
-                        )
-                      : "Unassigned"}
                   </p>
                 </div>
               </div>

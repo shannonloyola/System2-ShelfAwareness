@@ -22,6 +22,19 @@ const discrepancyQcServiceBaseUrl =
   process.env.VITE_DISCREPANCY_QC_SERVICE_URL ||
   "http://localhost:4007";
 
+// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
+const getBaseUrl = () => {
+  if (
+    !discrepancyQcServiceBaseUrl || 
+    discrepancyQcServiceBaseUrl.trim() === "" ||
+    !discrepancyQcServiceBaseUrl.startsWith("http")
+  ) {
+    return "http://localhost:4007";
+  }
+  return discrepancyQcServiceBaseUrl;
+};
+
+
 const parseError = async (response: Response) => {
   const text = await response.text();
 
@@ -49,7 +62,7 @@ const fetchJson = async <T>(input: string, init?: RequestInit) => {
 export const fetchShipmentDiscrepancies = async (options?: {
   excludeApproved?: boolean;
 }) => {
-  const url = new URL(`${discrepancyQcServiceBaseUrl}/shipment-discrepancies`);
+  const url = new URL(`${getBaseUrl()}/shipment-discrepancies`);
 
   if (options?.excludeApproved) {
     url.searchParams.set("excludeApproved", "true");
@@ -66,7 +79,7 @@ export const updateShipmentDiscrepancyDisposition = async (
   disposition: "released" | "returned" | "scrapped",
 ) => {
   const payload = await fetchJson<{ data: ShipmentDiscrepancyRecord }>(
-    `${discrepancyQcServiceBaseUrl}/shipment-discrepancies/${encodeURIComponent(id)}`,
+    `${getBaseUrl()}/shipment-discrepancies/${encodeURIComponent(id)}`,
     {
       method: "PATCH",
       headers: {
@@ -94,6 +107,6 @@ export const fetchDiscrepancyReportsSummary = async () => {
         rejected: number;
       };
     };
-  }>(`${discrepancyQcServiceBaseUrl}/shipment-discrepancies/reports/summary`);
+  }>(`${getBaseUrl()}/shipment-discrepancies/reports/summary`);
   return payload.data;
 };

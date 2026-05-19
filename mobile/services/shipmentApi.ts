@@ -3,9 +3,10 @@
  * Connects to the warehouse-receiving-service.
  */
 import { Platform } from 'react-native';
+import { API_CONFIG } from '../config';
 
-// Using your PC's IP since it's reachable via hotspot
-const BASE_URL = 'http://172.20.10.3:4005'; 
+// Using your PC's active IP address
+const BASE_URL = API_CONFIG.WAREHOUSE_RECEIVING_URL; 
 
 export interface Shipment {
   id: string;
@@ -18,6 +19,8 @@ export interface Shipment {
   notes?: string;
   item_count?: number;
   po_number?: string;
+  po_no?: string;
+  expected_items?: any[];
 }
 
 export interface ShipmentStats {

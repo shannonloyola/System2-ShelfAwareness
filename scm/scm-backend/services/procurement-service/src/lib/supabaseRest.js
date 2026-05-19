@@ -51,13 +51,16 @@ const handleResponse = async (response) => {
 };
 
 const buildOrdersSelect =
-  "po_id,po_no,supplier_name,status,created_at,paid_at,expected_delivery_date,preferred_communication,approval_status,approved_by,approved_at,rejected_at,rejection_reason,is_late,customs_entry_date,customs_release_date,transit_status,reserved_at,expires_at,purchase_order_items(count)";
+  "po_id,po_no,supplier_name,status,created_at,paid_at,expected_delivery_date,preferred_communication,approval_status,approved_by,approved_at,rejected_at,rejection_reason,is_late,customs_entry_date,customs_release_date,duties_paid,transit_status,transit_updated_at,transit_updated_by,transit_notes,carrier_name,carrier_tracking_ref,freight_mode,freight_cost,freight_type,reserved_at,expires_at,purchase_order_items(count)";
 
 const buildItemsSelect =
   "po_item_id,po_id,item_name,quantity";
 
 const buildStatusHistorySelect =
   "history_id,po_id,status_name,changed_at,document_url,reason";
+
+const buildFreightQuotesSelect =
+  "id,po_id,po_no,provider,freight_type,cost,estimated_days,is_winner,created_at,updated_at";
 
 export const restHealthCheck = async () => {
   ensureRestConfig();
@@ -165,6 +168,76 @@ export const updatePurchaseOrderRest = async (poId, payload) => {
     403,
     "Purchase order update was not applied. Check Supabase update permissions or RLS policies for the purchase_orders table.",
   );
+};
+
+export const listFreightQuotesRest = async (poId) => {
+  ensureRestConfig();
+
+  const url = new URL(`${env.supabaseUrl}/rest/v1/freight_quotes`);
+  url.searchParams.set("select", buildFreightQuotesSelect);
+  url.searchParams.set("po_id", `eq.${poId}`);
+  url.searchParams.set("order", "created_at.asc");
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: buildHeaders(),
+  });
+
+  return handleResponse(response);
+};
+
+export const createFreightQuoteRest = async (payload) => {
+  ensureRestConfig();
+
+  const response = await fetch(`${env.supabaseUrl}/rest/v1/freight_quotes`, {
+    method: "POST",
+    headers: {
+      ...buildHeaders(),
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await handleResponse(response);
+  return data[0] ?? null;
+};
+
+export const updateFreightQuoteRest = async (poId, quoteId, payload) => {
+  ensureRestConfig();
+
+  const response = await fetch(
+    `${env.supabaseUrl}/rest/v1/freight_quotes?po_id=eq.${poId}&id=eq.${quoteId}`,
+    {
+      method: "PATCH",
+      headers: {
+        ...buildHeaders(),
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  const data = await handleResponse(response);
+  return data[0] ?? null;
+};
+
+export const clearWinnerFreightQuotesRest = async (poId, keepQuoteId) => {
+  ensureRestConfig();
+
+  const url = new URL(`${env.supabaseUrl}/rest/v1/freight_quotes`);
+  url.searchParams.set("po_id", `eq.${poId}`);
+  url.searchParams.set("id", `neq.${keepQuoteId}`);
+
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      ...buildHeaders(),
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify({ is_winner: false, updated_at: new Date().toISOString() }),
+  });
+
+  await handleResponse(response);
 };
 
 export const deletePurchaseOrderRest = async (poId) => {

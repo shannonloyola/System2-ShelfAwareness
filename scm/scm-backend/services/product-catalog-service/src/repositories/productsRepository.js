@@ -31,6 +31,7 @@ const productSelect = `
   unit_price,
   currency_code,
   inventory_on_hand,
+  reserved_stock,
   created_at
 `;
 
@@ -65,8 +66,9 @@ const mapProductRow = (row, inventoryByProductId = new Map()) => {
     unit_price: Number(row.unit_price ?? 0),
     currency_code: row.currency_code ?? "PHP",
     inventory_on_hand: Number(
-      inventory?.qty_on_hand ?? row.inventory_on_hand ?? 0,
+      inventory?.qty_on_hand ?? row.inventory_on_hand ?? 0
     ),
+    reserved_stock: Number(row.reserved_stock ?? 0),
     inventory_updated_at: inventory?.updated_at ?? null,
     created_at: row.created_at ?? null,
   };

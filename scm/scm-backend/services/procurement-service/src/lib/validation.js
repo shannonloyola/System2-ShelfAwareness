@@ -193,3 +193,106 @@ export const validateDocumentPayload = (payload) => {
     status_name,
   };
 };
+
+export const validateFreightQuotePayload = (payload) => {
+  const provider = normalizeString(payload?.provider);
+  const freight_type = normalizeString(
+    payload?.freight_type ?? payload?.freightType,
+  );
+  const cost = Number(payload?.cost);
+  const estimated_days = Number.parseInt(
+    String(payload?.estimated_days ?? payload?.estimatedDays),
+    10,
+  );
+
+  if (!provider) {
+    throw createHttpError(400, "provider is required");
+  }
+
+  if (!freight_type) {
+    throw createHttpError(400, "freight_type is required");
+  }
+
+  if (!Number.isFinite(cost) || cost < 0) {
+    throw createHttpError(400, "cost must be a valid non-negative number");
+  }
+
+  if (Number.isNaN(estimated_days) || estimated_days <= 0) {
+    throw createHttpError(400, "estimated_days must be greater than 0");
+  }
+
+  return {
+    provider,
+    freight_type,
+    cost,
+    estimated_days,
+  };
+};
+
+export const validateTransitStatusPayload = (payload) => {
+  const transit_status = normalizeString(payload?.transit_status);
+  const transit_updated_by = normalizeNullableString(payload?.transit_updated_by);
+  const transit_notes = normalizeNullableString(payload?.transit_notes);
+  const carrier_name = normalizeNullableString(payload?.carrier_name);
+  const carrier_tracking_ref = normalizeNullableString(
+    payload?.carrier_tracking_ref,
+  );
+  const customs_entry_date = normalizeNullableString(payload?.customs_entry_date);
+  const customs_release_date = normalizeNullableString(
+    payload?.customs_release_date,
+  );
+  const duties_paid_raw = payload?.duties_paid;
+  const allowedStatuses = [
+    "pending",
+    "confirmed",
+    "dispatched",
+    "in_transit",
+    "arrived_port",
+    "customs_clearance",
+    "customs_released",
+    "out_for_delivery",
+    "arrived_warehouse",
+    "received",
+  ];
+
+  if (!transit_status) {
+    throw createHttpError(400, "transit_status is required");
+  }
+
+  if (!allowedStatuses.includes(transit_status)) {
+    throw createHttpError(
+      400,
+      `transit_status must be one of: ${allowedStatuses.join(", ")}`,
+    );
+  }
+
+  let duties_paid;
+  if (duties_paid_raw !== undefined) {
+    if (
+      typeof duties_paid_raw === "boolean" ||
+      duties_paid_raw === 0 ||
+      duties_paid_raw === 1 ||
+      duties_paid_raw === "0" ||
+      duties_paid_raw === "1"
+    ) {
+      duties_paid =
+        duties_paid_raw === true || duties_paid_raw === 1 || duties_paid_raw === "1"
+          ? 1
+          : 0;
+    } else {
+      throw createHttpError(400, "duties_paid must be true/false or 1/0");
+    }
+  }
+
+  return {
+    transit_status,
+    transit_updated_at: new Date().toISOString(),
+    transit_updated_by,
+    transit_notes,
+    carrier_name,
+    carrier_tracking_ref,
+    customs_entry_date,
+    customs_release_date,
+    duties_paid,
+  };
+};

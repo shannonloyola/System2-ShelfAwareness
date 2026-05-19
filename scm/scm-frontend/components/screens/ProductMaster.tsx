@@ -16,6 +16,7 @@ import {
   FileText,
   Trash2,
   Printer,
+  RefreshCw,
 } from "lucide-react";
 import {
   Card,
@@ -134,6 +135,32 @@ const formatMoney = (
 
 const normalizeLocationValue = (value: string): string =>
   value.trim().toLowerCase();
+
+const DEFAULT_CATEGORIES: ProductCategory[] = [
+  // Parent categories
+  { id: "pharma", name: "Pharma", parent_id: null },
+  { id: "medical-supplies", name: "Medical Supplies", parent_id: null },
+
+  // Subcategories under Pharma
+  { id: "otc-medications", name: "OTC Medications", parent_id: "pharma" },
+  { id: "vitamins-supplements", name: "Vitamins & Supplements", parent_id: "pharma" },
+
+  // Subcategories under Medical Supplies
+  { id: "personal-care", name: "Personal Care", parent_id: "medical-supplies" },
+  { id: "first-aid", name: "First Aid", parent_id: "medical-supplies" },
+  { id: "health-wellness", name: "Health & Wellness", parent_id: "medical-supplies" },
+  { id: "baby-care", name: "Baby Care", parent_id: "medical-supplies" },
+];
+
+const LEGACY_CATEGORY_MAPPING: Record<string, string> = {
+  "otc medications": "otc-medications",
+  "vitamins & supplements": "vitamins-supplements",
+  "personal care": "personal-care",
+  "first-aid": "first-aid",
+  "first aid": "first-aid",
+  "health & wellness": "health-wellness",
+  "baby care": "baby-care",
+};
 
 const inventoryRowsPerPage = 10;
 const pricingRowsPerPage = 10;
@@ -328,14 +355,12 @@ export function ProductMaster() {
   const [selectedProduct, setSelectedProduct] =
     useState<Product | null>(null);
 
-  const [showDebugPanel, setShowDebugPanel] = useState(false);
-  const [debugLogs, setDebugLogs] = useState<any[]>([]);
-  const [lastPayload, setLastPayload] = useState<any>(null);
-  const [lastResponse, setLastResponse] = useState<any>(null);
 
   const [categories, setCategories] = useState<
     ProductCategory[]
-  >([]);
+  >(DEFAULT_CATEGORIES);
+  const [dbLocations, setDbLocations] = useState<{ id: string; name: string }[]>([]);
+  const [suppliers, setSuppliers] = useState<{ id: string; supplier_name: string }[]>([]);
   const [isCategoriesLoading, setIsCategoriesLoading] =
     useState(true);
   const [categoriesLoadError, setCategoriesLoadError] =
@@ -388,13 +413,6 @@ export function ProductMaster() {
     message: string,
     data?: any,
   ) => {
-    const log = {
-      timestamp: new Date().toISOString(),
-      type,
-      message,
-      data,
-    };
-    setDebugLogs((prev) => [log, ...prev]);
     console.log(`[${type}]`, message, data || "");
   };
 
@@ -478,15 +496,24 @@ export function ProductMaster() {
           const inventory = inventoryByProductId.get(
             String(p.product_uuid ?? p.product_id),
           );
+
+          // Map legacy category name to the new product_categories UUID if category_id is null
+          let categoryId = p.category_id;
+          if (!categoryId && p.category) {
+            const normalized = p.category.toLowerCase().trim();
+            categoryId = LEGACY_CATEGORY_MAPPING[normalized] || p.category;
+          }
+          if (!categoryId) {
+            categoryId = "uncategorized";
+          }
+
           return {
             id:
               p.product_id?.toString() || Date.now().toString(),
             product_uuid: p.product_uuid || "",
             sku: p.sku || "",
             name: p.product_name || "",
-            category_id: (p.category_id ||
-              p.category ||
-              "uncategorized") as string,
+            category_id: categoryId as string,
             category_text: p.category || "",
             barcode: p.barcode || "",
             supplier: p.supplier || "",
@@ -595,7 +622,7 @@ export function ProductMaster() {
       Number(currentRecord.selling_price) === sellingPrice &&
       Number(currentRecord.cost_price) === resolvedCostPrice &&
       (currentRecord.currency_code || "PHP") ===
-        normalizedCurrency
+      normalizedCurrency
     ) {
       return false;
     }
@@ -659,49 +686,44 @@ export function ProductMaster() {
   }, []);
 
   const loadCategories = useCallback(async () => {
+    setIsCategoriesLoading(true);
+    setCategoriesLoadError("");
+    setCategories(DEFAULT_CATEGORIES);
+    setIsCategoriesLoading(false);
+  }, []);
+
+  const loadDbLocations = useCallback(async () => {
     try {
-      setIsCategoriesLoading(true);
-      setCategoriesLoadError("");
-      addDebugLog("info", "Loading categories from database");
-      const categoriesUrl = `${scmRestBaseUrl}/product_categories?select=id,name,parent_id`;
-      const response = await fetch(categoriesUrl, {
-        method: "GET",
-        headers: scmHeaders,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        const message = `Categories load failed (${response.status})`;
-        setCategories([]);
-        setCategoriesLoadError(message);
-        addDebugLog("error", message, errorText);
-        return;
+      const binsUrl = `${fulfillmentRestBaseUrl}/bins?select=id,name`;
+      const response = await fetch(binsUrl, { method: "GET", headers: fulfillmentHeaders });
+      if (response.ok) {
+        const bins = await response.json();
+        setDbLocations(bins || []);
       }
-
-      const fetchedCategories = await response.json();
-      setCategories(Array.isArray(fetchedCategories) ? fetchedCategories : []);
-
-      addDebugLog(
-        "success",
-        `Loaded ${fetchedCategories.length} categories with hierarchy`,
-      );
-    } catch (error) {
-      setCategories([]);
-      setCategoriesLoadError("Failed to load categories");
-      addDebugLog(
-        "error",
-        "Failed to load categories",
-        error,
-      );
-    } finally {
-      setIsCategoriesLoading(false);
+    } catch (e) {
+      addDebugLog("error", "Failed to load locations from bins", e);
     }
   }, []);
 
-  // Fetch categories from database
+  const loadSuppliers = useCallback(async () => {
+    try {
+      const suppliersUrl = `${scmRestBaseUrl}/suppliers?select=id,supplier_name&status=eq.Active`;
+      const response = await fetch(suppliersUrl, { method: "GET", headers: scmHeaders });
+      if (response.ok) {
+        const data = await response.json();
+        setSuppliers(data || []);
+      }
+    } catch (e) {
+      addDebugLog("error", "Failed to load suppliers", e);
+    }
+  }, []);
+
+  // Fetch categories and locations from database
   useEffect(() => {
     loadCategories();
-  }, [loadCategories]);
+    loadDbLocations();
+    loadSuppliers();
+  }, [loadCategories, loadDbLocations, loadSuppliers]);
 
   const categoriesById = useMemo(() => {
     return new Map(categories.map((c) => [c.id, c]));
@@ -746,7 +768,7 @@ export function ProductMaster() {
       const matchesLocation =
         locationFilter === "all" ||
         normalizeLocationValue(product.location || "") ===
-          locationFilter;
+        locationFilter;
       return (
         matchesSearch &&
         matchesParent &&
@@ -811,12 +833,12 @@ export function ProductMaster() {
 
   const categoryLabelById = useMemo(() => {
     const options = buildCategoryOptions(categories);
+    console.log("DEBUG: categoryLabelById options", options);
     return new Map(options.map((o) => [o.id, o.label]));
   }, [categories]);
 
   const getCategoryText = (categoryId: string): string => {
     return (
-      categoryLabelById.get(categoryId) ||
       categoriesById.get(categoryId)?.name ||
       categoryId
     );
@@ -840,48 +862,44 @@ export function ProductMaster() {
     );
   };
 
-  const locationOptions = useMemo(() => {
-    const byNormalized = new Map<string, string>();
-    for (const product of products) {
-      const raw = (product.location || "").trim();
-      if (!raw) continue;
-      const normalized = normalizeLocationValue(raw);
-      if (!byNormalized.has(normalized)) {
-        byNormalized.set(normalized, raw);
-      }
-    }
-    return Array.from(byNormalized.entries())
-      .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [products]);
+  const locationOptions = [
+    { value: "Main Warehouse Manila", label: "Main Warehouse Manila" },
+    { value: "Satellite Hub Makati", label: "Satellite Hub Makati" }
+  ];
 
   const unitOptions = ["bottle", "box", "pcs"] as const;
   const currencyOptions = ["PHP", "JPY", "USD"] as const;
 
-  const getCategoryColor = (category: string) => {
-    switch (category) {
-      case "pharma":
-        return "bg-[#00A3AD] text-white";
-      case "medical_supplies":
-        return "bg-[#1A2B47] text-white";
-      case "cold_chain":
-        return "bg-[#0891B2] text-white";
-      default:
-        return "bg-[#D1D5DB] text-[#111827]";
+  const getCategoryColor = (categoryId: string) => {
+    const { parentId } = getProductCategoryLineage(categoryId);
+    const resolvedId = parentId || categoryId;
+
+    if (resolvedId === "pharma") {
+      return "bg-[#00A3AD] text-white";
     }
+    if (resolvedId === "medical-supplies") {
+      return "bg-[#1A2B47] text-white";
+    }
+    if (resolvedId === "cold-chain") {
+      return "bg-[#0891B2] text-white";
+    }
+    return "bg-[#D1D5DB] text-[#111827]";
   };
 
   const generateSKU = (
     productName: string,
-    category: string,
+    categoryId: string,
   ): string => {
     const prefix = productName.substring(0, 3).toUpperCase();
-    const categoryCode =
-      category === "pharma"
-        ? "PH"
-        : category === "cold"
-          ? "CC"
-          : "MS";
+    const { parentId } = getProductCategoryLineage(categoryId);
+    const resolvedId = parentId || categoryId;
+
+    let categoryCode = "MS";
+    if (resolvedId === "pharma") {
+      categoryCode = "PH";
+    } else if (resolvedId === "cold-chain") {
+      categoryCode = "CC";
+    }
     const random = Math.floor(Math.random() * 1000);
     return `${prefix}-${categoryCode}-${random}`;
   };
@@ -1015,9 +1033,10 @@ export function ProductMaster() {
           const cells = parseCsvLine(line);
           const productName = cells[idx("product_name")] || "";
           const categoryId = cells[idx("category_id")] || "";
-          const normalizedRowBarcode = toValidEan13(
-            cells[idx("barcode")] || "",
-          );
+          // Use CSV barcode if valid; otherwise auto-generate a GS1-compliant internal EAN-13
+          const normalizedRowBarcode =
+            toValidEan13(cells[idx("barcode")] || "") ||
+            generateSystemEan13(Date.now().toString() + Math.random().toString());
           const sku =
             cells[idx("sku")] ||
             generateSKU(productName || "PRD", categoryId || "");
@@ -1026,7 +1045,7 @@ export function ProductMaster() {
             product_name: productName,
             category_id: categoryId,
             category: getCategoryText(categoryId),
-            barcode: normalizedRowBarcode || "",
+            barcode: normalizedRowBarcode,
             supplier: cells[idx("supplier")] || "",
             warehouse_location:
               cells[idx("warehouse_location")] || "",
@@ -1041,7 +1060,6 @@ export function ProductMaster() {
           (p) =>
             p.product_name &&
             p.category_id &&
-            p.barcode &&
             p.supplier &&
             p.warehouse_location,
         );
@@ -1282,17 +1300,27 @@ export function ProductMaster() {
         previousCostPrice !== nextCostPrice ||
         previousCurrency !== nextCurrency;
       if (priceChanged) {
-        addDebugLog(
-          "info",
-          "Pricing changes handled by product catalog service update",
-        );
+        if (typeof window !== "undefined" && window.localStorage.getItem("USE_REAL_SERVICES") !== "true") {
+          addDebugLog("info", "Offline mode detected, manually updating pricing history");
+          const actor = await resolvePricingActor();
+          await upsertProductPricingHistory(
+            Number(selectedProduct.id),
+            nextUnitPrice,
+            nextCurrency,
+            { costPrice: nextCostPrice, actor }
+          );
+        } else {
+          addDebugLog(
+            "info",
+            "Pricing changes handled by product catalog service update",
+          );
+        }
       }
-
       await refreshProductAndPricing();
       setShowEditDialog(false);
       setSelectedProduct(null);
       toast.success("Product updated", {
-        description: `${editFormData.productName} saved to database`,
+        description: `${editFormData.productName} has been updated in the product master`,
       });
     } catch (error) {
       const message =
@@ -1437,7 +1465,6 @@ export function ProductMaster() {
         created_at: new Date().toISOString(),
       };
 
-      setLastPayload(productPayload);
       addDebugLog(
         "info",
         "Payload mapped to product catalog service schema",
@@ -1449,10 +1476,6 @@ export function ProductMaster() {
         cost_price: nextCostPrice,
       });
 
-      setLastResponse({
-        success: true,
-        data: createdProduct,
-      });
       addDebugLog("info", "Product catalog service response", {
         product_id: createdProduct?.product_id,
         product_uuid: createdProduct?.product_uuid,
@@ -1460,15 +1483,26 @@ export function ProductMaster() {
 
       addDebugLog(
         "success",
-        "Product inserted successfully via product catalog service",
+        "Product inserted successfully",
       );
+
+      if (typeof window !== "undefined" && window.localStorage.getItem("USE_REAL_SERVICES") !== "true" && createdProduct?.product_id) {
+        addDebugLog("info", "Offline mode detected, manually recording initial pricing history");
+        const actor = await resolvePricingActor();
+        await upsertProductPricingHistory(
+          Number(createdProduct.product_id),
+          nextUnitPrice,
+          formData.currencyCode || "PHP",
+          { costPrice: nextCostPrice, actor }
+        );
+      }
       addDebugLog(
         "info",
         "Refreshing product list from database...",
       );
       await refreshProductAndPricing();
       toast.success("Product Added Successfully", {
-        description: `${formData.productName} (${generatedSKU}) has been saved to the database`,
+        description: `${formData.productName} (${generatedSKU}) has been successfully added to the catalog`,
       });
 
       setFormData({
@@ -1920,6 +1954,11 @@ export function ProductMaster() {
                 ) {
                   void loadCategories();
                 }
+                // Auto-generate a valid internal EAN-13 barcode (GS1 prefix 299)
+                setFormData((prev) => ({
+                  ...prev,
+                  barcode: generateSystemEan13(Date.now().toString()),
+                }));
               }
             }}
           >
@@ -2050,21 +2089,37 @@ export function ProductMaster() {
                 </div>
                 <div>
                   <Label>Barcode (EAN-13)</Label>
-                  <Input
-                    placeholder="4987654321123"
-                    className="mt-2 border-[#111827]/10"
-                    inputMode="numeric"
-                    maxLength={13}
-                    value={formData.barcode}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        barcode: sanitizeBarcodeInput(
-                          e.target.value,
-                        ),
-                      })
-                    }
-                  />
+                  <div className="mt-2 flex gap-2 items-center">
+                    <Input
+                      placeholder="Auto-generated EAN-13"
+                      className="border-[#111827]/10 font-mono tracking-widest"
+                      inputMode="numeric"
+                      maxLength={13}
+                      value={formData.barcode}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          barcode: sanitizeBarcodeInput(
+                            e.target.value,
+                          ),
+                        })
+                      }
+                    />
+                    <button
+                      type="button"
+                      title="Generate a new internal EAN-13 barcode"
+                      onClick={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          barcode: generateSystemEan13(Date.now().toString().slice(-9)),
+                        }))
+                      }
+                      className="flex-shrink-0 rounded-md border border-[#111827]/15 bg-white px-3 py-2 text-sm font-medium text-[#111827] shadow-sm transition-colors hover:bg-[#F3F4F6] active:scale-95"
+                    >
+                      <RefreshCw className="w-4 h-4 text-[#4B5563]" />
+                    </button>
+                  </div>
+                  <p className="mt-1 text-[10px] text-[#6B7280]">Internal EAN-13 auto-generated. Click <RefreshCw className="inline-block w-3 h-3 mx-0.5 text-[#4B5563]" /> to regenerate or type a manufacturer barcode.</p>
                 </div>
                 <div>
                   <Label>Unit</Label>
@@ -2088,31 +2143,46 @@ export function ProductMaster() {
                 </div>
                 <div>
                   <Label>Supplier</Label>
-                  <Input
-                    placeholder="Enter supplier name"
-                    className="mt-2 border-[#111827]/10"
+                  <Select
                     value={formData.supplier}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        supplier: e.target.value,
-                      })
+                    onValueChange={(value) =>
+                      setFormData({ ...formData, supplier: value })
                     }
-                  />
+                  >
+                    <SelectTrigger className="mt-2 border-[#111827]/10">
+                      <SelectValue placeholder="Select supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {suppliers.map((s) => (
+                        <SelectItem key={s.id} value={s.supplier_name}>
+                          {s.supplier_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label>Warehouse Location</Label>
-                  <Input
-                    placeholder="Zone A-01"
-                    className="mt-2 border-[#111827]/10"
+                  <Select
                     value={formData.location}
-                    onChange={(e) =>
+                    onValueChange={(value) =>
                       setFormData({
                         ...formData,
-                        location: e.target.value,
+                        location: value,
                       })
                     }
-                  />
+                  >
+                    <SelectTrigger className="mt-2 border-[#111827]/10">
+                      <SelectValue placeholder="Select location" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {locationOptions.map((loc) => (
+                        <SelectItem key={loc.value} value={loc.label}>
+                          {loc.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label>Cost Price</Label>
@@ -2702,10 +2772,10 @@ export function ProductMaster() {
                           const marginPercent =
                             sellingPrice > 0
                               ? roundMoney(
-                                  ((sellingPrice - costPrice) /
-                                    sellingPrice) *
-                                    100,
-                                )
+                                ((sellingPrice - costPrice) /
+                                  sellingPrice) *
+                                100,
+                              )
                               : 0;
                           const previousRecord =
                             previousPricingByRecordId.get(
@@ -2729,8 +2799,8 @@ export function ProductMaster() {
                               <td className="py-3 px-4 text-[#111827]">
                                 {snapshot.effective_from
                                   ? new Date(
-                                      snapshot.effective_from,
-                                    ).toLocaleDateString()
+                                    snapshot.effective_from,
+                                  ).toLocaleDateString()
                                   : "-"}
                               </td>
                               <td className="py-3 px-4 font-mono text-[#00A3AD] font-semibold">
@@ -2743,14 +2813,14 @@ export function ProductMaster() {
                                 {formatMoney(
                                   costPrice,
                                   snapshot.currency_code ||
-                                    "PHP",
+                                  "PHP",
                                 )}
                               </td>
                               <td className="py-3 px-4 text-right text-[#111827]">
                                 {formatMoney(
                                   sellingPrice,
                                   snapshot.currency_code ||
-                                    "PHP",
+                                  "PHP",
                                 )}
                               </td>
                               <td className="py-3 px-4 text-sm">
@@ -3033,29 +3103,46 @@ export function ProductMaster() {
             </div>
             <div>
               <Label>Supplier</Label>
-              <Input
-                className="mt-2 border-[#111827]/10"
+              <Select
                 value={editFormData.supplier}
-                onChange={(e) =>
-                  setEditFormData({
-                    ...editFormData,
-                    supplier: e.target.value,
-                  })
+                onValueChange={(value) =>
+                  setEditFormData({ ...editFormData, supplier: value })
                 }
-              />
+              >
+                <SelectTrigger className="mt-2 border-[#111827]/10">
+                  <SelectValue placeholder="Select supplier" />
+                </SelectTrigger>
+                <SelectContent>
+                  {suppliers.map((s) => (
+                    <SelectItem key={s.id} value={s.supplier_name}>
+                      {s.supplier_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label>Warehouse Location</Label>
-              <Input
-                className="mt-2 border-[#111827]/10"
+              <Select
                 value={editFormData.location}
-                onChange={(e) =>
+                onValueChange={(value) =>
                   setEditFormData({
                     ...editFormData,
-                    location: e.target.value,
+                    location: value,
                   })
                 }
-              />
+              >
+                <SelectTrigger className="mt-2 border-[#111827]/10">
+                  <SelectValue placeholder="Select location" />
+                </SelectTrigger>
+                <SelectContent>
+                  {locationOptions.map((loc) => (
+                    <SelectItem key={loc.value} value={loc.label}>
+                      {loc.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label>Cost Price</Label>
@@ -3252,181 +3339,7 @@ export function ProductMaster() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="bg-white border-[#111827]/10">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-lg bg-[#00A3AD]/10 flex items-center justify-center">
-                <Package className="w-6 h-6 text-[#00A3AD]" />
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-[#111827]">
-                  {products.length}
-                </div>
-                <div className="text-sm text-[#6B7280]">
-                  Total Products
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-white border-[#111827]/10">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-lg bg-[#1A2B47]/10 flex items-center justify-center">
-                <Barcode className="w-6 h-6 text-[#1A2B47]" />
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-[#111827]">
-                  {products.length}
-                </div>
-                <div className="text-sm text-[#6B7280]">
-                  Unique SKUs
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-white border-[#111827]/10">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-lg bg-[#F97316]/10 flex items-center justify-center">
-                <Package className="w-6 h-6 text-[#F97316]" />
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-[#F97316]">
-                  {
-                    products.filter((p) => p.currentStock <= 0)
-                      .length
-                  }
-                </div>
-                <div className="text-sm text-[#6B7280]">
-                  Out of Stock Items
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-white border-[#111827]/10">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-lg bg-[#0891B2]/10 flex items-center justify-center">
-                <Package className="w-6 h-6 text-[#0891B2]" />
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-[#111827]">
-                  {products
-                    .filter(
-                      (p) => p.category_id === "cold_chain",
-                    )
-                    .reduce(
-                      (sum, p) => sum + p.currentStock,
-                      0,
-                    )}
-                </div>
-                <div className="text-sm text-[#6B7280]">
-                  Cold Chain Units
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
 
-      <Card className="bg-[#1A2B47] border-[#00A3AD] shadow-xl">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-white font-bold">
-              Developer Debug Panel - Live API Monitor
-            </CardTitle>
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-white/20 text-white hover:bg-white/10"
-              onClick={() => setShowDebugPanel(!showDebugPanel)}
-            >
-              {showDebugPanel ? "Hide" : "Show"} Debug Panel
-            </Button>
-          </div>
-          <p className="text-white/60 text-sm mt-2">
-            Real-time monitoring of API requests, payloads, and
-            responses
-          </p>
-        </CardHeader>
-        {showDebugPanel && (
-          <CardContent className="space-y-4">
-            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <div className="text-xs text-white/60 mb-1">
-                SUPABASE REST API ENDPOINT
-              </div>
-              <div className="text-sm text-white font-mono break-all">
-                {scmRestBaseUrl}/products
-              </div>
-            </div>
-            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <div className="text-xs text-white/60 mb-2">
-                LAST PAYLOAD SENT
-              </div>
-              {lastPayload ? (
-                <pre className="text-xs text-[#00A3AD] font-mono overflow-x-auto">
-                  {JSON.stringify(lastPayload, null, 2)}
-                </pre>
-              ) : (
-                <div className="text-sm text-white/40">
-                  No payload sent yet
-                </div>
-              )}
-            </div>
-            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <div className="text-xs text-white/60 mb-2">
-                LAST API RESPONSE
-              </div>
-              {lastResponse ? (
-                <pre className="text-xs text-white font-mono overflow-x-auto">
-                  {JSON.stringify(lastResponse, null, 2)}
-                </pre>
-              ) : (
-                <div className="text-sm text-white/40">
-                  No response received yet
-                </div>
-              )}
-            </div>
-            <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-              <div className="text-xs text-white/60 mb-2">
-                ACTIVITY LOG
-              </div>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {debugLogs.length > 0 ? (
-                  debugLogs.slice(0, 10).map((log, idx) => (
-                    <div
-                      key={idx}
-                      className="text-xs font-mono"
-                    >
-                      <span
-                        className={`inline-block px-2 py-1 rounded mr-2 ${log.type === "error" ? "bg-[#F97316] text-white" : log.type === "success" ? "bg-[#00A3AD] text-white" : "bg-white/10 text-white"}`}
-                      >
-                        {log.type.toUpperCase()}
-                      </span>
-                      <span className="text-xs text-white/60">
-                        {new Date(
-                          log.timestamp,
-                        ).toLocaleTimeString()}
-                      </span>
-                      <span className="text-white ml-2">
-                        {log.message}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-sm text-white/40">
-                    No activity logged yet
-                  </div>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        )}
-      </Card>
     </div>
   );
 }

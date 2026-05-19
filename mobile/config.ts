@@ -1,0 +1,6 @@
+const DEV_HOST = '192.168.68.107';
+
+export const API_CONFIG = {
+  PRODUCT_CATALOG_URL: `http://${DEV_HOST}:4003`,
+  WAREHOUSE_RECEIVING_URL: `http://${DEV_HOST}:4005`,
+};

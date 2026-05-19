@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { supabase, supabaseFulfillment } from "../lib/supabase";
+import { supabase, supabaseFulfillment, supabaseSCM } from "../lib/supabase";
 
 type Direction = "ALL" | "IN" | "OUT";
 
@@ -67,7 +67,7 @@ export default function MovementReport() {
 
   // Load SKU list for dropdown
   useEffect(() => {
-    supabaseFulfillment
+    supabaseSCM
       .from("products")
       .select("sku")
       .order("sku")
@@ -83,7 +83,7 @@ export default function MovementReport() {
   // Load product metadata used by category/location filters
   useEffect(() => {
     const fetchMetaRows = async () => {
-      const { data: products, error: productsError } = await supabaseFulfillment
+      const { data: products, error: productsError } = await supabaseSCM
         .from("products")
         .select("product_id,sku,category,warehouse_location");
 

@@ -1,4 +1,6 @@
 import {
+  clearWinnerFreightQuotesRest,
+  createFreightQuoteRest,
   createPurchaseOrderStatusHistoryRest,
   createPurchaseOrderItemRest,
   createPurchaseOrderRest,
@@ -6,6 +8,7 @@ import {
   deletePurchaseOrderRest,
   getPurchaseOrderByIdRest,
   getCurrentMonthlyBudgetRest,
+  listFreightQuotesRest,
   listCustomsTrackedPurchaseOrdersRest,
   listPurchaseOrderItemsRest,
   listPurchaseOrderStatusHistoryRest,
@@ -13,6 +16,7 @@ import {
   listExpiredReservationsRest,
   listExpiringSoonReservationsRest,
   runExpireReservationsRest,
+  updateFreightQuoteRest,
   updatePurchaseOrderStatusHistoryRest,
   updatePurchaseOrderItemRest,
   updatePurchaseOrderRest,
@@ -37,7 +41,16 @@ const poSelect = `
   is_late,
   customs_entry_date,
   customs_release_date,
+  duties_paid,
   transit_status,
+  transit_updated_at,
+  transit_updated_by,
+  transit_notes,
+  carrier_name,
+  carrier_tracking_ref,
+  freight_mode,
+  freight_cost,
+  freight_type,
   reserved_at,
   expires_at,
   (
@@ -63,6 +76,19 @@ const poStatusHistorySelect = `
   reason
 `;
 
+const freightQuoteSelect = `
+  id,
+  po_id,
+  po_no,
+  provider,
+  freight_type,
+  cost,
+  estimated_days,
+  is_winner,
+  created_at,
+  updated_at
+`;
+
 const mapPO = (row) => ({
   po_id: row.po_id,
   po_no: row.po_no,
@@ -80,7 +106,22 @@ const mapPO = (row) => ({
   is_late: row.is_late,
   customs_entry_date: row.customs_entry_date,
   customs_release_date: row.customs_release_date,
+  duties_paid:
+    row.duties_paid === null || row.duties_paid === undefined
+      ? null
+      : Number(row.duties_paid),
   transit_status: row.transit_status,
+  transit_updated_at: row.transit_updated_at ?? null,
+  transit_updated_by: row.transit_updated_by ?? null,
+  transit_notes: row.transit_notes ?? null,
+  carrier_name: row.carrier_name ?? null,
+  carrier_tracking_ref: row.carrier_tracking_ref ?? null,
+  freight_mode: row.freight_mode ?? null,
+  freight_cost:
+    row.freight_cost === null || row.freight_cost === undefined
+      ? null
+      : Number(row.freight_cost),
+  freight_type: row.freight_type ?? null,
   reserved_at: row.reserved_at,
   expires_at: row.expires_at,
   item_count: Array.isArray(row.purchase_order_items)
@@ -102,6 +143,19 @@ const mapPOStatusHistory = (row) => ({
   changed_at: row.changed_at,
   document_url: row.document_url ?? null,
   reason: row.reason ?? null,
+});
+
+const mapFreightQuote = (row) => ({
+  id: row.id,
+  po_id: row.po_id,
+  po_no: row.po_no,
+  provider: row.provider,
+  freight_type: row.freight_type,
+  cost: Number(row.cost),
+  estimated_days: Number(row.estimated_days),
+  is_winner: Boolean(row.is_winner),
+  created_at: row.created_at,
+  updated_at: row.updated_at,
 });
 
 const useRestFallback = () => !hasDatabaseConfig && hasSupabaseRestConfig;
@@ -342,6 +396,18 @@ export const updatePurchaseOrder = async (poId, payload) => {
     approved_at: "approved_at",
     rejected_at: "rejected_at",
     rejection_reason: "rejection_reason",
+    transit_status: "transit_status",
+    transit_updated_at: "transit_updated_at",
+    transit_updated_by: "transit_updated_by",
+    transit_notes: "transit_notes",
+    carrier_name: "carrier_name",
+    carrier_tracking_ref: "carrier_tracking_ref",
+    customs_entry_date: "customs_entry_date",
+    customs_release_date: "customs_release_date",
+    duties_paid: "duties_paid",
+    freight_mode: "freight_mode",
+    freight_cost: "freight_cost",
+    freight_type: "freight_type",
   };
 
   const updates = [];
@@ -389,6 +455,156 @@ export const updatePurchaseOrderApproval = async (poId, payload) => {
     rejected_at: nextStatus === "rejected" ? nowIso : null,
     rejection_reason: nextStatus === "rejected" ? payload.rejection_reason : null,
   });
+};
+
+export const getFreightQuotes = async (poId) => {
+  if (useRestFallback()) {
+    return (await listFreightQuotesRest(poId)).map(mapFreightQuote);
+  }
+
+  const pool = getPool();
+  const result = await pool.query(
+    `
+      SELECT ${freightQuoteSelect}
+      FROM freight_quotes
+      WHERE po_id = $1
+      ORDER BY created_at ASC
+    `,
+    [poId],
+  );
+
+  return result.rows.map(mapFreightQuote);
+};
+
+export const createFreightQuote = async (poId, poNo, quoteData) => {
+  const payload = {
+    po_id: poId,
+    po_no: poNo,
+    provider: quoteData.provider,
+    freight_type: quoteData.freight_type,
+    cost: quoteData.cost,
+    estimated_days: quoteData.estimated_days,
+  };
+
+  if (useRestFallback()) {
+    const row = await createFreightQuoteRest(payload);
+    return mapFreightQuote(row);
+  }
+
+  const pool = getPool();
+  const result = await pool.query(
+    `
+      INSERT INTO freight_quotes (
+        po_id,
+        po_no,
+        provider,
+        freight_type,
+        cost,
+        estimated_days
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING ${freightQuoteSelect}
+    `,
+    [
+      payload.po_id,
+      payload.po_no,
+      payload.provider,
+      payload.freight_type,
+      payload.cost,
+      payload.estimated_days,
+    ],
+  );
+
+  return mapFreightQuote(result.rows[0]);
+};
+
+export const setWinnerFreightQuote = async (poId, quoteId) => {
+  if (useRestFallback()) {
+    await clearWinnerFreightQuotesRest(poId, quoteId);
+    const winner = await updateFreightQuoteRest(poId, quoteId, {
+      is_winner: true,
+      updated_at: new Date().toISOString(),
+    });
+    if (!winner) {
+      throw createHttpError(404, "Freight quote not found");
+    }
+
+    const updatedPo = await updatePurchaseOrderRest(poId, {
+      freight_type: winner.freight_type,
+      freight_cost: winner.cost,
+    });
+    if (!updatedPo) {
+      throw createHttpError(404, "Purchase order not found");
+    }
+
+    return mapFreightQuote(winner);
+  }
+
+  const pool = getPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const winnerResult = await client.query(
+      `
+        SELECT ${freightQuoteSelect}
+        FROM freight_quotes
+        WHERE po_id = $1 AND id = $2
+        LIMIT 1
+      `,
+      [poId, quoteId],
+    );
+    const winnerRow = winnerResult.rows[0];
+    if (!winnerRow) {
+      throw createHttpError(404, "Freight quote not found");
+    }
+
+    await client.query(
+      `
+        UPDATE freight_quotes
+        SET is_winner = false,
+            updated_at = now()
+        WHERE po_id = $1 AND id <> $2
+      `,
+      [poId, quoteId],
+    );
+
+    const updatedWinnerResult = await client.query(
+      `
+        UPDATE freight_quotes
+        SET is_winner = true,
+            updated_at = now()
+        WHERE po_id = $1 AND id = $2
+        RETURNING ${freightQuoteSelect}
+      `,
+      [poId, quoteId],
+    );
+    const updatedWinner = updatedWinnerResult.rows[0];
+
+    await client.query(
+      `
+        UPDATE purchase_orders
+        SET freight_type = $1,
+            freight_cost = $2
+        WHERE po_id = $3
+      `,
+      [updatedWinner.freight_type, updatedWinner.cost, poId],
+    );
+
+    await client.query("COMMIT");
+    return mapFreightQuote(updatedWinner);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+export const updateTransitStatus = async (poId, updateData) => {
+  const purchaseOrder = await updatePurchaseOrder(poId, updateData);
+  return purchaseOrder;
 };
 
 export const appendPurchaseOrderStatusHistory = async (poId, payload) => {
