@@ -467,13 +467,13 @@ function QRPrintModal({ open, onOpenChange, po }: { open: boolean; onOpenChange:
       setModalItems([]);
       return;
     }
-    
+
     let active = true;
     const loadModalItems = async () => {
       try {
         const itemData = await fetchPurchaseOrderItems(po.po_id);
         if (!active) return;
-        
+
         const itemsWithSku = await Promise.all(
           (itemData ?? []).map(async (it: any) => {
             const { data: prodData } = await supabaseSCM
@@ -488,13 +488,13 @@ function QRPrintModal({ open, onOpenChange, po }: { open: boolean; onOpenChange:
             };
           })
         );
-        
+
         setModalItems(itemsWithSku);
       } catch (err) {
         console.error("Failed to load modal items:", err);
       }
     };
-    
+
     void loadModalItems();
     return () => {
       active = false;
@@ -631,14 +631,14 @@ export function PODetailPage() {
       const quotesPromise = fetchFreightQuotes(poId);
       const deliveryPromise = poData.supplier_name
         ? supabaseFulfillment
-            .from("delivery_schedules")
-            .select(
-              "id, delivery_datetime, warehouse_location, contact_person_name, contact_phone, status",
-            )
-            .eq("supplier_name", poData.supplier_name)
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle()
+          .from("delivery_schedules")
+          .select(
+            "id, delivery_datetime, warehouse_location, contact_person_name, contact_phone, status",
+          )
+          .eq("supplier_name", poData.supplier_name)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
         : Promise.resolve({ data: null, error: null });
 
       try {
@@ -841,13 +841,13 @@ export function PODetailPage() {
       setPo((current) =>
         current
           ? {
-              ...current,
-              approval_status: data.approval_status ?? nextStatus,
-              approved_by:
-                data.approved_by ?? current.approved_by,
-              approved_at:
-                data.approved_at ?? new Date().toISOString(),
-            }
+            ...current,
+            approval_status: data.approval_status ?? nextStatus,
+            approved_by:
+              data.approved_by ?? current.approved_by,
+            approved_at:
+              data.approved_at ?? new Date().toISOString(),
+          }
           : current,
       );
 
@@ -919,12 +919,12 @@ export function PODetailPage() {
       setPo((current) =>
         current
           ? {
-              ...current,
-              approval_status: data.approval_status ?? "Rejected",
-              approved_by:
-                data.approved_by ?? current.approved_by,
-              approved_at: data.approved_at ?? null,
-            }
+            ...current,
+            approval_status: data.approval_status ?? "Rejected",
+            approved_by:
+              data.approved_by ?? current.approved_by,
+            approved_at: data.approved_at ?? null,
+          }
           : current,
       );
 
@@ -990,15 +990,15 @@ export function PODetailPage() {
     : null;
   const isDeliveryOverdue = Boolean(
     deliveryDate &&
-      deliveryDate.getTime() < Date.now() &&
-      normalizeOptional(po.transit_status) !== "received",
+    deliveryDate.getTime() < Date.now() &&
+    normalizeOptional(po.transit_status) !== "received",
   );
   const daysUntilArrival =
     deliveryDate == null
       ? null
       : Math.ceil(
-          (deliveryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24),
-        );
+        (deliveryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+      );
 
   const handleOpenTransitDialog = () => {
     const firstNextStatus = nextTransitOptions[0] ?? "";
@@ -1199,7 +1199,7 @@ export function PODetailPage() {
       </Card>
 
 
-      {po.approval_status !== "Approved" && po.approval_status !== "Rejected" && (
+      {!["approved", "rejected"].includes((po?.approval_status ?? "").toLowerCase()) && (
         <Card className="bg-white border-[#111827]/10 shadow-sm">
           <CardHeader>
             <CardTitle className="text-[#111827] text-base">
@@ -1319,27 +1319,9 @@ export function PODetailPage() {
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-[#6B7280]">Freight Mode</span>
-                  <Badge className={`border ${getFreightModeBadgeClass(freightMode)}`}>
-                    {po.freight_mode || "Ground"}
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between gap-3">
                   <span className="text-[#6B7280]">Freight Type</span>
                   <span className="font-medium text-[#111827]">
                     {po.freight_type || "Not specified"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[#6B7280]">Carrier</span>
-                  <span className="font-medium text-[#111827]">
-                    {po.carrier_name || "Not specified"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[#6B7280]">Carrier Reference</span>
-                  <span className="font-medium text-[#111827]">
-                    {po.carrier_tracking_ref || "Not specified"}
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
@@ -1456,86 +1438,6 @@ export function PODetailPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-[#D7E4F2] bg-white shadow-sm">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between gap-3">
-                <CardTitle className="text-sm font-semibold text-[#111827]">
-                  Transit Status Timeline
-                </CardTitle>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={handleOpenTransitDialog}
-                  disabled={nextTransitOptions.length === 0}
-                  className="bg-[#1A2B47] hover:bg-[#24395e] text-white"
-                >
-                  Update Transit Status
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="space-y-4">
-                {transitSteps.map((step, index) => {
-                  const isCompleted = index < currentTransitStepIndex;
-                  const isCurrent = index === currentTransitStepIndex;
-                  return (
-                    <div key={step} className="flex items-start gap-3">
-                      <div className="relative flex h-7 w-7 items-center justify-center">
-                        {isCompleted ? (
-                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500 text-white">
-                            <Check className="h-4 w-4" />
-                          </div>
-                        ) : isCurrent ? (
-                          <>
-                            <span className="absolute inline-flex h-7 w-7 rounded-full bg-[#1A2B47]/15 animate-ping" />
-                            <div className="relative flex h-7 w-7 items-center justify-center rounded-full bg-[#1A2B47] text-white">
-                              <Circle className="h-3 w-3 fill-current" />
-                            </div>
-                          </>
-                        ) : (
-                          <div className="flex h-7 w-7 items-center justify-center rounded-full border border-[#CBD5E1] bg-white text-[#94A3B8]">
-                            <Circle className="h-3 w-3" />
-                          </div>
-                        )}
-                      </div>
-                      <div className="pt-1">
-                        <div className={`font-medium ${isCurrent || isCompleted ? "text-[#111827]" : "text-[#94A3B8]"}`}>
-                          {transitStepLabels[step] ?? step}
-                        </div>
-                        {isCurrent && (
-                          <div className="text-xs text-[#6B7280]">
-                            Current stage
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-4 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[#6B7280]">Last Updated</span>
-                  <span className="font-medium text-[#111827]">
-                    {formatDateTime(po.transit_updated_at)}
-                  </span>
-                </div>
-                <div className="mt-2 flex items-center justify-between gap-3">
-                  <span className="text-[#6B7280]">Updated By</span>
-                  <span className="font-medium text-[#111827]">
-                    {po.transit_updated_by || "Not recorded"}
-                  </span>
-                </div>
-                <div className="mt-2">
-                  <div className="text-[#6B7280]">Notes</div>
-                  <div className="mt-1 text-[#111827]">
-                    {po.transit_notes || "No transit notes yet."}
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
           {normalizeOptional(po.transit_status) === "arrived_warehouse" && (
             <Card className="border-emerald-200 bg-emerald-50 shadow-sm">
               <CardContent className="flex flex-col gap-4 py-5 md:flex-row md:items-center md:justify-between">
@@ -1593,47 +1495,6 @@ export function PODetailPage() {
               </p>
               <a
                 href={documentUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-sm text-[#00A3AD] hover:underline break-all"
-              >
-                View uploaded PDF
-              </a>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="bg-white border-[#111827]/10 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-[#111827] text-base">
-            Customs Documents
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-[#6B7280]">
-            Upload BoC clearance papers (PDF only).
-          </p>
-
-          <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#00A3AD] text-white cursor-pointer hover:bg-[#0891B2] transition-colors">
-            <Upload className="w-4 h-4" />
-            {uploadingCustoms ? "Uploading..." : "Upload Customs PDF"}
-            <input
-              type="file"
-              accept="application/pdf"
-              className="hidden"
-              onChange={handleUploadCustoms}
-              disabled={uploadingCustoms}
-            />
-          </label>
-
-          {customsDocumentUrl && (
-            <div className="rounded-lg border border-[#E5E7EB] p-3 bg-[#F8FAFC]">
-              <p className="text-sm font-medium text-[#111827] mb-1">
-                Uploaded Customs Document
-              </p>
-              <a
-                href={customsDocumentUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="text-sm text-[#00A3AD] hover:underline break-all"
@@ -1735,17 +1596,17 @@ export function PODetailPage() {
           ))}
         </div>
 
-      <div className="flex justify-end">
-        <Button
-          type="button"
-          onClick={handleSubmit(handlePostLandedCosts)}
-          disabled={landedCostsPosted || postingLandedCosts}
-          className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
-        >
-          {postingLandedCosts ? "Posting..." : "Post Landed Costs"}
-        </Button>
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            onClick={handleSubmit(handlePostLandedCosts)}
+            disabled={landedCostsPosted || postingLandedCosts}
+            className="bg-[#00A3AD] hover:bg-[#0891B2] text-white"
+          >
+            {postingLandedCosts ? "Posting..." : "Post Landed Costs"}
+          </Button>
+        </div>
       </div>
-    </div>
 
       {showRejectModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -1817,28 +1678,6 @@ export function PODetailPage() {
                 value={transitNotesDraft}
                 onChange={(e) => setTransitNotesDraft(e.target.value)}
                 placeholder="Optional transit note..."
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="carrier-name">Carrier Name</Label>
-              <Input
-                id="carrier-name"
-                value={carrierNameDraft}
-                onChange={(e) => setCarrierNameDraft(e.target.value)}
-                placeholder="Optional carrier name"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="carrier-tracking-ref">
-                Carrier Tracking Reference
-              </Label>
-              <Input
-                id="carrier-tracking-ref"
-                value={carrierTrackingDraft}
-                onChange={(e) => setCarrierTrackingDraft(e.target.value)}
-                placeholder="Optional tracking reference"
               />
             </div>
 
@@ -1944,7 +1783,7 @@ export function POList() {
         const { data: shipmentsData } = await supabaseFulfillment
           .from("shipments")
           .select("po_id, tracking_number");
-        
+
         if (shipmentsData) {
           const map: Record<string, string> = {};
           for (const s of shipmentsData) {
@@ -2324,10 +2163,10 @@ export function POList() {
                 ) : (
                   pagedPOs.map((po, i) => {
                     const isReceived = normalizeStatus(po.status) === "received";
-                    
+
                     let badgeText: string | undefined = undefined;
                     let badgeClass = "";
-                    
+
                     if (isReceived) {
                       badgeText = "Received";
                       badgeClass = "bg-[#DCFCE7] text-[#166534]";
@@ -2338,7 +2177,7 @@ export function POList() {
                       badgeText = "On Track";
                       badgeClass = "bg-[#FEF3C7] text-[#92400E]";
                     }
-                    
+
                     return (
                       <tr
                         key={po.po_id}
@@ -2358,7 +2197,7 @@ export function POList() {
                             <span className="text-[#6B7280]">{po.status}</span>
                             {badgeText && (
                               <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${badgeClass}`}>
-                                  {badgeText}
+                                {badgeText}
                               </span>
                             )}
                           </div>
@@ -2403,7 +2242,7 @@ export function POList() {
                                 🖨 Print QR
                               </Button>
                             )}
-                            <span 
+                            <span
                               onClick={() => router.push(`/po-list/${po.po_id}`)}
                               className="text-xs text-[#00A3AD] font-semibold hover:underline cursor-pointer"
                             >

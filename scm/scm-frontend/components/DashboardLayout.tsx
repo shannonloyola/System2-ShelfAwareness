@@ -126,7 +126,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   }, [isLoading, pathname, role, router, user]);
 
   const handleLogout = async () => {
-    window.localStorage.removeItem("mock_admin");
     await supabase.auth.signOut({ scope: "local" });
     toast.success("Logged Out", {
       description: "You have been successfully logged out",
@@ -179,7 +178,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                   )}
                   <Link
                     href={item.href}
-                    prefetch={false}
                     className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
                       isActive
                         ? "bg-[#00A3AD] text-white shadow-md font-semibold"
@@ -273,7 +271,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               <Link
                 key={item.name}
                 href={item.href}
-                prefetch={false}
                 className={`flex flex-col items-center gap-1 px-2 py-2 rounded-lg min-w-[48px] min-h-[48px] justify-center transition-colors ${
                   isActive ? "text-[#00A3AD]" : "text-[#6B7280]"
                 }`}

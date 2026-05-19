@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   TrendingDown,
@@ -32,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
+import { SearchableProductSelect } from "../shared/SearchableProductSelect";
 import {
   Dialog,
   DialogContent,
@@ -184,6 +186,7 @@ function ListPager({
 }
 
 export function StockManagement() {
+  const router = useRouter();
   // Inventory states
   const [searchTerm, setSearchTerm] = useState("");
   const [locationFilter, setLocationFilter] =
@@ -404,13 +407,7 @@ export function StockManagement() {
     [realStock],
   );
 
-  const statusOptions = useMemo(
-    () =>
-      Array.from(new Set(realStock.map((item) => item.status)))
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b)),
-    [realStock],
-  );
+  const statusOptions = ["healthy", "low", "critical", "overstock"];
 
   const lowStockItems = realStock.filter(
     (item) =>
@@ -1362,10 +1359,7 @@ export function StockManagement() {
                           Shortage
                         </div>
                         <div className="text-lg font-bold text-[#F97316]">
-                          -
-                          {(
-                            item.minStock - item.currentStock
-                          ).toLocaleString()}
+                          {Math.max(0, item.minStock - item.currentStock).toLocaleString()}
                         </div>
                       </div>
                     </div>
@@ -1373,8 +1367,7 @@ export function StockManagement() {
                     <div className="flex items-center justify-between">
                       <div className="text-sm text-[#6B7280]">
                         <MapPin className="w-4 h-4 inline mr-1" />
-                        {item.location} • {item.zone} •{" "}
-                        {item.aisle}
+                        {[item.location, item.zone, item.aisle].filter(Boolean).join(" • ") || "No location assigned"}
                       </div>
                       <div className="flex gap-2">
                         <Button
@@ -1402,8 +1395,7 @@ export function StockManagement() {
                             toast.info("Procurement Workflow", {
                               description: `Navigating to Procurement to create P.O. for ${item.sku}...`
                             });
-                            // Conceptually, this would navigate to the Procurement tab/screen
-                            // setMainTab("procurement"); // If procurement was a tab here
+                            router.push(`/procurement?prefillSku=${item.sku}`);
                           }}
                         >
                           Create P.O.
@@ -1518,29 +1510,21 @@ export function StockManagement() {
                       <div className="space-y-4 py-4">
                         <div>
                           <Label>Product</Label>
-                          <Select
+                          <SearchableProductSelect
+                            options={realStock.map((item) => ({
+                              sku: item.id,
+                              name: `${item.name} (${item.sku})`,
+                            }))}
                             value={transferForm.productId}
-                            onValueChange={(v) =>
+                            onChange={(v) =>
                               setTransferForm((p) => ({
                                 ...p,
                                 productId: v,
                               }))
                             }
-                          >
-                            <SelectTrigger id="transfer-product-select" name="productId" className="mt-2 border-[#111827]/10">
-                              <SelectValue placeholder="Select product..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {realStock.map((item) => (
-                                <SelectItem
-                                  key={item.id}
-                                  value={item.id}
-                                >
-                                  {item.name} ({item.sku})
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            placeholder="Type or select product..."
+                            className="mt-2"
+                          />
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                           <div>
@@ -1660,9 +1644,7 @@ export function StockManagement() {
                       <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
                         Location
                       </th>
-                      <th className="text-left py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
-                        Zone/Aisle/Bin
-                      </th>
+
                       <th className="text-right py-4 px-4 text-sm font-semibold text-[#111827] bg-[#F8FAFC]">
                         Current
                       </th>
@@ -1697,10 +1679,7 @@ export function StockManagement() {
                         <td className="py-4 px-4 text-sm text-[#6B7280]">
                           {item.location}
                         </td>
-                        <td className="py-4 px-4 text-sm text-[#6B7280]">
-                          {item.zone} • {item.aisle} •{" "}
-                          {item.bin}
-                        </td>
+
                         <td className="py-4 px-4 text-right">
                           <span
                             className={`font-bold ${

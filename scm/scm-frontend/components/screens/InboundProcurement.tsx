@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import {
   Calendar,
   Plus,
@@ -21,7 +21,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "../ui/tabs";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Select,
   SelectContent,
@@ -29,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
+import { SearchableProductSelect } from "../shared/SearchableProductSelect";
 import { toast } from "sonner";
 import { supabase } from "../../lib/supabase";
 import {
@@ -289,6 +290,9 @@ const CURRENCY_OPTIONS = ["PHP", "JPY"] as const;
 
 export function InboundProcurement() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefillSku = searchParams.get("prefillSku");
+  const prefillConsumed = useRef(false);
   const [activeTab, setActiveTab] = useState<TabFilter>("all");
 
   const [poList, setPoList] = useState<PurchaseOrderRow[]>([]);
@@ -932,6 +936,27 @@ export function InboundProcurement() {
     }
   };
 
+  useEffect(() => {
+    if (prefillSku && products.length > 0 && !prefillConsumed.current) {
+      prefillConsumed.current = true;
+      const product = products.find((p) => normalizeSku(p.sku || "") === normalizeSku(prefillSku));
+      if (product) {
+        openBuilder().then(() => {
+          setLineItemForms([{
+            formId: crypto.randomUUID(),
+            editingPoItemId: null,
+            product: buildProductLabel(product),
+            qty: "1",
+          }]);
+          toast.success("Product Prefilled", {
+            description: `${product.sku} has been added to the P.O. Builder.`,
+          });
+          document.getElementById("po-builder-card")?.scrollIntoView({ behavior: 'smooth' });
+        });
+      }
+    }
+  }, [prefillSku, products]);
+
   const selectPO = (po: PurchaseOrderRow) => {
     setSelectedPO(po);
     setIsEditingPO(false);
@@ -1354,7 +1379,7 @@ export function InboundProcurement() {
           </CardContent>
         </Card>
 
-        <Card className="bg-white border-[#111827]/10 shadow-sm">
+        <Card id="po-builder-card" className="bg-white border-[#111827]/10 shadow-sm">
           <CardHeader>
             <CardTitle className="text-[#111827] font-semibold">
               P.O. Builder
@@ -1777,9 +1802,16 @@ export function InboundProcurement() {
                             ? "Edit Quantity"
                             : "New Line Item"}
                         </Label>
-                        <Select
-                          value={form.product || undefined}
-                          onValueChange={(value) =>
+                        <SearchableProductSelect
+                          options={products
+                            .map((p) => ({
+                              sku: buildProductLabel(p),
+                              name: buildProductLabel(p),
+                            }))
+                            .filter((o) => !!o.sku)
+                          }
+                          value={form.product || ""}
+                          onChange={(value) =>
                             setLineItemForms((prev) =>
                               prev.map((f) =>
                                 f.formId === form.formId
@@ -1789,26 +1821,8 @@ export function InboundProcurement() {
                             )
                           }
                           disabled={!!form.editingPoItemId}
-                        >
-                          <SelectTrigger className={builderInputClass.replace("mt-2 ", "")}>
-                            <SelectValue placeholder="Select product from master..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {products.map((product, idx) => {
-                              const label =
-                                buildProductLabel(product);
-                              if (!label) return null;
-                              return (
-                                <SelectItem
-                                  key={`${label}-${idx}`}
-                                  value={label}
-                                >
-                                  {label}
-                                </SelectItem>
-                              );
-                            })}
-                          </SelectContent>
-                        </Select>
+                          placeholder="Type or select product..."
+                        />
 
                         <Input
                           type="number"

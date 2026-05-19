@@ -14,22 +14,23 @@ interface KPIData {
 }
 
 const Sparkline = ({ data, stroke }: { data: number[]; stroke: string }) => {
+  const pointsData = data.length >= 2 ? data : [0, 0];
   const width = 54;
   const height = 24;
   const pad = 2;
-  const max = Math.max(...data);
-  const min = Math.min(...data);
+  const max = Math.max(...pointsData);
+  const min = Math.min(...pointsData);
   const range = max - min || 1;
 
-  const points = data
+  const points = pointsData
     .map((val, idx) => {
-      const x = pad + (idx / (data.length - 1)) * (width - pad * 2);
+      const x = pad + (idx / (pointsData.length - 1)) * (width - pad * 2);
       const y = pad + (height - pad * 2) - ((val - min) / range) * (height - pad * 2);
       return `${x},${y}`;
     })
     .join(" ");
 
-  const last = data[data.length - 1];
+  const last = pointsData[pointsData.length - 1];
   const endX = width - pad;
   const endY = pad + (height - pad * 2) - ((last - min) / range) * (height - pad * 2);
 
@@ -48,45 +49,67 @@ const Sparkline = ({ data, stroke }: { data: number[]; stroke: string }) => {
   );
 };
 
+const KPIColor = (label: string, delta: number, inverseGood?: boolean) => {
+  if (delta === 0) return "var(--accent-teal)";
+
+  const increasing = delta > 0;
+  if (label === "Backorder Count") return increasing ? "#ef4444" : "#22c55e";
+  if (label === "Avg Fulfillment (Days)" || label === "Pending Approvals") return increasing ? "#ef4444" : "#22c55e";
+  if (label === "Cycle Count Accuracy") return increasing ? "#22c55e" : "#ef4444";
+  if (label === "Pending Transfers") return increasing ? "#ef4444" : "#22c55e";
+
+  return inverseGood ? (increasing ? "#ef4444" : "#22c55e") : (increasing ? "#22c55e" : "#ef4444");
+};
+
+const KPISkeletonCard = ({ index }: { index: number }) => (
+  <div
+    className="relative grid min-h-[98px] grid-cols-[minmax(0,1fr)_54px] items-center gap-3 overflow-hidden rounded-xl border px-4 py-3 shadow-sm"
+    style={{
+      backgroundColor: "var(--bg-surface)",
+      borderColor: "var(--border-subtle)",
+    }}
+  >
+    <style>{`
+      @keyframes kpi-shimmer {
+        0% { transform: translateX(-110%); }
+        100% { transform: translateX(210%); }
+      }
+    `}</style>
+    <div className="space-y-3">
+      <div className="h-2.5 w-24 rounded bg-[var(--border)]" />
+      <div className="h-5 w-20 rounded bg-[var(--border)]" />
+      <div className="h-3 w-28 rounded bg-[var(--border)]" />
+    </div>
+    <div className="h-6 w-[54px] rounded bg-[var(--border)]" />
+    <div
+      className="absolute inset-y-0 w-1/2"
+      style={{
+        animation: `kpi-shimmer 1.8s ease-in-out ${index * 90}ms infinite`,
+        background: "linear-gradient(90deg, transparent, rgba(0, 163, 173, 0.1), transparent)",
+      }}
+    />
+  </div>
+);
+
 export default function KPIScorecardBar() {
   const { activeRole, filters, clearFilters, setFilter } = useDashboardStore();
   const { data, isLoading } = useDashboardData();
   const kpis = (data?.kpis?.[activeRole] || []).slice(0, 5) as KPIData[];
-  const displayKpis: KPIData[] = isLoading && kpis.length === 0
-    ? Array.from({ length: 5 }).map(() => ({
-        label: "Loading backend data",
-        value: "--",
-        delta: 0,
-        trend: [0, 0],
-      }))
-    : kpis;
   const activeFilterKeys = Object.entries(filters).filter(([_, val]) => val !== null);
 
   return (
     <div id="kpi-scorecard-bar" className="flex w-full flex-col border-b" style={{ backgroundColor: "var(--bg-base)", borderColor: "var(--border-subtle)" }}>
       <div className="grid w-full grid-cols-1 gap-3 px-5 py-3 sm:grid-cols-2 xl:grid-cols-5">
-        {displayKpis.map((kpi, idx) => {
-          let deltaColor = "var(--accent-teal)";
-          let trendColor = "var(--accent-teal)";
+        {isLoading && kpis.length === 0 ? (
+          Array.from({ length: 5 }).map((_, idx) => <KPISkeletonCard key={idx} index={idx} />)
+        ) : kpis.map((kpi, idx) => {
+          let deltaColor = KPIColor(kpi.label, kpi.delta, kpi.inverseGood);
+          let trendColor = deltaColor;
           let DeltaIcon = Minus;
-          const useStrictExecutiveTrend = activeRole === "Executive" && idx < 4;
-          const useStrictOperationsLogic = activeRole === "Operations";
 
           if (kpi.delta > 0) {
-            deltaColor = useStrictExecutiveTrend
-              ? "#22c55e"
-              : useStrictOperationsLogic
-                ? (kpi.inverseGood ? "#ef4444" : "#22c55e")
-                : kpi.inverseGood ? "var(--accent-amber)" : "var(--accent-green)";
-            trendColor = deltaColor;
             DeltaIcon = ArrowUpRight;
           } else if (kpi.delta < 0) {
-            deltaColor = useStrictExecutiveTrend
-              ? "#ef4444"
-              : useStrictOperationsLogic
-                ? (kpi.inverseGood ? "#22c55e" : "#ef4444")
-                : kpi.inverseGood ? "var(--accent-green)" : "var(--accent-amber)";
-            trendColor = deltaColor;
             DeltaIcon = ArrowDownRight;
           }
 

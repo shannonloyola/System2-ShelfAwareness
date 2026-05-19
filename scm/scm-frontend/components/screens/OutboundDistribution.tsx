@@ -18,6 +18,7 @@ import {
   Printer
 } from "lucide-react";
 import { QRLabelModal } from "../shared/QRLabelModal";
+import { SearchableProductSelect } from "../shared/SearchableProductSelect";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -297,12 +298,14 @@ export function OutboundDistribution() {
         orderTotal: Number(order.total_amount ?? 0),
       });
       setInvoiceSummary(data);
+      return data;
     } catch (error) {
       toast.error("Failed to load invoice payment data", {
         description:
           error instanceof Error ? error.message : "Unknown error",
       });
       setInvoiceSummary(null);
+      return null;
     } finally {
       setLoadingInvoiceSummary(false);
     }
@@ -548,7 +551,11 @@ export function OutboundDistribution() {
         notes: "",
       }));
 
-      await fetchInvoiceSummary(selectedPaymentOrder);
+      const newSummary = await fetchInvoiceSummary(selectedPaymentOrder);
+      await fetchOrders();
+      if (newSummary && newSummary.remainingBalance <= 0) {
+        setIsPaymentModalOpen(false);
+      }
     } catch (error) {
       toast.error("Failed to log payment", {
         description:
@@ -672,57 +679,7 @@ export function OutboundDistribution() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="bg-white border-[#111827]/10 shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-[#6B7280]">Total Inventory Value (PHP)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold mb-1 text-[#1A2B47]">
-              {totalInventoryValue !== null
-                ? formatPHP(Number(totalInventoryValue))
-                : "Loading..."}
-            </div>
-            <p className="text-xs text-[#6B7280]">Current stock value</p>
-          </CardContent>
-        </Card>
 
-        <Card className="bg-white border-[#111827]/10 shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-[#6B7280]">Total Outstanding</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold mb-1 text-[#F97316]">
-              {formatPHP(totalOutstanding)}
-            </div>
-            <p className="text-xs text-[#6B7280]">Across {retailerCount} retailers</p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-white border-[#111827]/10 shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-[#6B7280]">Collected (Current)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold mb-1 text-[#00A3AD]">
-              {formatPHP(totalCollected)}
-            </div>
-            <p className="text-xs font-medium text-[#00A3AD]">+18% vs last month</p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-white border-[#111827]/10 shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-[#6B7280]">Overdue Accounts</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold mb-1 text-[#F97316]">
-              {overdueCount}
-            </div>
-            <p className="text-xs font-medium text-[#F97316]">Requires follow-up</p>
-          </CardContent>
-        </Card>
-      </div>
 
       {showLogForm && (
         <div className="border rounded-xl p-5 bg-white shadow-sm space-y-4 mb-4">
@@ -838,18 +795,17 @@ export function OutboundDistribution() {
               {newOrder.lines.map((line, idx) => (
                 <div key={idx} className="flex gap-2 items-end">
                   <div className="flex-1 space-y-1">
-                    <select
+                    <SearchableProductSelect
+                      options={availableProducts.map((p) => ({
+                        sku: p.sku,
+                        name: `${p.product_name} (${p.sku})`,
+                        price: p.selling_price,
+                        stock: p.current_stock,
+                      }))}
                       value={line.sku}
-                      onChange={(e) => updateLine(idx, "sku", e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
-                    >
-                      <option value="">Select product...</option>
-                      {availableProducts.map((p) => (
-                        <option key={p.sku} value={p.sku}>
-                          {p.product_name} ({p.sku}) - ₱{p.selling_price.toLocaleString()} [Stock: {p.current_stock}]
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(val) => updateLine(idx, "sku", val)}
+                      placeholder="Type or select product..."
+                    />
                   </div>
                   <div className="w-24 space-y-1">
                     <input
@@ -1196,7 +1152,8 @@ export function OutboundDistribution() {
                         placeholder="0.00"
                         value={paymentForm.amount}
                         onChange={(e) => setPaymentForm({...paymentForm, amount: sanitizeDecimalInput(e.target.value)})}
-                        onKeyDown={blockInvalidNumberKeys}
+                        onKeyDown={(e) => blockInvalidNumberKeys(e, { allowDecimal: true })}
+                        className="border border-gray-300 focus:border-teal-500 focus:ring-teal-500 focus-visible:ring-teal-500"
                       />
                     </div>
                     <div className="space-y-1">
@@ -1205,6 +1162,7 @@ export function OutboundDistribution() {
                         type="date"
                         value={paymentForm.paymentDate}
                         onChange={(e) => setPaymentForm({...paymentForm, paymentDate: e.target.value})}
+                        className="border border-gray-300 focus:border-teal-500 focus:ring-teal-500 focus-visible:ring-teal-500"
                       />
                     </div>
                     <div className="space-y-1">
@@ -1213,6 +1171,7 @@ export function OutboundDistribution() {
                         placeholder="e.g. CHK-9902"
                         value={paymentForm.reference}
                         onChange={(e) => setPaymentForm({...paymentForm, reference: e.target.value})}
+                        className="border border-gray-300 focus:border-teal-500 focus:ring-teal-500 focus-visible:ring-teal-500"
                       />
                     </div>
                     <Button

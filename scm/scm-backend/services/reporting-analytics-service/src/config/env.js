@@ -62,4 +62,12 @@ export const env = {
     process.env.DISTRIBUTION_SERVICE_URL ||
     process.env.NEXT_PUBLIC_DISTRIBUTION_SERVICE_URL ||
     "http://localhost:4006",
+  supplierServiceUrl:
+    process.env.SUPPLIER_SERVICE_URL ||
+    process.env.NEXT_PUBLIC_SUPPLIER_SERVICE_URL ||
+    "http://localhost:4001",
+  cycleCountingServiceUrl:
+    process.env.CYCLE_COUNTING_SERVICE_URL ||
+    process.env.NEXT_PUBLIC_CYCLE_COUNTING_SERVICE_URL ||
+    "http://localhost:4009",
 };

@@ -22,24 +22,24 @@ const formatPHPCompact = (value: number) =>
   }).format(value);
 
 const Sparkline = ({ data, stroke }: { data: number[]; stroke: string }) => {
-  if (!data.length) return null;
-  const max = Math.max(...data);
-  const min = Math.min(...data);
+  const pointsData = data.length >= 2 ? data : [0, 0];
+  const max = Math.max(...pointsData);
+  const min = Math.min(...pointsData);
   const range = max - min || 1;
   const width = 72;
   const height = 28;
   const pad = 3;
 
-  const points = data
+  const points = pointsData
     .map((value, index) => {
-      const x = pad + (index / (data.length - 1)) * (width - 2 * pad);
+      const x = pad + (index / (pointsData.length - 1)) * (width - 2 * pad);
       const y = pad + (height - 2 * pad) - ((value - min) / range) * (height - 2 * pad);
       return `${x},${y}`;
     })
     .join(" ");
 
   const lastX = width - pad;
-  const lastY = pad + (height - 2 * pad) - ((data[data.length - 1] - min) / range) * (height - 2 * pad);
+  const lastY = pad + (height - 2 * pad) - ((pointsData[pointsData.length - 1] - min) / range) * (height - 2 * pad);
 
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="block overflow-hidden">
@@ -55,6 +55,7 @@ export default function TopExposureProducts() {
   const activeSku = useDashboardStore((state) => state.filters.sku);
   const { data, isLoading } = useDashboardData();
   const exposureProducts = data?.executive?.topExposureProducts || [];
+  const hasBudget = Boolean(data?.executive?.budgetPosition);
   const maxExposure = Math.max(...exposureProducts.map((item) => item.exposure), 1);
 
   useEffect(() => {
@@ -73,8 +74,8 @@ export default function TopExposureProducts() {
         const trendDirection = trendDelta > 0.2 ? "up" : trendDelta < -0.2 ? "down" : "flat";
         const trendColor = trendDirection === "up" ? "#22c55e" : trendDirection === "down" ? "#ef4444" : "#475569";
         const TrendIcon = trendDirection === "up" ? ArrowUpRight : trendDirection === "down" ? ArrowDownRight : Minus;
-        const budgetColor = item.budgetUtilizationPct >= 90 ? "var(--accent-amber)" : item.budgetUtilizationPct >= 75 ? "#5B7C99" : "var(--accent-green)";
-        const exposureBarColor = item.budgetUtilizationPct > 90 ? "#ef4444" : "#475569";
+        const budgetColor = !hasBudget ? "var(--text-secondary)" : item.budgetUtilizationPct >= 90 ? "var(--accent-amber)" : item.budgetUtilizationPct >= 75 ? "#5B7C99" : "var(--accent-green)";
+        const exposureBarColor = hasBudget && item.budgetUtilizationPct > 90 ? "#ef4444" : "#475569";
 
         return (
           <div
@@ -111,9 +112,9 @@ export default function TopExposureProducts() {
               </div>
               <div className="mt-1 flex items-center gap-1 text-[7px]">
                 <span className="rounded-full px-2 py-0.5 font-semibold" style={{ backgroundColor: "var(--bg-elevated)", color: budgetColor }}>
-                  Budget {item.budgetUtilizationPct.toFixed(0)}%
+                  Budget {hasBudget ? `${item.budgetUtilizationPct.toFixed(0)}%` : "N/A"}
                 </span>
-                <span style={{ color: "var(--text-secondary)" }}>{formatPHPCompact(item.budgetRemaining)} left</span>
+                <span style={{ color: "var(--text-secondary)" }}>{hasBudget ? `${formatPHPCompact(item.budgetRemaining)} left` : "No budget row"}</span>
               </div>
             </div>
 

@@ -38,6 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
+import { SearchableProductSelect } from "../shared/SearchableProductSelect";
 import {
   Dialog,
   DialogContent,
@@ -1823,9 +1824,13 @@ export function WarehouseReceiving() {
                         <Label className="text-[#6B7280]">
                           Product
                         </Label>
-                        <Select
+                        <SearchableProductSelect
+                          options={inventory.map((item) => ({
+                            sku: item.id,
+                            name: `${item.name} (${item.sku})`,
+                          }))}
                           value={line.productId}
-                          onValueChange={(v) =>
+                          onChange={(v) =>
                             updateLine(
                               line.lineId,
                               "productId",
@@ -1833,27 +1838,9 @@ export function WarehouseReceiving() {
                             )
                           }
                           disabled={isPosted}
-                        >
-                          <SelectTrigger className="mt-2 border-[#111827]/10 bg-white">
-                            <SelectValue placeholder="Select product" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {inventory.length === 0 ? (
-                              <div className="px-3 py-2 text-sm text-[#6B7280]">
-                                No products loaded yet.
-                              </div>
-                            ) : (
-                              inventory.map((item) => (
-                                <SelectItem
-                                  key={item.id}
-                                  value={item.id}
-                                >
-                                  {item.name} ({item.sku})
-                                </SelectItem>
-                              ))
-                            )}
-                          </SelectContent>
-                        </Select>
+                          placeholder="Type or select product..."
+                          className="mt-2"
+                        />
                       </div>
                       <div>
                         <Label className="text-[#6B7280]">

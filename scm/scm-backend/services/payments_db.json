@@ -1,0 +1,52 @@
+[
+  {
+    "id": "c2d967da-c155-4634-93ef-d8cd3afa0def",
+    "supplier_name": "Physical Branch POS - Manila",
+    "amount": 500,
+    "payment_date": "2026-05-19",
+    "payment_method": "Check",
+    "reference_no": "RO-POS-2026-BO-001",
+    "notes": "[Invoice:RO-POS-2026-BO-001]",
+    "created_at": "2026-05-19T00:02:31.425Z"
+  },
+  {
+    "id": "af0df11b-c5d8-4e60-b108-5a080543295f",
+    "supplier_name": "Physical Branch POS - Manila",
+    "amount": 500,
+    "payment_date": "2026-05-19",
+    "payment_method": "Check",
+    "reference_no": "RO-POS-2026-BO-001",
+    "notes": "[Invoice:RO-POS-2026-BO-001]",
+    "created_at": "2026-05-19T00:05:16.991Z"
+  },
+  {
+    "id": "5afb84df-9a93-4e6d-811d-76985957d236",
+    "supplier_name": "Physical Branch POS - Cebu",
+    "amount": 395.88,
+    "payment_date": "2026-05-19",
+    "payment_method": "Check",
+    "reference_no": "RO-POS-2026-BO-002",
+    "notes": "[Invoice:RO-POS-2026-BO-002]",
+    "created_at": "2026-05-19T00:22:01.236Z"
+  },
+  {
+    "id": "38741b90-6435-429c-96d5-00d5e49d713a",
+    "supplier_name": "gwnwrika",
+    "amount": 2310,
+    "payment_date": "2026-05-19",
+    "payment_method": "Check",
+    "reference_no": "CHK-077",
+    "notes": "[Invoice:invoice]",
+    "created_at": "2026-05-19T00:24:47.056Z"
+  },
+  {
+    "id": "e4c2f0a8-bd22-4b1a-8177-227928925d5f",
+    "supplier_name": "gwnwrika",
+    "amount": 2310,
+    "payment_date": "2026-05-19",
+    "payment_method": "Check",
+    "reference_no": "chk-654",
+    "notes": "[Invoice:invoice]",
+    "created_at": "2026-05-19T00:41:16.543Z"
+  }
+]
