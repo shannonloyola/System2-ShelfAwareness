@@ -1,4 +1,5 @@
 import { supabaseSCM } from "./supabase";
+import { localizeServiceUrl } from "./localServiceUrl";
 
 export type ProductCatalogPayload = {
   sku: string;
@@ -29,18 +30,8 @@ const productCatalogServiceBaseUrl =
   process.env.VITE_PRODUCT_CATALOG_SERVICE_URL ||
   "http://localhost:4003";
 
-// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
-const getBaseUrl = () => {
-  if (
-    !productCatalogServiceBaseUrl || 
-    productCatalogServiceBaseUrl.trim() === "" ||
-    !productCatalogServiceBaseUrl.startsWith("http")
-  ) {
-    return "http://localhost:4003";
-  }
-  return productCatalogServiceBaseUrl;
-};
-
+const getBaseUrl = () =>
+  localizeServiceUrl(productCatalogServiceBaseUrl, "http://localhost:4003");
 
 const parseError = async (response: Response) => {
   const text = await response.text();

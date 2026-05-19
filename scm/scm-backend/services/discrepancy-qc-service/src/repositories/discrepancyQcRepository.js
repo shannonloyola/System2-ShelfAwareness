@@ -2,6 +2,7 @@ import { hasSupabaseRestConfig } from "../lib/database.js";
 import { createHttpError } from "../lib/http.js";
 import {
   listQualityChecksRest,
+  listProductsBySkusRest,
   listShipmentDiscrepanciesRest,
   saveGrnQualityChecksRest,
   updateShipmentDiscrepancyRest,
@@ -78,15 +79,43 @@ export const getQualityReportsSummary = async () => {
     (r) => r.status !== "resolved" && r.status !== "approved",
   ).length;
 
+  const skus = Array.from(
+    new Set(
+      discrepancyRows
+        .map((row) => String(row.sku || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const productRows = await listProductsBySkusRest(skus);
+  const supplierBySku = new Map(
+    productRows
+      .map((row) => [
+        String(row.sku || "").trim().toLowerCase(),
+        String(row.supplier || "").trim(),
+      ])
+      .filter(([, supplier]) => supplier),
+  );
+
+  const getSupplierName = (row) => {
+    const directName = String(
+      row.supplier_name ??
+        row.vendor_name ??
+        row.supplier ??
+        row.vendor ??
+        "",
+    ).trim();
+
+    if (directName && directName.toLowerCase() !== "unknown supplier") {
+      return directName;
+    }
+
+    return supplierBySku.get(String(row.sku || "").trim().toLowerCase()) || "";
+  };
+
   const supplierMap = new Map();
   discrepancyRows.forEach((row) => {
-    const name =
-      row.supplier_name ??
-      row.vendor_name ??
-      row.supplier ??
-      row.vendor ??
-      row.reported_by ??
-      "Unknown Supplier";
+    const name = getSupplierName(row);
+    if (!name) return;
     supplierMap.set(name, (supplierMap.get(name) ?? 0) + 1);
   });
 

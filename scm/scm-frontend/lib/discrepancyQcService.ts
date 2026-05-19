@@ -22,18 +22,8 @@ const discrepancyQcServiceBaseUrl =
   process.env.VITE_DISCREPANCY_QC_SERVICE_URL ||
   "http://localhost:4007";
 
-// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
-const getBaseUrl = () => {
-  if (
-    !discrepancyQcServiceBaseUrl || 
-    discrepancyQcServiceBaseUrl.trim() === "" ||
-    !discrepancyQcServiceBaseUrl.startsWith("http")
-  ) {
-    return "http://localhost:4007";
-  }
-  return discrepancyQcServiceBaseUrl;
-};
-
+const getBaseUrl = () =>
+  localizeServiceUrl(discrepancyQcServiceBaseUrl, "http://localhost:4007");
 
 const parseError = async (response: Response) => {
   const text = await response.text();
@@ -110,3 +100,4 @@ export const fetchDiscrepancyReportsSummary = async () => {
   }>(`${getBaseUrl()}/shipment-discrepancies/reports/summary`);
   return payload.data;
 };
+import { localizeServiceUrl } from "./localServiceUrl";

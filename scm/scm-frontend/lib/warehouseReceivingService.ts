@@ -14,18 +14,8 @@ const warehouseReceivingServiceBaseUrl =
   process.env.VITE_WAREHOUSE_RECEIVING_SERVICE_URL ||
   "http://localhost:4005";
 
-// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
-const getBaseUrl = () => {
-  if (
-    !warehouseReceivingServiceBaseUrl || 
-    warehouseReceivingServiceBaseUrl.trim() === "" ||
-    !warehouseReceivingServiceBaseUrl.startsWith("http")
-  ) {
-    return "http://localhost:4005";
-  }
-  return warehouseReceivingServiceBaseUrl;
-};
-
+const getBaseUrl = () =>
+  localizeServiceUrl(warehouseReceivingServiceBaseUrl, "http://localhost:4005");
 
 const parseError = async (response: Response) => {
   const text = await response.text();
@@ -107,3 +97,4 @@ export const scheduleWarehouseDelivery = async (payload: {
   );
   return response.data;
 };
+import { localizeServiceUrl } from "./localServiceUrl";

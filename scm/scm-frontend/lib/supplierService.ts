@@ -1,4 +1,5 @@
 import { supabaseSCM } from "./supabase";
+import { localizeServiceUrl } from "./localServiceUrl";
 
 export type SupplierRecord = {
   id: string;
@@ -50,18 +51,8 @@ const supplierServiceBaseUrl =
   process.env.VITE_SUPPLIER_SERVICE_URL ||
   "http://localhost:4001";
 
-// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
-const getBaseUrl = () => {
-  if (
-    !supplierServiceBaseUrl || 
-    supplierServiceBaseUrl.trim() === "" ||
-    !supplierServiceBaseUrl.startsWith("http")
-  ) {
-    return "http://localhost:4001";
-  }
-  return supplierServiceBaseUrl;
-};
-
+const getBaseUrl = () =>
+  localizeServiceUrl(supplierServiceBaseUrl, "http://localhost:4001");
 
 const parseError = async (response: Response) => {
   const text = await response.text();

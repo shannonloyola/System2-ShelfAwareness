@@ -10,21 +10,11 @@ const backendBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   "http://localhost:3001";
 
-// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
-const getBaseUrl = () => {
-  if (
-    !backendBaseUrl || 
-    backendBaseUrl.trim() === "" ||
-    !backendBaseUrl.startsWith("http")
-  ) {
-    return "http://localhost:3001";
-  }
-  return backendBaseUrl;
-};
-
+const getBaseUrl = () =>
+  localizeServiceUrl(backendBaseUrl, "http://localhost:3001");
 
 function getHealthUrls() {
-  const baseUrl = backendBaseUrl.replace(/\/+$/, "");
+  const baseUrl = getBaseUrl().replace(/\/+$/, "");
   const urls = new Set<string>();
 
   urls.add(`${baseUrl}/health`);
@@ -86,3 +76,4 @@ export async function fetchBackendHealth() {
     };
   }
 }
+import { localizeServiceUrl } from "./localServiceUrl";

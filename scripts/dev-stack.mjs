@@ -4,11 +4,46 @@ import process from "node:process";
 
 const npmCmd = "npm";
 
+const localServiceEnv = {
+  NEXT_PUBLIC_SUPPLIER_SERVICE_URL: "http://localhost:4001",
+  NEXT_PUBLIC_PROCUREMENT_SERVICE_URL: "http://localhost:4002",
+  NEXT_PUBLIC_PRODUCT_CATALOG_SERVICE_URL: "http://localhost:4003",
+  NEXT_PUBLIC_INVENTORY_SERVICE_URL: "http://localhost:4004",
+  NEXT_PUBLIC_WAREHOUSE_RECEIVING_SERVICE_URL: "http://localhost:4005",
+  NEXT_PUBLIC_DISTRIBUTION_SERVICE_URL: "http://localhost:4006",
+  NEXT_PUBLIC_DISCREPANCY_QC_SERVICE_URL: "http://localhost:4007",
+  NEXT_PUBLIC_STOCK_ADJUSTMENT_SERVICE_URL: "http://localhost:4008",
+  NEXT_PUBLIC_CYCLE_COUNTING_SERVICE_URL: "http://localhost:4009",
+  NEXT_PUBLIC_RISK_COMPLIANCE_SERVICE_URL: "http://localhost:4010",
+  NEXT_PUBLIC_NOTIFICATION_SERVICE_URL: "http://localhost:4011",
+  NEXT_PUBLIC_REPORTING_ANALYTICS_SERVICE_URL: "http://localhost:4012",
+  NEXT_PUBLIC_DOCUMENT_SERVICE_URL: "http://localhost:4013",
+  NEXT_PUBLIC_AUTH_USER_ACCESS_SERVICE_URL: "http://localhost:4014",
+};
+
+const localInternalServiceEnv = {
+  SUPPLIER_SERVICE_URL: "http://localhost:4001",
+  PROCUREMENT_SERVICE_URL: "http://localhost:4002",
+  PRODUCT_CATALOG_SERVICE_URL: "http://localhost:4003",
+  INVENTORY_SERVICE_URL: "http://localhost:4004",
+  WAREHOUSE_RECEIVING_SERVICE_URL: "http://localhost:4005",
+  DISTRIBUTION_SERVICE_URL: "http://localhost:4006",
+  DISCREPANCY_QC_SERVICE_URL: "http://localhost:4007",
+  STOCK_ADJUSTMENT_SERVICE_URL: "http://localhost:4008",
+  CYCLE_COUNTING_SERVICE_URL: "http://localhost:4009",
+  RISK_COMPLIANCE_SERVICE_URL: "http://localhost:4010",
+  NOTIFICATION_SERVICE_URL: "http://localhost:4011",
+  REPORTING_ANALYTICS_SERVICE_URL: "http://localhost:4012",
+  DOCUMENT_SERVICE_URL: "http://localhost:4013",
+  AUTH_USER_ACCESS_SERVICE_URL: "http://localhost:4014",
+};
+
 const serviceCandidates = [
   {
     name: "frontend",
     cwd: "scm/scm-frontend",
     args: ["run", "dev", "--", "--port", "5173"],
+    env: localServiceEnv,
   },
   {
     name: "backend",
@@ -77,6 +112,7 @@ const serviceCandidates = [
     name: "reporting-analytics-service",
     cwd: "scm/scm-backend/services/reporting-analytics-service",
     args: ["run", "start"],
+    env: localInternalServiceEnv,
   },
   {
     name: "document-service",
@@ -158,7 +194,7 @@ const colors = [36, 35, 33, 32, 34, 91, 92, 93, 94, 95, 96];
 services.forEach((service, index) => {
   const child = spawn(npmCmd, service.args, {
     cwd: service.cwd,
-    env: process.env,
+    env: { ...process.env, ...(service.env ?? {}) },
     stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",
     windowsHide: true,

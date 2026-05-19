@@ -1,7 +1,8 @@
 "use client";
 
-import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { fetchDashboardAnalytics, type DashboardAnalyticsData } from "@/lib/dashboardAnalyticsService";
+import { supabaseFulfillment, supabaseQuality, supabaseSCM } from "@/lib/supabase";
 import { useDashboardStore } from "@/store/dashboardStore";
 
 type DashboardDataContextValue = {
@@ -19,7 +20,7 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refetch = async () => {
+  const refetch = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
@@ -31,11 +32,118 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void refetch();
-  }, [dateRange]);
+  }, [dateRange, refetch]);
+
+  useEffect(() => {
+    let refreshTimer: number | null = null;
+
+    const scheduleRefresh = () => {
+      if (refreshTimer) {
+        window.clearTimeout(refreshTimer);
+      }
+
+      refreshTimer = window.setTimeout(() => {
+        void refetch();
+      }, 500);
+    };
+
+    const refetchWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        scheduleRefresh();
+      }
+    };
+
+    const interval = window.setInterval(refetchWhenVisible, 15000);
+    window.addEventListener("focus", refetchWhenVisible);
+    document.addEventListener("visibilitychange", refetchWhenVisible);
+
+    return () => {
+      if (refreshTimer) {
+        window.clearTimeout(refreshTimer);
+      }
+
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refetchWhenVisible);
+      document.removeEventListener("visibilitychange", refetchWhenVisible);
+    };
+  }, [refetch]);
+
+  useEffect(() => {
+    let refreshTimer: number | null = null;
+
+    const scheduleDashboardRefresh = () => {
+      if (document.visibilityState !== "visible") return;
+
+      if (refreshTimer) {
+        window.clearTimeout(refreshTimer);
+      }
+
+      refreshTimer = window.setTimeout(() => {
+        void refetch();
+      }, 750);
+    };
+
+    const watchTables = (
+      channel: ReturnType<typeof supabaseSCM.channel>,
+      tables: string[],
+    ) => {
+      tables.forEach((table) => {
+        channel.on(
+          "postgres_changes",
+          { event: "*", schema: "public", table },
+          scheduleDashboardRefresh,
+        );
+      });
+
+      return channel.subscribe();
+    };
+
+    const scmChannel = watchTables(
+      supabaseSCM.channel("dashboard-scm-data-changes"),
+      [
+        "products",
+        "product_pricing",
+        "suppliers",
+        "supplier_scorecard_cache",
+        "purchase_orders",
+        "purchase_order_items",
+        "po_status_history",
+        "freight_quotes",
+        "monthly_budgets",
+      ],
+    );
+
+    const fulfillmentChannel = watchTables(
+      supabaseFulfillment.channel("dashboard-fulfillment-data-changes"),
+      [
+        "inventory_on_hand",
+        "backorders",
+        "backorder_alerts",
+        "retail_orders",
+        "retail_order_lines",
+        "payments",
+      ],
+    );
+
+    const qualityChannel = watchTables(
+      supabaseQuality.channel("dashboard-quality-data-changes"),
+      ["shipment_discrepancies"],
+    );
+
+    return () => {
+      if (refreshTimer) {
+        window.clearTimeout(refreshTimer);
+      }
+
+      void supabaseSCM.removeChannel(scmChannel);
+      void supabaseFulfillment.removeChannel(fulfillmentChannel);
+      void supabaseQuality.removeChannel(qualityChannel);
+    };
+  }, [refetch]);
 
   const value = useMemo(
     () => ({

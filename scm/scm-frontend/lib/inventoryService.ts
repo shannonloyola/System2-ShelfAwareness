@@ -25,18 +25,8 @@ const inventoryServiceBaseUrl =
   process.env.VITE_INVENTORY_SERVICE_URL ||
   "http://localhost:4004";
 
-// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
-const getBaseUrl = () => {
-  if (
-    !inventoryServiceBaseUrl || 
-    inventoryServiceBaseUrl.trim() === "" ||
-    !inventoryServiceBaseUrl.startsWith("http")
-  ) {
-    return "http://localhost:4004";
-  }
-  return inventoryServiceBaseUrl;
-};
-
+const getBaseUrl = () =>
+  localizeServiceUrl(inventoryServiceBaseUrl, "http://localhost:4004");
 
 const parseError = async (response: Response) => {
   const text = await response.text();
@@ -118,3 +108,4 @@ export const fetchBackorderAlerts = async (limit = 10) => {
     return [];
   }
 };
+import { localizeServiceUrl } from "./localServiceUrl";

@@ -1,5 +1,7 @@
 /* Supabase Configuration */
 
+import { localizeServiceUrl } from "@/lib/localServiceUrl";
+
 const FALLBACKS = {
   identityUrl: "https://havcomxzpyywdqtpgcgr.supabase.co",
   identityAnonKey:
@@ -74,7 +76,10 @@ export const supportIntelPublicAnonKey =
   FALLBACKS.supportIntelAnonKey;
 
 export const authUserAccessServiceUrl = readUrl(
-  process.env.NEXT_PUBLIC_AUTH_USER_ACCESS_SERVICE_URL,
+  localizeServiceUrl(
+    process.env.NEXT_PUBLIC_AUTH_USER_ACCESS_SERVICE_URL,
+    FALLBACKS.authUserAccessServiceUrl,
+  ),
   FALLBACKS.authUserAccessServiceUrl,
 );
 

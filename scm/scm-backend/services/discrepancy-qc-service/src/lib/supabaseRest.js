@@ -114,6 +114,34 @@ export const listQualityChecksRest = async () => {
   return handleResponse(response);
 };
 
+export const listProductsBySkusRest = async (skus) => {
+  if (!env.scmSupabaseUrl || !env.scmSupabaseAnonKey || skus.length === 0) {
+    return [];
+  }
+
+  const url = new URL(`${env.scmSupabaseUrl}/rest/v1/products`);
+  url.searchParams.set("select", "sku,supplier");
+  url.searchParams.set(
+    "sku",
+    `in.(${skus.map((sku) => `"${String(sku).replaceAll('"', '\\"')}"`).join(",")})`,
+  );
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      apikey: env.scmSupabaseAnonKey,
+      Authorization: `Bearer ${env.scmSupabaseAnonKey}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  return handleResponse(response);
+};
+
 export const resolveDiscrepancyRest = async (id, disposition, resolvedBy = "qc_inspector") => {
   ensureRestConfig();
 

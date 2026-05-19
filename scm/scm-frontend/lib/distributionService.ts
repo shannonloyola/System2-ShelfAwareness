@@ -54,18 +54,8 @@ const distributionServiceBaseUrl =
   process.env.VITE_DISTRIBUTION_SERVICE_URL ||
   "http://localhost:4006";
 
-// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
-const getBaseUrl = () => {
-  if (
-    !distributionServiceBaseUrl || 
-    distributionServiceBaseUrl.trim() === "" ||
-    !distributionServiceBaseUrl.startsWith("http")
-  ) {
-    return "http://localhost:4006";
-  }
-  return distributionServiceBaseUrl;
-};
-
+const getBaseUrl = () =>
+  localizeServiceUrl(distributionServiceBaseUrl, "http://localhost:4006");
 
 const parseError = async (response: Response) => {
   const text = await response.text();
@@ -245,3 +235,4 @@ export const downloadDistributionInvoice = async (orderId: string) => {
 
   return response.blob();
 };
+import { localizeServiceUrl } from "./localServiceUrl";

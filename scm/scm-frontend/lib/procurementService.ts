@@ -74,18 +74,8 @@ const procurementServiceBaseUrl =
   process.env.VITE_PROCUREMENT_SERVICE_URL ||
   "http://localhost:4002";
 
-// Add a robust fallback in case the env var was set to an empty string, a relative path, or just a port
-const getBaseUrl = () => {
-  if (
-    !procurementServiceBaseUrl || 
-    procurementServiceBaseUrl.trim() === "" ||
-    !procurementServiceBaseUrl.startsWith("http")
-  ) {
-    return "http://localhost:4002";
-  }
-  return procurementServiceBaseUrl;
-};
-
+const getBaseUrl = () =>
+  localizeServiceUrl(procurementServiceBaseUrl, "http://localhost:4002");
 
 const parseError = async (response: Response) => {
   const text = await response.text();
@@ -531,3 +521,4 @@ export const fetchCustomsDelays = async () => {
     ];
   }
 };
+import { localizeServiceUrl } from "./localServiceUrl";

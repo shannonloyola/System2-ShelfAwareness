@@ -1,4 +1,5 @@
 import type { DashboardRole } from "@/store/dashboardStore";
+import { localizeServiceUrl } from "./localServiceUrl";
 
 export type DashboardKpi = {
   label: string;
@@ -166,9 +167,11 @@ export type DashboardAnalyticsData = {
 };
 
 const reportingAnalyticsServiceBaseUrl =
-  process.env.NEXT_PUBLIC_REPORTING_ANALYTICS_SERVICE_URL ||
-  process.env.VITE_REPORTING_ANALYTICS_SERVICE_URL ||
-  "http://localhost:4012";
+  localizeServiceUrl(
+    process.env.NEXT_PUBLIC_REPORTING_ANALYTICS_SERVICE_URL ||
+      process.env.VITE_REPORTING_ANALYTICS_SERVICE_URL,
+    "http://localhost:4012",
+  );
 
 const parseError = async (response: Response) => {
   const text = await response.text();

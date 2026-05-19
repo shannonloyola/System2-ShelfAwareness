@@ -27,9 +27,11 @@ export interface StockAdjustment {
 }
 
 const stockAdjustmentServiceBaseUrl =
-  process.env.NEXT_PUBLIC_STOCK_ADJUSTMENT_SERVICE_URL ||
-  process.env.VITE_STOCK_ADJUSTMENT_SERVICE_URL ||
-  "http://localhost:4008";
+  localizeServiceUrl(
+    process.env.NEXT_PUBLIC_STOCK_ADJUSTMENT_SERVICE_URL ||
+      process.env.VITE_STOCK_ADJUSTMENT_SERVICE_URL,
+    "http://localhost:4008",
+  );
 
 const parseError = async (response: Response) => {
   const text = await response.text();
@@ -128,3 +130,4 @@ export async function fetchAdjustments(status?: AdjustmentStatus) {
   };
   return parsed.data ?? [];
 }
+import { localizeServiceUrl } from "@/lib/localServiceUrl";
