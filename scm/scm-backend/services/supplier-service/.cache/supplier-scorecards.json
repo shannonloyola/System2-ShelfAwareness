@@ -278,6 +278,45 @@
     "risk_summary": "Warning",
     "source_month": "2026-05-01",
     "computed_at": "2026-05-12T13:06:09.207Z"
+  },
+  "takeda pharmaceutical": {
+    "supplier_key": "takeda pharmaceutical",
+    "supplier_name": "Takeda Pharmaceutical",
+    "total_pos": 5,
+    "approved_pos": 2,
+    "po_approval_rate": 40,
+    "total_receipts": 0,
+    "on_time_receipts": 0,
+    "on_time_delivery_pct": 0,
+    "total_discrepancies": 0,
+    "approved_discrepancies": 0,
+    "rejected_discrepancies": 0,
+    "avg_discrepancy_units": 0,
+    "defect_rate": 0,
+    "reliability_score": 30,
+    "risk_level": "high",
+    "risk_summary": "Warning",
+    "source_month": "2026-05-01",
+    "computed_at": "2026-05-20T12:53:41.400Z"
+  },
+  "unilab philippines": {
+    "supplier_key": "unilab philippines",
+    "supplier_name": "Unilab Philippines",
+    "total_pos": 2,
+    "approved_pos": 1,
+    "po_approval_rate": 50,
+    "total_receipts": 0,
+    "on_time_receipts": 0,
+    "on_time_delivery_pct": 0,
+    "total_discrepancies": 0,
+    "approved_discrepancies": 0,
+    "rejected_discrepancies": 0,
+    "avg_discrepancy_units": 0,
+    "defect_rate": 0,
+    "reliability_score": 30,
+    "risk_level": "high",
+    "risk_summary": "Warning",
+    "source_month": "2026-05-01",
+    "computed_at": "2026-05-20T12:53:50.776Z"
   }
-}}
 }

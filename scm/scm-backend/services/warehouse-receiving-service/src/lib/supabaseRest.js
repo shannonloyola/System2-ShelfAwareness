@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { env } from "../config/env.js";
 
 const buildHeaders = () => {
@@ -148,11 +149,33 @@ export const saveGrnQualityChecksRest = async (payload) => {
 export const scheduleDeliveryRest = async (payload) => {
   ensureRestConfig();
 
+  const id = crypto.randomUUID();
+
+  const {
+    delivery_datetime,
+    supplier_name,
+    expected_items_count,
+    warehouse_location,
+    status,
+  } = payload;
+
+  const dbPayload = {
+    id,
+    delivery_datetime,
+    supplier_name,
+    expected_items_count,
+    warehouse_location,
+    status: status || "scheduled",
+  };
+
   return handleResponse(
-    await fetch(`${env.fulfillmentSupabaseUrl}/functions/v1/shipments`, {
+    await fetch(`${env.fulfillmentSupabaseUrl}/rest/v1/delivery_schedules`, {
       method: "POST",
-      headers: buildHeaders(),
-      body: JSON.stringify(payload),
+      headers: {
+        ...buildHeaders(),
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(dbPayload),
     }),
   );
 };
