@@ -8,6 +8,7 @@
     "start": "node src/index.js"
   },
   "dependencies": {
+    "@implementsprint/sdk": "^1.2.1",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
     "pg": "^8.13.1"

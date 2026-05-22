@@ -48,5 +48,25 @@
     "reference_no": "chk-654",
     "notes": "[Invoice:invoice]",
     "created_at": "2026-05-19T00:41:16.543Z"
+  },
+  {
+    "id": "3e6cd6f9-9e64-427e-8dbe-134391b30f47",
+    "supplier_name": "Retailer 24",
+    "amount": 5999.2,
+    "payment_date": "2026-05-22",
+    "payment_method": "Check",
+    "reference_no": "RO-FF-0024",
+    "notes": "[Invoice:RO-FF-0024]",
+    "created_at": "2026-05-22T03:49:41.637Z"
+  },
+  {
+    "id": "c1d4b252-8f50-4f07-9f41-e8e5902b1f71",
+    "supplier_name": "Mercury Drug - Makati",
+    "amount": 28650,
+    "payment_date": "2026-05-22",
+    "payment_method": "Check",
+    "reference_no": "RO-MAY26-001",
+    "notes": "[Invoice:RO-MAY26-001]",
+    "created_at": "2026-05-22T03:50:16.000Z"
   }
 ]

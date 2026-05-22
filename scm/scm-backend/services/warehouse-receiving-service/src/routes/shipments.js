@@ -1,6 +1,6 @@
 import express from "express";
 import { asyncHandler } from "../lib/http.js";
-import { getShipmentByTracking, updateShipmentStatus, getPendingShipments, getTodayReceivedCount } from "../repositories/shipmentRepository.js";
+import { getShipmentByTracking, updateShipmentStatus, getPendingShipments, getTodayReceivedCount, getReceivedShipments } from "../repositories/shipmentRepository.js";
 
 export const shipmentsRouter = express.Router();
 
@@ -35,6 +35,16 @@ shipmentsRouter.get(
   asyncHandler(async (_req, res) => {
     const count = await getTodayReceivedCount();
     res.json({ data: { receivedToday: count } });
+  }),
+);
+
+// GET /shipments/received
+shipmentsRouter.get(
+  "/received",
+  asyncHandler(async (req, res) => {
+    const { date } = req.query;
+    const shipments = await getReceivedShipments({ date });
+    res.json({ data: shipments });
   }),
 );
 

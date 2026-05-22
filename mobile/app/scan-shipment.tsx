@@ -368,29 +368,75 @@ export default function ScanShipmentScreen() {
               )}
 
               {/* Actions */}
-              {shipment.status.toLowerCase() !== 'received' ? (
-                <TouchableOpacity
-                  style={[styles.btnPrimary, { marginTop: spacing.lg }]}
-                  onPress={handleMarkReceived}
-                  disabled={markingReceived}
-                >
-                  {markingReceived ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <>
-                      <Ionicons name="checkmark-done-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
-                      <Text style={styles.btnPrimaryText}>Mark as Received</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              ) : (
-                <View style={[styles.alreadyReceived]}>
-                  <Ionicons name="information-circle-outline" size={16} color={palette.textMuted} />
-                  <Text style={[typography.bodySmall, { marginLeft: 6 }]}>
-                    This shipment is already <Text style={{ fontWeight: '600' }}>{shipment.status}</Text>.
-                  </Text>
-                </View>
-              )}
+              {(() => {
+                const s = shipment.status.toLowerCase();
+                const processable = isProcessable(shipment.status);
+                const alreadyReceived = s === 'received';
+                const isCancelled = s === 'cancelled';
+                const isDiscrepancy = s === 'discrepancy';
+                const isQcHold = s === 'qc hold' || s === 'qc_hold';
+
+                if (alreadyReceived) {
+                  return (
+                    <View style={styles.alreadyReceived}>
+                      <Ionicons name="checkmark-circle" size={16} color={palette.success} />
+                      <Text style={[typography.bodySmall, { marginLeft: 6, color: palette.success }]}>
+                        This shipment has already been <Text style={{ fontWeight: '600' }}>received</Text>.
+                      </Text>
+                    </View>
+                  );
+                }
+
+                if (isCancelled) {
+                  return (
+                    <View style={styles.warningBanner}>
+                      <Ionicons name="ban-outline" size={16} color={palette.danger} />
+                      <Text style={[typography.bodySmall, { marginLeft: 8, color: palette.danger, flex: 1 }]}>
+                        This shipment is <Text style={{ fontWeight: '700' }}>cancelled</Text> and cannot be received.
+                      </Text>
+                    </View>
+                  );
+                }
+
+                if (isDiscrepancy) {
+                  return (
+                    <View style={[styles.warningBanner, { backgroundColor: '#FFF3CD', borderColor: '#F59E0B' }]}>
+                      <Ionicons name="warning-outline" size={16} color="#B45309" />
+                      <Text style={[typography.bodySmall, { marginLeft: 8, color: '#B45309', flex: 1 }]}>
+                        Shipment has a <Text style={{ fontWeight: '700' }}>discrepancy</Text>. Review before marking received.
+                      </Text>
+                    </View>
+                  );
+                }
+
+                if (isQcHold) {
+                  return (
+                    <View style={[styles.warningBanner, { backgroundColor: '#FFFBEB', borderColor: '#D97706' }]}>
+                      <Ionicons name="pause-circle-outline" size={16} color="#92400E" />
+                      <Text style={[typography.bodySmall, { marginLeft: 8, color: '#92400E', flex: 1 }]}>
+                        Shipment is on <Text style={{ fontWeight: '700' }}>QC Hold</Text>. Cannot receive until cleared.
+                      </Text>
+                    </View>
+                  );
+                }
+
+                return (
+                  <TouchableOpacity
+                    style={[styles.btnPrimary, { marginTop: spacing.lg }, !processable && styles.btnDisabled]}
+                    onPress={handleMarkReceived}
+                    disabled={markingReceived || !processable}
+                  >
+                    {markingReceived ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark-done-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
+                        <Text style={styles.btnPrimaryText}>Mark as Received</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                );
+              })()}
 
               <TouchableOpacity style={styles.btnGhost} onPress={handleReset}>
                 <Text style={styles.btnGhostText}>Scan Another</Text>
@@ -419,6 +465,10 @@ function DetailRow({ icon, label, value }: { icon: string; label: string; value:
 const statusBadgeStyle = (status: string) => ({
   backgroundColor:
     status.toLowerCase() === 'received' ? palette.successLight :
+    status.toLowerCase() === 'cancelled' ? '#F3F4F6' :
+    status.toLowerCase() === 'discrepancy' ? palette.dangerLight :
+    (status.toLowerCase() === 'qc hold' || status.toLowerCase() === 'qc_hold') ? '#FFFBEB' :
+    status.toLowerCase() === 'partial' ? '#FFF3CD' :
       isPendingStatus(status) ? palette.warningLight :
         palette.infoLight,
 });
@@ -426,6 +476,10 @@ const statusBadgeStyle = (status: string) => ({
 const statusTextStyle = (status: string) => ({
   color:
     status.toLowerCase() === 'received' ? palette.success :
+    status.toLowerCase() === 'cancelled' ? '#6B7280' :
+    status.toLowerCase() === 'discrepancy' ? palette.danger :
+    (status.toLowerCase() === 'qc hold' || status.toLowerCase() === 'qc_hold') ? '#92400E' :
+    status.toLowerCase() === 'partial' ? '#B45309' :
       isPendingStatus(status) ? palette.warning :
         palette.info,
 });
@@ -527,8 +581,21 @@ const styles = StyleSheet.create({
     width: '100%', marginTop: spacing.sm,
     ...shadow.card,
   },
+  btnDisabled: {
+    backgroundColor: '#9CA3AF',
+    opacity: 0.7,
+  },
   btnPrimaryText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   btnGhost: { marginTop: spacing.md, paddingVertical: spacing.sm },
   btnGhostText: { color: palette.primary, fontSize: 15, fontWeight: '600' },
+  warningBanner: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: palette.dangerLight,
+    borderWidth: 1, borderColor: palette.danger,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginTop: spacing.lg,
+    width: '100%',
+  },
   successIcon: { width: 120, height: 120, borderRadius: 60, backgroundColor: palette.successLight, alignItems: 'center', justifyContent: 'center' },
 });

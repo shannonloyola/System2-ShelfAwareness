@@ -114,30 +114,17 @@ export const listQualityChecksRest = async () => {
   return handleResponse(response);
 };
 
-export const resolveDiscrepancyRest = async (id, disposition, resolvedBy = "qc_inspector") => {
+export const listQcInspectionsRest = async () => {
   ensureRestConfig();
 
-  const payload = await handleResponse(
-    await fetch(`${env.supabaseUrl}/rest/v1/rpc/resolve_discrepancy`, {
-      method: "POST",
-      headers: buildHeaders(),
-      body: JSON.stringify({
-        p_discrepancy_id: id,
-        p_disposition: disposition,
-        p_resolved_by: resolvedBy,
-      }),
-    }),
-  );
+  const url = new URL(`${env.supabaseUrl}/rest/v1/qc_inspections`);
+  url.searchParams.set("select", "*");
+  url.searchParams.set("order", "created_at.desc");
 
-  if (payload?.success === false) {
-    throw new Error(payload.error ?? "resolve_discrepancy returned success: false");
-  }
-
-  // Fetch the updated row to return it
-  const response = await fetch(`${env.supabaseUrl}/rest/v1/shipment_discrepancies?id=eq.${id}`, {
+  const response = await fetch(url, {
     method: "GET",
     headers: buildHeaders(),
   });
-  const data = await handleResponse(response);
-  return data[0] ?? null;
+
+  return handleResponse(response);
 };

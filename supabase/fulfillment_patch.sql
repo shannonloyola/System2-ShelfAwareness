@@ -140,10 +140,10 @@ BEGIN
 
             -- Insert movement
             INSERT INTO public.inventory_movements (
-                sku, direction, qty, stock_before, stock_after, movement_type, reference, notes
+                sku, direction, qty, stock_before, stock_after, movement_type, reference, notes, created_by
             ) VALUES (
                 v_line.sku, 'OUT', (v_stock_before - v_stock_after), v_stock_before, v_stock_after, 
-                'DISPATCH', v_order_no, 'Fulfilled for ' || v_retailer_name
+                'DISPATCH', v_order_no, 'Fulfilled for ' || v_retailer_name, 'system'
             );
         END LOOP;
 

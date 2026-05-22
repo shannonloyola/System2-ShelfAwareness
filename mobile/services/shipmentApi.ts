@@ -78,3 +78,12 @@ export const markAsReceived = async (
   if (!data) throw new Error('No response from server');
   return data;
 };
+
+/**
+ * Fetches the list of shipments received today from the server.
+ * Replaces local recentScans storage on the dashboard.
+ */
+export const getReceivedTodayList = async (): Promise<Shipment[]> => {
+  const data = await fetchApi('/shipments/received?date=today', { method: 'GET' });
+  return Array.isArray(data) ? data : [];
+};

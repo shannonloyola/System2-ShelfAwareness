@@ -5,8 +5,10 @@ import {
   getInvoiceRest,
   listAvailableProductsRest,
   listInventoryValueByCategoryRest,
+  listInventoryValueHistoryRest,
   listInventoryValueTotalRest,
   listOrderPaymentsRest,
+  captureInventoryValueSnapshotRest,
   listOrdersRest,
   updateOrderLinesRest,
 } from "../lib/supabaseRest.js";
@@ -40,6 +42,16 @@ export const listInventoryValueTotal = async () => {
 export const listInventoryValueByCategory = async () => {
   requireSupabaseConfig();
   return listInventoryValueByCategoryRest();
+};
+
+export const listInventoryValueHistory = async (days) => {
+  requireSupabaseConfig();
+  return listInventoryValueHistoryRest(days);
+};
+
+export const captureInventoryValueSnapshot = async (payload) => {
+  requireSupabaseConfig();
+  return captureInventoryValueSnapshotRest(payload);
 };
 
 export const createOrder = async (payload) => {

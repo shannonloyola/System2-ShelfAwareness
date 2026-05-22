@@ -124,6 +124,8 @@ type InvoiceSummary = {
   payments: PaymentRecord[];
 };
 
+const ORDERS_PER_PAGE = 10;
+
 export function OutboundDistribution() {
   const { role } = useAuth();
   const canEditPriority =
@@ -139,6 +141,7 @@ export function OutboundDistribution() {
   const [orders, setOrders] = useState<RetailOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"All" | "Paid" | "Pending" | "Delayed">("All");
+  const [ordersPage, setOrdersPage] = useState(1);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -382,6 +385,27 @@ export function OutboundDistribution() {
     }
     return true;
   });
+
+  const pagedOrders = useMemo(() => {
+    const start = (ordersPage - 1) * ORDERS_PER_PAGE;
+    return filteredOrders.slice(start, start + ORDERS_PER_PAGE);
+  }, [filteredOrders, ordersPage]);
+
+  const ordersTotalPages = useMemo(
+    () =>
+      Math.max(1, Math.ceil(filteredOrders.length / ORDERS_PER_PAGE)),
+    [filteredOrders.length],
+  );
+
+  useEffect(() => {
+    setOrdersPage(1);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (ordersPage > ordersTotalPages) {
+      setOrdersPage(ordersTotalPages);
+    }
+  }, [ordersPage, ordersTotalPages]);
 
   const statusColor: Record<string, string> = {
     placed: "bg-blue-100 text-blue-700",
@@ -898,7 +922,7 @@ export function OutboundDistribution() {
                       </td>
                     </tr>
                   ) : (
-                    filteredOrders.map((order) => (
+                    pagedOrders.map((order) => (
                       <tr key={order.order_uuid} className="hover:bg-[#F8FAFC] transition-colors">
                         <td className="px-6 py-4 font-medium text-[#111827]">
                           {order.order_no}
@@ -991,6 +1015,39 @@ export function OutboundDistribution() {
                 </tbody>
               </table>
             </div>
+            {filteredOrders.length > 0 && (
+              <div className="flex items-center justify-between border-t border-[#111827]/10 px-6 py-4">
+                <span className="text-sm text-[#6B7280]">
+                  Page {ordersPage} of {ordersTotalPages}
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-[#111827]/20 text-[#111827]"
+                    onClick={() =>
+                      setOrdersPage((prev) => Math.max(1, prev - 1))
+                    }
+                    disabled={ordersPage <= 1}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-[#111827]/20 text-[#111827]"
+                    onClick={() =>
+                      setOrdersPage((prev) =>
+                        Math.min(ordersTotalPages, prev + 1),
+                      )
+                    }
+                    disabled={ordersPage >= ordersTotalPages}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </TabsContent>
       </Tabs>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   ChevronDown,
@@ -76,11 +76,31 @@ const formatMaybeNumber = (value: unknown) => {
   return num.toLocaleString();
 };
 
+/**
+ * Normalise a row from the Quality DB so that the display-layer keys
+ * (sku, expected_qty, received_qty, …) are always populated regardless
+ * of whether the upstream insert used the Quality-schema names
+ * (product_sku, system_count, physical_count, …) or the Fulfillment-schema names.
+ */
+const normalizeRow = (row: ShipmentDiscrepancy): ShipmentDiscrepancy => ({
+  ...row,
+  sku: row.sku ?? (row as any).product_sku ?? null,
+  expected_qty:
+    row.expected_qty ?? (row as any).system_count ?? null,
+  received_qty:
+    row.received_qty ?? (row as any).physical_count ?? null,
+  discrepancy_reason:
+    row.discrepancy_reason ?? (row as any).reason_code ?? null,
+  notes: row.notes ?? (row as any).review_notes ?? null,
+  image_urls:
+    row.image_urls ?? (row as any).evidence_urls ?? null,
+});
+
 const extractImageUrls = (
   row: ShipmentDiscrepancy | null,
 ): string[] => {
   if (!row) return [];
-  const raw = row.image_urls ?? row["image_url"] ?? row["images"];
+  const raw = row.image_urls ?? (row as any).evidence_urls ?? row["image_url"] ?? row["images"];
   if (!raw) return [];
 
   if (Array.isArray(raw)) {
@@ -147,19 +167,22 @@ export function DiscrepancyApprovals() {
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingExcel, setIsExportingExcel] =
     useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 10;
 
-  const fetchDiscrepancies = async () => {
+  const fetchDiscrepancies = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Fetch everything so summary counts are accurate
-      const data = (await fetchShipmentDiscrepancies({
+      const raw = (await fetchShipmentDiscrepancies({
         excludeApproved: false,
       })) as ShipmentDiscrepancy[];
-      console.log(`Fetched ${data.length} discrepancies`);
+      const data = raw.map(normalizeRow);
       setDiscrepancies(data);
-      if (!selectedDetail && data.length > 0) {
-        setSelectedDetail(data[0]);
-      }
+      setSelectedDetail((prev) => {
+        if (data.length === 0) return null;
+        if (!prev) return data[0];
+        return data.find((row) => row.id === prev.id) ?? data[0];
+      });
     } catch (err) {
       toast.error("Failed to load discrepancies", {
         description:
@@ -168,7 +191,7 @@ export function DiscrepancyApprovals() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   const applyLocalUpdate = (
     id: string,
@@ -189,7 +212,6 @@ export function DiscrepancyApprovals() {
     action: "released" | "returned" | "scrapped",
   ) => {
     if (!row?.id) return;
-    console.log(`Updating disposition for ${row.id} to ${action}`);
     setIsUpdatingId(row.id);
     try {
       await updateShipmentDiscrepancyDisposition(row.id, action);
@@ -197,7 +219,7 @@ export function DiscrepancyApprovals() {
         disposition: action,
         status: "resolved",
       });
-      loadReports(); // Refresh charts
+      void Promise.all([fetchDiscrepancies(), loadReports()]);
       toast.success("Disposition updated", {
         description: `Marked as ${action} and resolved.`,
       });
@@ -211,7 +233,7 @@ export function DiscrepancyApprovals() {
     }
   };
 
-  const loadReports = async () => {
+  const loadReports = useCallback(async () => {
     setIsReportsLoading(true);
     try {
       const summary = await fetchDiscrepancyReportsSummary();
@@ -228,12 +250,17 @@ export function DiscrepancyApprovals() {
     } finally {
       setIsReportsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchDiscrepancies();
-    loadReports();
-  }, []);
+    void Promise.all([fetchDiscrepancies(), loadReports()]);
+
+    const intervalId = window.setInterval(() => {
+      void Promise.all([fetchDiscrepancies(), loadReports()]);
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, [fetchDiscrepancies, loadReports]);
 
   const statusOptions = useMemo(() => {
     const unique = new Set<string>();
@@ -247,7 +274,7 @@ export function DiscrepancyApprovals() {
     const keyword = searchTerm.trim().toLowerCase();
     return discrepancies.filter((row) => {
       const status = normalizeStatus(row.status);
-      
+
       // Filter logic
       if (statusFilter !== "all") {
         if (status !== statusFilter) return false;
@@ -263,6 +290,7 @@ export function DiscrepancyApprovals() {
         row.shipment_id,
         row.po_number,
         row.sku,
+        (row as any).product_sku,
         row.product_name,
         row.reported_by,
       ]
@@ -272,6 +300,25 @@ export function DiscrepancyApprovals() {
       return haystack.includes(keyword);
     });
   }, [discrepancies, searchTerm, statusFilter]);
+
+  // Reset to page 1 whenever filter or search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter]);
+
+  const discrepancyTotalPages = Math.max(
+    1,
+    Math.ceil(filteredDiscrepancies.length / PAGE_SIZE),
+  );
+
+  const pagedDiscrepancies = useMemo(
+    () =>
+      filteredDiscrepancies.slice(
+        (currentPage - 1) * PAGE_SIZE,
+        currentPage * PAGE_SIZE,
+      ),
+    [filteredDiscrepancies, currentPage],
+  );
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -321,9 +368,8 @@ export function DiscrepancyApprovals() {
     () => [
       { name: "Pass", count: qcSummary.pass },
       { name: "Fail", count: qcSummary.fail },
-      { name: "Resolved", count: resolutionCountsState.resolved },
     ],
-    [qcSummary, resolutionCountsState],
+    [qcSummary],
   );
 
   const exportTimestamp = useMemo(() => {
@@ -851,7 +897,7 @@ export function DiscrepancyApprovals() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredDiscrepancies.map((row) => {
+                    {pagedDiscrepancies.map((row) => {
                       const expectedQty = Number(
                         row.expected_qty,
                       );
@@ -967,6 +1013,38 @@ export function DiscrepancyApprovals() {
                     })}
                   </tbody>
                 </table>
+                <div className="flex items-center justify-between px-4 py-4 border-t border-[#E5E7EB] bg-white">
+                  <div className="text-xs text-[#6B7280]">
+                    Page {currentPage} of {discrepancyTotalPages} &mdash;{" "}
+                    {filteredDiscrepancies.length} result{filteredDiscrepancies.length !== 1 ? "s" : ""}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-[#111827]/20 text-[#111827]"
+                      onClick={() =>
+                        setCurrentPage((prev) => Math.max(1, prev - 1))
+                      }
+                      disabled={currentPage <= 1}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-[#111827]/20 text-[#111827]"
+                      onClick={() =>
+                        setCurrentPage((prev) =>
+                          Math.min(discrepancyTotalPages, prev + 1),
+                        )
+                      }
+                      disabled={currentPage >= discrepancyTotalPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
               </div>
             )}
           </CardContent>

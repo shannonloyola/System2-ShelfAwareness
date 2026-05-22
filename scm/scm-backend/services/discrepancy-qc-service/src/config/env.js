@@ -38,17 +38,22 @@ export const env = {
     process.env.DOMAIN4_DATABASE_URL ||
     "",
   dbSsl: parseBoolean(process.env.DB_SSL, true),
-  // Fulfillment Project (Consolidated)
+  // Quality Project
   supabaseUrl: (
+    process.env.SUPABASE_QUALITY_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_QUALITY_URL ||
+    process.env.DOMAIN4_SUPABASE_URL ||
     process.env.SUPABASE_FULFILLMENT_URL ||
     process.env.DOMAIN3_SUPABASE_URL ||
-    process.env.DOMAIN4_SUPABASE_URL ||
     ""
   ).trim(),
   supabaseAnonKey: (
-    process.env.SUPABASE_FULFILLMENT_ANON_KEY ||
-    process.env.DOMAIN3_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_QUALITY_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_QUALITY_ANON_KEY ||
     process.env.DOMAIN4_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_FULFILLMENT_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_FULFILLMENT_ANON_KEY ||
+    process.env.DOMAIN3_SUPABASE_ANON_KEY ||
     ""
   ).trim(),
 

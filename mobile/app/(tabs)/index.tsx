@@ -16,8 +16,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { getPendingShipments, getTodayStats, getShipmentByTracking, markAsReceived, type Shipment, type ShipmentStats } from '@/services/shipmentApi';
-import { getRecentScans, type RecentScan } from '@/utils/recentScans';
+import { getPendingShipments, getTodayStats, getShipmentByTracking, markAsReceived, getReceivedTodayList, type Shipment, type ShipmentStats } from '@/services/shipmentApi';
 import { palette, spacing, radius, shadow, typography } from '@/constants/design';
 import { useAuth } from '@/context/AuthContext';
 
@@ -25,14 +24,14 @@ import { useAuth } from '@/context/AuthContext';
 interface DashboardCache {
   stats: ShipmentStats;
   pending: Shipment[];
-  recentScans: RecentScan[];
+  receivedToday: Shipment[];
   lastUpdated: number | null;
 }
 
 const dashboardCache: DashboardCache = {
   stats: { receivedToday: 0 },
   pending: [],
-  recentScans: [],
+  receivedToday: [],
   lastUpdated: null,
 };
 
@@ -48,7 +47,7 @@ export default function DashboardScreen() {
   // States initialized from Cache (Fix 2)
   const [stats, setStats] = useState<ShipmentStats>(dashboardCache.stats);
   const [pending, setPending] = useState<Shipment[]>(dashboardCache.pending);
-  const [recentScans, setRecentScans] = useState<RecentScan[]>(dashboardCache.recentScans);
+  const [receivedToday, setReceivedToday] = useState<Shipment[]>(dashboardCache.receivedToday);
   const [lastUpdated, setLastUpdated] = useState<number | null>(dashboardCache.lastUpdated);
   const [lastUpdatedText, setLastUpdatedText] = useState('');
 
@@ -106,22 +105,22 @@ export default function DashboardScreen() {
     }
     setError(null);
     try {
-      const [statsData, pendingData, scansData] = await Promise.all([
+      const [statsData, pendingData, receivedData] = await Promise.all([
         getTodayStats().catch(() => ({ receivedToday: 0 })),
         getPendingShipments().catch(() => []),
-        getRecentScans(),
+        getReceivedTodayList().catch(() => []),
       ]);
 
       // Update cache
       dashboardCache.stats = statsData;
       dashboardCache.pending = pendingData;
-      dashboardCache.recentScans = scansData;
+      dashboardCache.receivedToday = receivedData;
       dashboardCache.lastUpdated = Date.now();
 
       // Update state
       setStats(statsData);
       setPending(pendingData);
-      setRecentScans(scansData);
+      setReceivedToday(receivedData);
       setLastUpdated(dashboardCache.lastUpdated);
     } catch (err: any) {
       setError('Could not load dashboard data. Pull to refresh.');
@@ -185,14 +184,44 @@ export default function DashboardScreen() {
   };
 
   const handleMarkReceived = async (shipment: Shipment) => {
+    // ── Optimistic UI: snapshot current state for rollback ────────────
+    const prevPending = pending;
+    const prevStats = stats;
+    const prevReceivedToday = receivedToday;
+
+    const now = new Date().toISOString();
+    const optimisticShipment: Shipment = {
+      ...shipment,
+      status: 'received',
+      received_at: now,
+      received_by: 'Operator',
+    };
+
+    // Apply optimistic updates immediately
+    setPending((prev) => prev.filter((s) => s.id !== shipment.id));
+    setStats((prev) => ({ ...prev, receivedToday: prev.receivedToday + 1 }));
+    setReceivedToday((prev) => [optimisticShipment, ...prev]);
     setProcessingIds((prev) => ({ ...prev, [shipment.id]: true }));
+
+    // Update cache too so tab-switch doesn't revert
+    dashboardCache.pending = prevPending.filter((s) => s.id !== shipment.id);
+    dashboardCache.stats = { ...prevStats, receivedToday: prevStats.receivedToday + 1 };
+    dashboardCache.receivedToday = [optimisticShipment, ...prevReceivedToday];
+
     try {
       await markAsReceived(shipment.id, 'Operator', 'Received directly from Mobile Dashboard');
-      // Refresh dashboard data
-      await loadData(false);
+      // Reconcile with fresh server data in background
+      loadData(false);
     } catch (err) {
       console.error('Error marking as received:', err);
-      alert('Could not mark shipment as received.');
+      // ── Rollback on failure ──────────────────────────────────────────
+      setPending(prevPending);
+      setStats(prevStats);
+      setReceivedToday(prevReceivedToday);
+      dashboardCache.pending = prevPending;
+      dashboardCache.stats = prevStats;
+      dashboardCache.receivedToday = prevReceivedToday;
+      Alert.alert('Error', 'Could not mark shipment as received. Please try again.');
     } finally {
       setProcessingIds((prev) => ({ ...prev, [shipment.id]: false }));
     }
@@ -377,10 +406,10 @@ export default function DashboardScreen() {
           </View>
         )}
 
-        {/* ── Recent Activity ───────────────────────────────────────── */}
+        {/* ── Recent Activity (server-driven) ───────────────────────── */}
         <View onLayout={(e) => setRecentY(e.nativeEvent.layout.y)} style={{ marginTop: spacing.lg }}>
           <Animated.View style={[{ borderRadius: radius.md, paddingVertical: 4 }, { backgroundColor: recentFlashBg }]}>
-            <SectionHeader title="Recent Activity" count={recentScans.slice(0, 5).length} />
+            <SectionHeader title="Recent Activity" count={Math.min(receivedToday.length, 5)} />
             {lastUpdatedText ? (
               <Text style={{ fontSize: 10, color: palette.textMuted, paddingHorizontal: spacing.lg, marginTop: -6, marginBottom: 8 }}>
                 {lastUpdatedText}
@@ -389,31 +418,31 @@ export default function DashboardScreen() {
           </Animated.View>
         </View>
 
-        {recentScans.length === 0 ? (
-          <EmptyState icon="time-outline" message="No scans yet. Start scanning to see history here." />
+        {receivedToday.length === 0 ? (
+          <EmptyState icon="time-outline" message="No shipments received today. Start scanning!" />
         ) : (
           <View style={styles.cardList}>
-            {recentScans.slice(0, 5).map((scan) => (
+            {receivedToday.slice(0, 5).map((s) => (
               <TouchableOpacity
-                key={`${scan.id}-${scan.receivedAt}`}
+                key={s.id}
                 style={styles.recentCard}
-                onPress={() => openShipmentDetail(scan.trackingNumber)}
+                onPress={() => openShipmentDetail(s.tracking_number, s)}
                 activeOpacity={0.75}
               >
-                <View style={[styles.recentDot, scan.status === 'received' ? styles.dotSuccess : styles.dotWarning]} />
+                <View style={[styles.recentDot, styles.dotSuccess]} />
                 <View style={{ flex: 1 }}>
                   <Text style={[typography.body, { fontWeight: '700' }]} numberOfLines={1}>
-                    {scan.supplierName ?? 'Unknown Supplier'}
+                    {s.supplier_name ?? 'Unknown Supplier'}
                   </Text>
                   <Text style={typography.mono} numberOfLines={1}>
-                    Tracking: {scan.trackingNumber}
+                    Tracking: {s.tracking_number}
                   </Text>
                   <Text style={styles.recentMeta}>
-                    Scanned by: {scan.receivedBy || 'Operator'} · Qty: {scan.itemCount ?? 0} units
+                    By: {s.received_by || 'Operator'} · {s.item_count ?? 0} units
                   </Text>
                 </View>
                 <Text style={[typography.bodySmall, { color: palette.textMuted }]}>
-                  {formatRelativeTime(scan.receivedAt)}
+                  {s.received_at ? formatRelativeTime(s.received_at) : '—'}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -534,20 +563,20 @@ export default function DashboardScreen() {
                   </View>
                 )
               ) : (
-                recentScans.length === 0 ? (
+                receivedToday.length === 0 ? (
                   <View style={{ padding: 24, alignItems: 'center' }}>
                     <Ionicons name="time-outline" size={48} color="#9CA3AF" />
                     <Text style={{ color: '#9CA3AF', marginTop: 12 }}>No shipments received today.</Text>
                   </View>
                 ) : (
                   <View style={{ gap: 12, paddingVertical: 8 }}>
-                    {recentScans.map((s) => (
+                    {receivedToday.map((s) => (
                       <TouchableOpacity
                         key={s.id}
                         style={styles.modalShipmentCard}
                         onPress={() => {
                           setListModalVisible(false);
-                          openShipmentDetail(s.trackingNumber);
+                          openShipmentDetail(s.tracking_number, s);
                         }}
                         activeOpacity={0.7}
                       >
@@ -556,13 +585,13 @@ export default function DashboardScreen() {
                         </View>
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontWeight: '700', color: '#1A2B47', fontSize: 15 }}>
-                            {s.trackingNumber}
+                            {s.tracking_number}
                           </Text>
                           <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
-                            {s.supplierName || 'Unknown Supplier'}
+                            {s.supplier_name || 'Unknown Supplier'}
                           </Text>
                           <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>
-                            Received: {new Date(s.receivedAt).toLocaleTimeString()}
+                            Received: {s.received_at ? new Date(s.received_at).toLocaleTimeString() : 'N/A'}
                           </Text>
                         </View>
                         <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
@@ -652,20 +681,30 @@ function ShipmentDetailSheet({
   if (!visible) return null;
 
   const items = shipment?.expected_items || [];
-  const isReceived = shipment?.status === 'received';
+  const status = (shipment?.status || '').toLowerCase();
+  const isReceived = status === 'received';
 
   const totalItems = items.length;
   const totalExpectedQty = items.reduce((sum: number, it: any) => sum + (it.expected_qty || it.quantity || 0), 0);
+  const totalReceivedQty = items.reduce((sum: number, it: any) => sum + (it.received_qty ?? (isReceived ? (it.expected_qty || it.quantity || 0) : 0)), 0);
 
-  // Status style config
-  let badgeBg = palette.warningLight;
-  let badgeText = palette.warning;
-  if (isReceived) {
-    badgeBg = palette.successLight;
-    badgeText = palette.success;
-  } else if (shipment?.status === 'in-transit' || shipment?.status === 'initialized') {
-    badgeBg = palette.infoLight;
-    badgeText = '#00A3AD';
+  // Status badge palette — full categorized set
+  let badgeBg = '#F3F4F6';     // default gray
+  let badgeText = '#6B7280';
+  if (status === 'received') {
+    badgeBg = palette.successLight; badgeText = palette.success;
+  } else if (status === 'partial') {
+    badgeBg = '#FFF3CD'; badgeText = '#B45309';
+  } else if (status === 'qc hold' || status === 'qc_hold') {
+    badgeBg = '#FFFBEB'; badgeText = '#92400E';
+  } else if (status === 'discrepancy') {
+    badgeBg = palette.dangerLight; badgeText = palette.danger;
+  } else if (status === 'cancelled') {
+    badgeBg = '#F3F4F6'; badgeText = '#6B7280';
+  } else if (status === 'pending' || status === 'initialized' || status === 'scheduled') {
+    badgeBg = palette.warningLight; badgeText = palette.warning;
+  } else if (status === 'in-transit' || status === 'in_transit' || status === 'handed_to_freight') {
+    badgeBg = palette.infoLight; badgeText = '#00A3AD';
   }
 
   return (
@@ -725,6 +764,18 @@ function ShipmentDetailSheet({
                       <Text style={styles.metaValue}>{new Date(shipment.received_at).toLocaleString()}</Text>
                     </View>
                   )}
+                  {shipment?.received_by && (
+                    <View style={styles.metaRow}>
+                      <Text style={styles.metaLabel}>Received By:</Text>
+                      <Text style={styles.metaValue}>{shipment.received_by}</Text>
+                    </View>
+                  )}
+                  {shipment?.notes && (
+                    <View style={[styles.metaRow, { alignItems: 'flex-start' }]}>
+                      <Text style={styles.metaLabel}>Notes:</Text>
+                      <Text style={[styles.metaValue, { flex: 1, textAlign: 'right', flexWrap: 'wrap' }]}>{shipment.notes}</Text>
+                    </View>
+                  )}
                   {shipment?.created_at && (
                     <View style={styles.metaRow}>
                       <Text style={styles.metaLabel}>Date Created:</Text>
@@ -736,8 +787,10 @@ function ShipmentDetailSheet({
                     <Text style={styles.metaValue}>{totalItems}</Text>
                   </View>
                   <View style={styles.metaRow}>
-                    <Text style={styles.metaLabel}>Total Qty Expected:</Text>
-                    <Text style={styles.metaValue}>{totalExpectedQty} units</Text>
+                    <Text style={styles.metaLabel}>Qty Received / Expected:</Text>
+                    <Text style={[styles.metaValue, { color: isReceived ? palette.success : palette.warning }]}>
+                      {totalReceivedQty} / {totalExpectedQty}
+                    </Text>
                   </View>
                 </View>
 
@@ -756,14 +809,19 @@ function ShipmentDetailSheet({
                   <View style={styles.itemsListContainer}>
                     {items.map((item: any, idx: number) => {
                       const expQty = item.expected_qty || item.quantity || 0;
-                      const recQty = isReceived ? expQty : 0;
+                      // Use actual received_qty if available; fall back to expQty when fully received
+                      const recQty = item.received_qty != null
+                        ? item.received_qty
+                        : (isReceived ? expQty : 0);
 
-                      // Indicator Color
-                      let indicatorColor = '#9CA3AF'; // Gray
-                      if (isReceived) {
-                        indicatorColor = palette.success; // Green
+                      // Indicator Color — full palette
+                      let indicatorColor = '#9CA3AF'; // Gray — not yet processed
+                      if (recQty >= expQty && expQty > 0) {
+                        indicatorColor = palette.success; // Green — fully received
                       } else if (recQty > 0 && recQty < expQty) {
-                        indicatorColor = palette.warning; // Amber
+                        indicatorColor = palette.warning; // Amber — partial
+                      } else if (status === 'discrepancy') {
+                        indicatorColor = palette.danger;  // Red — discrepancy
                       }
 
                       return (
@@ -778,7 +836,7 @@ function ShipmentDetailSheet({
                             </Text>
                           </View>
                           <View style={{ alignItems: 'flex-end' }}>
-                            <Text style={[typography.body, { fontWeight: '700', color: '#1A2B47' }]}>
+                            <Text style={[typography.body, { fontWeight: '700', color: recQty >= expQty && expQty > 0 ? palette.success : '#1A2B47' }]}>
                               {recQty} / {expQty}
                             </Text>
                             <Text style={{ fontSize: 10, color: palette.textMuted }}>

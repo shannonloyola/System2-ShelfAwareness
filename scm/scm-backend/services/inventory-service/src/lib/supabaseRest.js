@@ -282,8 +282,6 @@ export const receiveScanRest = async ({
         },
         body: JSON.stringify({
           inventory_on_hand: nextOnHand,
-          available_stock: available,
-          available_to_promise: available,
         }),
       },
     ),

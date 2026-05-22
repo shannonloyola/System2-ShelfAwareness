@@ -5,7 +5,6 @@ import {
   listShipmentDiscrepanciesRest,
   saveGrnQualityChecksRest,
   updateShipmentDiscrepancyRest,
-  resolveDiscrepancyRest,
 } from "../lib/supabaseRest.js";
 
 const requireSupabaseConfig = () => {
@@ -30,12 +29,18 @@ export const listShipmentDiscrepancies = async (options) => {
 export const updateShipmentDiscrepancy = async (id, payload) => {
   requireSupabaseConfig();
 
-  let row;
+  let updatePayload = { ...payload };
   if (payload.disposition) {
-    row = await resolveDiscrepancyRest(id, payload.disposition, payload.resolved_by);
-  } else {
-    row = await updateShipmentDiscrepancyRest(id, payload);
+    updatePayload = {
+      ...updatePayload,
+      status: 'approved',
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: payload.resolved_by || 'qc_inspector',
+    };
+    delete updatePayload.resolved_by;
   }
+
+  const row = await updateShipmentDiscrepancyRest(id, updatePayload);
 
   if (!row) {
     throw createHttpError(404, "Shipment discrepancy not found");

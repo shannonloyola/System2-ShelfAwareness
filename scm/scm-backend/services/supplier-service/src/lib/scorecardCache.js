@@ -21,6 +21,10 @@ const currentSourceMonth = () => {
   return `${yyyy}-${mm}-01`;
 };
 
+const isCurrentMonthScorecard = (scorecard) =>
+  String(scorecard?.source_month || "").slice(0, 10) ===
+  currentSourceMonth();
+
 const parseResponse = async (response, label) => {
   if (!response.ok) {
     const body = await response.text();
@@ -64,11 +68,7 @@ export const listSuppliersForRecalculation = async () => {
 
 export const getCachedScorecard = async (supplierName) => {
   const supplierKey = supplierName.trim().toLowerCase();
-
   const fileCached = await getFileCachedScorecard(supplierKey);
-  if (fileCached) {
-    return fileCached;
-  }
 
   const url = new URL(
     `${env.supabaseUrl}/rest/v1/supplier_scorecard_cache`,
@@ -87,10 +87,20 @@ export const getCachedScorecard = async (supplierName) => {
       "fetch cached supplier scorecard",
     );
 
-    return rows?.[0] ?? null;
+    const databaseCached = rows?.[0] ?? null;
+    if (databaseCached) {
+      await writeFileCachedScorecard(databaseCached);
+      return databaseCached;
+    }
   } catch {
-    return null;
+    // Fall back to the local cache when Supabase is unavailable.
   }
+
+  if (fileCached && isCurrentMonthScorecard(fileCached)) {
+    return fileCached;
+  }
+
+  return null;
 };
 
 export const upsertCachedScorecard = async (scorecard) => {

@@ -137,19 +137,19 @@ const normalizeLocationValue = (value: string): string =>
   value.trim().toLowerCase();
 
 const DEFAULT_CATEGORIES: ProductCategory[] = [
-  // Parent categories
-  { id: "pharma", name: "Pharma", parent_id: null },
-  { id: "medical-supplies", name: "Medical Supplies", parent_id: null },
-
-  // Subcategories under Pharma
-  { id: "otc-medications", name: "OTC Medications", parent_id: "pharma" },
-  { id: "vitamins-supplements", name: "Vitamins & Supplements", parent_id: "pharma" },
-
-  // Subcategories under Medical Supplies
-  { id: "personal-care", name: "Personal Care", parent_id: "medical-supplies" },
-  { id: "first-aid", name: "First Aid", parent_id: "medical-supplies" },
-  { id: "health-wellness", name: "Health & Wellness", parent_id: "medical-supplies" },
-  { id: "baby-care", name: "Baby Care", parent_id: "medical-supplies" },
+  { id: "analgesics", name: "Analgesics", parent_id: null },
+  { id: "antibiotics", name: "Antibiotics", parent_id: null },
+  { id: "baby-care", name: "Baby Care", parent_id: null },
+  { id: "consumables", name: "Consumables", parent_id: null },
+  { id: "devices", name: "Devices", parent_id: null },
+  { id: "diabetes-care", name: "Diabetes Care", parent_id: null },
+  { id: "first-aid", name: "First Aid", parent_id: null },
+  { id: "health-wellness", name: "Health & Wellness", parent_id: null },
+  { id: "maintenance-medicines", name: "Maintenance Medicines", parent_id: null },
+  { id: "otc-medications", name: "OTC Medications", parent_id: null },
+  { id: "personal-care", name: "Personal Care", parent_id: null },
+  { id: "refrigerated", name: "Refrigerated", parent_id: null },
+  { id: "vitamins-supplements", name: "Vitamins & Supplements", parent_id: null },
 ];
 
 const LEGACY_CATEGORY_MAPPING: Record<string, string> = {
@@ -688,8 +688,38 @@ export function ProductMaster() {
   const loadCategories = useCallback(async () => {
     setIsCategoriesLoading(true);
     setCategoriesLoadError("");
-    setCategories(DEFAULT_CATEGORIES);
-    setIsCategoriesLoading(false);
+    try {
+      const categoriesUrl = `${scmRestBaseUrl}/product_categories?select=id,name,parent_id&order=name.asc`;
+      const response = await fetch(categoriesUrl, {
+        method: "GET",
+        headers: scmHeaders,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(
+          text || `Failed to load categories (${response.status})`,
+        );
+      }
+
+      const rows = (await response.json()) as ProductCategory[];
+      if (Array.isArray(rows) && rows.length > 0) {
+        setCategories(rows);
+      } else {
+        setCategories(DEFAULT_CATEGORIES);
+        setCategoriesLoadError(
+          "No categories found in the database",
+        );
+      }
+    } catch (error) {
+      setCategories(DEFAULT_CATEGORIES);
+      setCategoriesLoadError(
+        "Failed to load categories from the database",
+      );
+      addDebugLog("error", "Failed to load categories", error);
+    } finally {
+      setIsCategoriesLoading(false);
+    }
   }, []);
 
   const loadDbLocations = useCallback(async () => {
@@ -768,7 +798,7 @@ export function ProductMaster() {
       const matchesLocation =
         locationFilter === "all" ||
         normalizeLocationValue(product.location || "") ===
-        locationFilter;
+          normalizeLocationValue(locationFilter);
       return (
         matchesSearch &&
         matchesParent &&
@@ -862,25 +892,44 @@ export function ProductMaster() {
     );
   };
 
-  const locationOptions = [
-    { value: "Main Warehouse Manila", label: "Main Warehouse Manila" },
-    { value: "Satellite Hub Makati", label: "Satellite Hub Makati" }
-  ];
+  const locationOptions = useMemo(() => {
+    const deduped = new Map<string, string>();
+
+    const appendLocation = (value: string | null | undefined) => {
+      const trimmed = value?.trim();
+      if (!trimmed) return;
+      const key = normalizeLocationValue(trimmed);
+      if (!deduped.has(key)) {
+        deduped.set(key, trimmed);
+      }
+    };
+
+    products.forEach((product) => appendLocation(product.location));
+    dbLocations.forEach((location) => appendLocation(location.name));
+
+    return Array.from(deduped.values())
+      .sort((a, b) => a.localeCompare(b))
+      .map((value) => ({ value, label: value }));
+  }, [dbLocations, products]);
 
   const unitOptions = ["bottle", "box", "pcs"] as const;
   const currencyOptions = ["PHP", "JPY", "USD"] as const;
 
   const getCategoryColor = (categoryId: string) => {
     const { parentId } = getProductCategoryLineage(categoryId);
-    const resolvedId = parentId || categoryId;
+    const resolvedCategoryName = (
+      categoriesById.get(parentId || categoryId)?.name || ""
+    )
+      .trim()
+      .toLowerCase();
 
-    if (resolvedId === "pharma") {
+    if (resolvedCategoryName === "pharma") {
       return "bg-[#00A3AD] text-white";
     }
-    if (resolvedId === "medical-supplies") {
+    if (resolvedCategoryName === "medical supplies") {
       return "bg-[#1A2B47] text-white";
     }
-    if (resolvedId === "cold-chain") {
+    if (resolvedCategoryName === "cold chain") {
       return "bg-[#0891B2] text-white";
     }
     return "bg-[#D1D5DB] text-[#111827]";
@@ -892,12 +941,16 @@ export function ProductMaster() {
   ): string => {
     const prefix = productName.substring(0, 3).toUpperCase();
     const { parentId } = getProductCategoryLineage(categoryId);
-    const resolvedId = parentId || categoryId;
+    const resolvedCategoryName = (
+      categoriesById.get(parentId || categoryId)?.name || ""
+    )
+      .trim()
+      .toLowerCase();
 
     let categoryCode = "MS";
-    if (resolvedId === "pharma") {
+    if (resolvedCategoryName === "pharma") {
       categoryCode = "PH";
-    } else if (resolvedId === "cold-chain") {
+    } else if (resolvedCategoryName === "cold chain") {
       categoryCode = "CC";
     }
     const random = Math.floor(Math.random() * 1000);
@@ -2177,7 +2230,7 @@ export function ProductMaster() {
                     </SelectTrigger>
                     <SelectContent>
                       {locationOptions.map((loc) => (
-                        <SelectItem key={loc.value} value={loc.label}>
+                        <SelectItem key={loc.value} value={loc.value}>
                           {loc.label}
                         </SelectItem>
                       ))}
@@ -3137,7 +3190,7 @@ export function ProductMaster() {
                 </SelectTrigger>
                 <SelectContent>
                   {locationOptions.map((loc) => (
-                    <SelectItem key={loc.value} value={loc.label}>
+                    <SelectItem key={loc.value} value={loc.value}>
                       {loc.label}
                     </SelectItem>
                   ))}

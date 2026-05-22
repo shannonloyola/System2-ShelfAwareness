@@ -59,7 +59,10 @@ import {
 import { toast } from "sonner";
 import { notifyDashboardDataChanged } from "@/lib/dashboardInvalidation";
 import { postGRN } from "@/utils/postGRN";
-import { supabase, supabaseFulfillment } from "@/lib/supabase";
+import {
+  supabaseFulfillment,
+  supabaseQuality,
+} from "@/lib/supabase";
 import {
   fetchBackorderAlerts,
   fetchInventoryItems,
@@ -131,6 +134,19 @@ const createEmptyLine = (): GrnLine => ({
   batchNumber: "",
   expiryDate: "",
 });
+
+const toReasonCode = (value: string) =>
+  value
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+
+const deriveSeverity = (units: number) => {
+  if (units >= 20) return "Critical";
+  if (units >= 5) return "Major";
+  return "Minor";
+};
 
 export function WarehouseReceiving() {
   const [showGrnForm, setShowGrnForm] = useState(false);
@@ -719,7 +735,7 @@ export function WarehouseReceiving() {
     if (!grnCheckPhoto) return null;
 
     const filePath = `${grnId}/${Date.now()}-${grnCheckPhoto.name}`;
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await supabaseQuality.storage
       .from("qc_evidence_photos")
       .upload(filePath, grnCheckPhoto, { upsert: true });
 
@@ -728,7 +744,7 @@ export function WarehouseReceiving() {
       return null;
     }
 
-    const { data } = supabase.storage
+    const { data } = supabaseQuality.storage
       .from("qc_evidence_photos")
       .getPublicUrl(filePath);
 
@@ -757,7 +773,7 @@ export function WarehouseReceiving() {
 
     const photoUrl = await uploadGrnCheckPhoto(savedGrnId);
 
-    const { error } = await supabase
+    const { error } = await supabaseQuality
       .from("grn_quality_checks")
       .insert({
         grn_id: savedGrnId,
@@ -771,6 +787,55 @@ export function WarehouseReceiving() {
 
     if (error) {
       toast.error("Failed to save checks", { description: error.message });
+      return;
+    }
+
+    try {
+      const firstLine = lines[0];
+      const firstProduct = inventory.find(
+        (item) => item.id === firstLine?.productId,
+      );
+      const qcRows = Object.entries(grnChecks)
+        .filter(([, value]) => value === "fail")
+        .map(([checkKey]) => {
+          const discrepancy = qcDiscrepancies[checkKey];
+          const reasonCode = discrepancy?.reason_code
+            ? toReasonCode(discrepancy.reason_code)
+            : toReasonCode(checkKey);
+          const severity = (discrepancy?.severity ||
+            "Major") as "Minor" | "Major" | "Critical";
+
+          return {
+            shipment_reference: savedGrnNumber,
+            product_sku: firstProduct?.sku || "QC-GRN",
+            product_name:
+              firstProduct?.name || "GRN Quality Check",
+            batch_number:
+              firstLine?.batchNumber?.trim() || "QC-CHECK",
+            system_count: Number(firstLine?.qtyExpected || 0),
+            physical_count: Number(firstLine?.qtyReceived || 0),
+            discrepancy_units: 0,
+            reason_code: reasonCode,
+            status: "pending" as const,
+            reported_by: "warehouse_operator",
+            review_notes: grnCheckNotes || null,
+            severity,
+            evidence_urls: photoUrl ? [photoUrl] : [],
+            supplier_name: supplierName.trim() || null,
+          };
+        });
+
+      await syncShipmentDiscrepancies(
+        savedGrnNumber || savedGrnId,
+        qcRows,
+      );
+    } catch (syncError) {
+      toast.error("QC saved but discrepancy sync failed", {
+        description:
+          syncError instanceof Error
+            ? syncError.message
+            : "Unknown discrepancy sync error",
+      });
       return;
     }
 
@@ -953,6 +1018,97 @@ export function WarehouseReceiving() {
     return { grnId, grnNumber, headerPayload, linePayload };
   };
 
+  const syncShipmentDiscrepancies = useCallback(
+    async (
+      grnReference: string,
+      rows: Array<{
+        shipment_reference: string | null;
+        product_sku: string;
+        product_name: string;
+        batch_number: string;
+        system_count: number;
+        physical_count: number;
+        discrepancy_units: number;
+        reason_code: string;
+        status: "pending";
+        reported_by: string;
+        review_notes: string | null;
+        severity: "Minor" | "Major" | "Critical";
+        evidence_urls: string[];
+        supplier_name: string | null;
+      }>,
+    ) => {
+      if (!rows.length) return;
+
+      const { data: existingRows, error: existingError } =
+        await supabaseQuality
+          .from("shipment_discrepancies")
+          .select(
+            "grn_reference,product_sku,batch_number,reason_code",
+          )
+          .eq("grn_reference", grnReference);
+
+      if (existingError) {
+        throw new Error(existingError.message);
+      }
+
+      const existingKeys = new Set(
+        (existingRows || []).map(
+          (row: any) =>
+            [
+              row.grn_reference,
+              row.product_sku,
+              row.batch_number,
+              row.reason_code,
+            ].join("|"),
+        ),
+      );
+
+      const payload = rows
+        .filter((row) => {
+          const key = [
+            grnReference,
+            row.product_sku,
+            row.batch_number,
+            row.reason_code,
+          ].join("|");
+          return !existingKeys.has(key);
+        })
+        .map((row) => ({
+          id: crypto.randomUUID(),
+          grn_reference: grnReference,
+          shipment_reference: row.shipment_reference,
+          product_sku: row.product_sku,
+          product_name: row.product_name,
+          batch_number: row.batch_number,
+          system_count: row.system_count,
+          physical_count: row.physical_count,
+          discrepancy_units: row.discrepancy_units,
+          reason_code: row.reason_code,
+          status: row.status,
+          reported_by: row.reported_by,
+          reported_at: new Date().toISOString(),
+          review_notes: row.review_notes,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          severity: row.severity,
+          evidence_urls: row.evidence_urls,
+          supplier_name: row.supplier_name,
+        }));
+
+      if (!payload.length) return;
+
+      const { error } = await supabaseQuality
+        .from("shipment_discrepancies")
+        .insert(payload);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+    },
+    [supabaseQuality, supplierName],
+  );
+
   const saveToDatabase = async (
     headerPayload: object,
     linePayload: object[],
@@ -1003,6 +1159,59 @@ export function WarehouseReceiving() {
         grnId!,
         "warehouse_operator",
       );
+
+      const lineDiscrepancyRows = lines
+        .map((line) => {
+          const product = inventory.find(
+            (item) => item.id === line.productId,
+          );
+          const systemCount = Number(line.qtyExpected);
+          const physicalCount = Number(line.qtyReceived);
+          const discrepancyUnits = Math.abs(
+            physicalCount - systemCount,
+          );
+
+          if (
+            !Number.isFinite(systemCount) ||
+            !Number.isFinite(physicalCount) ||
+            discrepancyUnits === 0
+          ) {
+            return null;
+          }
+
+          const reason = line.discrepancyReason === "other"
+            ? line.otherReason.trim()
+            : line.discrepancyReason;
+
+          return {
+            shipment_reference: grnNumber || grnId,
+            product_sku: product?.sku || "N/A",
+            product_name: product?.name || "Unknown",
+            batch_number: line.batchNumber.trim() || "N/A",
+            system_count: systemCount,
+            physical_count: physicalCount,
+            discrepancy_units: discrepancyUnits,
+            reason_code: toReasonCode(reason || "COUNT_MISMATCH"),
+            status: "pending" as const,
+            reported_by: "warehouse_operator",
+            review_notes: notes.trim() || null,
+            severity: deriveSeverity(discrepancyUnits),
+            evidence_urls: [],
+            supplier_name: supplierName.trim() || null,
+          };
+        })
+        .filter(
+          (
+            row,
+          ): row is NonNullable<typeof row> => Boolean(row),
+        );
+
+      if (lineDiscrepancyRows.length > 0) {
+        await syncShipmentDiscrepancies(
+          grnNumber || grnId,
+          lineDiscrepancyRows,
+        );
+      }
 
       setIsPosted(true);
       setSavedGrnId(grnId);

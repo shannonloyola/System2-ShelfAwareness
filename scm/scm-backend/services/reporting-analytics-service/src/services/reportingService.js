@@ -317,6 +317,38 @@ const buildSupplierLeadTimeDistribution = (supplierScorecards, suppliers, receiv
     }));
 };
 
+const buildInventoryValuationTrend = (
+  inventoryValueHistoryRows,
+  inventoryTotal,
+) => {
+  const rows = extractArray(inventoryValueHistoryRows)
+    .map((row) => ({
+      date: cleanText(row.date || row.snapshot_date, ""),
+      value: toNumber(
+        row.value ?? row.total_inventory_value_php,
+        null,
+      ),
+    }))
+    .filter((row) => row.date && row.value !== null)
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  if (rows.length > 0) {
+    return rows.map((row) => ({
+      date: row.date,
+      value: row.value,
+      category: "total",
+    }));
+  }
+
+  return [
+    {
+      date: new Date().toISOString().slice(0, 10),
+      value: inventoryTotal,
+      category: "total",
+    },
+  ];
+};
+
 const buildDashboardPayload = ({
   inventoryRows,
   productRows,
@@ -328,6 +360,7 @@ const buildDashboardPayload = ({
   cycleCountRows,
   budget,
   inventoryValue,
+  inventoryValueHistoryRows,
 }) => {
   const inventory = inventoryRows.map(normalizeInventory);
   const products = productRows.map(normalizeProduct);
@@ -453,6 +486,10 @@ const buildDashboardPayload = ({
   const stockHealth = inventory.length > 0 ? ((inventory.length - criticalStockProducts.length) / inventory.length) * 100 : 0;
   const budgetHealth = budgetUsedPct === null ? 100 : Math.max(0, 100 - budgetUsedPct);
   const supplyScoreNumeric = Math.round((fillRate * 0.4 + stockHealth * 0.35 + budgetHealth * 0.25) * 10) / 10;
+  const inventoryValuationTrend = buildInventoryValuationTrend(
+    inventoryValueHistoryRows,
+    inventoryTotal,
+  );
 
   const movementFeed = [
     ...inventory
@@ -567,13 +604,7 @@ const buildDashboardPayload = ({
       ],
     },
     executive: {
-      inventoryValuationTrend: [
-        {
-          date: new Date().toISOString().slice(0, 10),
-          value: inventoryTotal,
-          category: "total",
-        },
-      ],
+      inventoryValuationTrend,
       criticalStockProducts,
       budgetPosition: hasBudget
         ? {
@@ -659,6 +690,7 @@ export const getDashboardData = async () => {
     purchaseOrdersResult,
     monthlyBudgetResult,
     inventoryValueResult,
+    inventoryValueHistoryResult,
     ordersResult,
     suppliersResult,
     cycleCountsResult,
@@ -670,6 +702,7 @@ export const getDashboardData = async () => {
     fetchJson(`${env.procurementServiceUrl}/purchase-orders?limit=500`, "purchase-orders"),
     fetchJson(`${env.procurementServiceUrl}/purchase-orders/dashboard/monthly-budget/current`, "monthly-budget"),
     fetchJson(`${env.distributionServiceUrl}/inventory-value/total`, "inventory-value"),
+    fetchJson(`${env.distributionServiceUrl}/inventory-value/history?days=30`, "inventory-value-history"),
     fetchJson(`${env.distributionServiceUrl}/orders?limit=500`, "distribution-orders"),
     fetchJson(`${env.supplierServiceUrl}/suppliers?limit=100`, "suppliers"),
     fetchJson(`${env.cycleCountingServiceUrl}/cycle-counts/recent?limit=500`, "cycle-counts"),
@@ -701,6 +734,7 @@ export const getDashboardData = async () => {
     purchaseOrdersResult,
     monthlyBudgetResult,
     inventoryValueResult,
+    inventoryValueHistoryResult,
     ordersResult,
     suppliersResult,
     cycleCountsResult,
@@ -726,6 +760,10 @@ export const getDashboardData = async () => {
       cycleCountRows: extractArray(cycleCountsResult.payload),
       budget: monthlyBudgetResult.payload?.data ?? null,
       inventoryValue: inventoryValueResult.payload?.data || inventoryValueResult.payload || {},
+      inventoryValueHistoryRows:
+        inventoryValueHistoryResult.payload?.data ||
+        inventoryValueHistoryResult.payload ||
+        [],
     }),
     sources: {
       errors: sourceErrors,

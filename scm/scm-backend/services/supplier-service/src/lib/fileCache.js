@@ -20,6 +20,13 @@ export const readFileCache = async () => {
       return {};
     }
 
+    if (error instanceof SyntaxError) {
+      console.warn(
+        `[supplier-service] Ignoring malformed supplier scorecard file cache at ${cachePath}.`,
+      );
+      return {};
+    }
+
     throw error;
   }
 };

@@ -30,6 +30,8 @@ export default function EvaluationReport() {
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("ALL");
   const [locFilter, setLocFilter] = useState("ALL");
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   useEffect(() => {
     (async () => {
@@ -76,9 +78,20 @@ export default function EvaluationReport() {
     });
   }, [rows, search, catFilter, locFilter]);
 
+  // Reset page to 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, catFilter, locFilter]);
+
   const withVal = useMemo(
     () => filtered.map((r) => ({ ...r, inv_value: r.qty_on_hand * r.unit_price })),
     [filtered]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(withVal.length / PAGE_SIZE));
+  const pagedRows = useMemo(
+    () => withVal.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [withVal, currentPage]
   );
 
   const grandTotal = useMemo(() => withVal.reduce((s, r) => s + r.inv_value, 0), [withVal]);
@@ -186,7 +199,7 @@ export default function EvaluationReport() {
               </tr>
             </thead>
             <tbody>
-              {withVal.map((r) => (
+              {pagedRows.map((r) => (
                 <tr key={r.product_id} className="border-b border-[#F3F4F6] hover:bg-[#F8FAFC] transition-colors">
                   <td className="px-3 py-2.5 font-mono text-xs text-[#00A3AD]">{r.sku}</td>
                   <td className="px-3 py-2.5 font-medium text-[#111827]">{r.product_name}</td>
@@ -215,6 +228,31 @@ export default function EvaluationReport() {
               </tr>
             </tfoot>
           </table>
+        )}
+        
+        {/* Pagination controls */}
+        {!loading && !errorMsg && withVal.length > 0 && (
+          <div className="flex items-center justify-between px-4 py-4 border-t border-[#E5E7EB] bg-white">
+            <div className="text-xs text-[#6B7280]">
+              Page {currentPage} of {totalPages} &mdash; {withVal.length} result{withVal.length !== 1 ? "s" : ""}
+            </div>
+            <div className="flex gap-2">
+              <button
+                className="px-3 py-1 text-sm rounded-md border border-[#111827]/20 text-[#111827] disabled:opacity-40"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+              >
+                Previous
+              </button>
+              <button
+                className="px-3 py-1 text-sm rounded-md border border-[#111827]/20 text-[#111827] disabled:opacity-40"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+              >
+                Next
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>

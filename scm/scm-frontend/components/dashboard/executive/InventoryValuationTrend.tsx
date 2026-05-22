@@ -15,6 +15,25 @@ const formatToMillions = (value: number) => {
 const formatDateLabel = (value: string) =>
   new Date(value).toLocaleDateString("en-PH", { month: "short", day: "numeric" });
 
+const renderAnomalyDot = (props: any) => {
+  if (!props.payload?.isAnomaly) {
+    return null;
+  }
+
+  const dotKey = props.payload?.date ?? props.index ?? `${props.cx}-${props.cy}`;
+
+  return (
+    <circle
+      key={`inventory-valuation-dot-${dotKey}`}
+      cx={props.cx}
+      cy={props.cy}
+      r={4}
+      fill="var(--accent-amber)"
+      stroke="none"
+    />
+  );
+};
+
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     const dataPoint = payload[0].payload;
@@ -63,6 +82,54 @@ export default function InventoryValuationTrend() {
     return <EmptyDashboardState message={isLoading ? "Loading backend valuation data..." : "No backend valuation trend available."} />;
   }
 
+  if (processedData.length === 1) {
+    const point = processedData[0];
+    return (
+      <div className="flex h-full items-center justify-center p-4">
+        <div
+          className="w-full max-w-md rounded-2xl border p-5 shadow-sm"
+          style={{
+            borderColor: "var(--border-subtle)",
+            backgroundColor: "var(--bg-elevated)",
+          }}
+        >
+          <div
+            className="text-[11px] font-bold uppercase tracking-[0.16em]"
+            style={{ color: "var(--accent-teal)", fontFamily: "var(--font-label)" }}
+          >
+            First Snapshot Captured
+          </div>
+          <div
+            className="mt-3 text-[28px] font-bold tracking-tight"
+            style={{ color: "var(--text-primary)", fontFamily: "var(--font-data)" }}
+          >
+            {new Intl.NumberFormat("en-PH", {
+              style: "currency",
+              currency: "PHP",
+              maximumFractionDigits: 0,
+            }).format(point.value)}
+          </div>
+          <div
+            className="mt-2 text-[12px]"
+            style={{ color: "var(--text-secondary)", fontFamily: "var(--font-label)" }}
+          >
+            Snapshot date: {formatDateLabel(point.date)}
+          </div>
+          <div
+            className="mt-4 rounded-xl border px-3 py-3 text-[12px] leading-5"
+            style={{
+              borderColor: "var(--border-subtle)",
+              backgroundColor: "var(--bg-surface)",
+              color: "var(--text-secondary)",
+            }}
+          >
+            The trend line will appear after at least one more daily valuation snapshot is captured.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <ResponsiveContainer width="100%" height="100%">
       <AreaChart
@@ -108,9 +175,7 @@ export default function InventoryValuationTrend() {
           fill="url(#colorValue)"
           animationDuration={1200}
           activeDot={{ r: 5, fill: "var(--accent-teal)", stroke: "var(--bg-surface)", strokeWidth: 2 }}
-          dot={(props: any) =>
-            props.payload?.isAnomaly ? <circle cx={props.cx} cy={props.cy} r={4} fill="var(--accent-amber)" stroke="none" /> : null
-          }
+          dot={renderAnomalyDot}
         />
       </AreaChart>
     </ResponsiveContainer>

@@ -26,6 +26,24 @@ BEGIN
         ALTER TABLE public.shipments ADD COLUMN tracking_number text;
         RAISE NOTICE 'Added column tracking_number to public.shipments';
     END IF;
+
+    -- 5. Add received_at column if it does not exist
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='shipments' AND column_name='received_at') THEN
+        ALTER TABLE public.shipments ADD COLUMN received_at timestamptz;
+        RAISE NOTICE 'Added column received_at to public.shipments';
+    END IF;
+
+    -- 6. Add received_by column if it does not exist
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='shipments' AND column_name='received_by') THEN
+        ALTER TABLE public.shipments ADD COLUMN received_by text;
+        RAISE NOTICE 'Added column received_by to public.shipments';
+    END IF;
+
+    -- 7. Add notes column if it does not exist
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='shipments' AND column_name='notes') THEN
+        ALTER TABLE public.shipments ADD COLUMN notes text;
+        RAISE NOTICE 'Added column notes to public.shipments';
+    END IF;
 END $$;
 
 -- 5. Add unique constraint to tracking_number if not already present

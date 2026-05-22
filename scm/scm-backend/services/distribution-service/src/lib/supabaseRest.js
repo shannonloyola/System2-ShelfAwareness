@@ -317,6 +317,74 @@ export const listInventoryValueByCategoryRest = async () => {
   }
 };
 
+export const listInventoryValueHistoryRest = async (days = 30) => {
+  ensureRestConfig();
+
+  const safeDays = Math.min(Math.max(Number(days) || 30, 1), 365);
+  const endDate = new Date();
+  const startDate = new Date(endDate);
+  startDate.setUTCDate(startDate.getUTCDate() - (safeDays - 1));
+
+  const startIso = startDate.toISOString().slice(0, 10);
+
+  const rows = await handleResponse(
+    await fetch(
+      `${env.fulfillmentSupabaseUrl}/rest/v1/inventory_valuation_snapshots?select=snapshot_date,total_inventory_value_php,generated_at&snapshot_date=gte.${startIso}&order=snapshot_date.asc`,
+      {
+        method: "GET",
+        headers: buildHeaders(),
+      },
+    ),
+  );
+
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    date: row.snapshot_date,
+    value: Number(row.total_inventory_value_php ?? 0),
+    generated_at: row.generated_at ?? null,
+  }));
+};
+
+export const captureInventoryValueSnapshotRest = async ({
+  snapshotDate,
+  notes,
+  source = "distribution-service",
+} = {}) => {
+  ensureRestConfig();
+
+  const total = await listInventoryValueTotalRest();
+  const categories = await listInventoryValueByCategoryRest();
+
+  const payload = {
+    snapshot_date: snapshotDate || new Date().toISOString().slice(0, 10),
+    total_inventory_value_php: Number(total ?? 0),
+    category_values: Array.isArray(categories) ? categories : [],
+    source,
+    notes: notes || null,
+    generated_at: new Date().toISOString(),
+  };
+
+  const rows = await handleResponse(
+    await fetch(
+      `${env.fulfillmentSupabaseUrl}/rest/v1/inventory_valuation_snapshots?on_conflict=snapshot_date`,
+      {
+        method: "POST",
+        headers: {
+          ...buildHeaders(),
+          Prefer: "resolution=merge-duplicates,return=representation",
+        },
+        body: JSON.stringify(payload),
+      },
+    ),
+  );
+
+  const row = rows?.[0] ?? payload;
+  return {
+    date: row.snapshot_date,
+    value: Number(row.total_inventory_value_php ?? 0),
+    generated_at: row.generated_at ?? payload.generated_at,
+  };
+};
+
 export const listAvailableProductsRest = async () => {
   ensureRestConfig();
 

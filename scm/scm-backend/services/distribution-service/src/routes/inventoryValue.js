@@ -1,7 +1,9 @@
 import express from "express";
 import { asyncHandler } from "../lib/http.js";
 import {
+  captureInventoryValueSnapshot,
   listInventoryValueByCategory,
+  listInventoryValueHistory,
   listInventoryValueTotal,
 } from "../repositories/distributionRepository.js";
 
@@ -20,5 +22,26 @@ inventoryValueRouter.get(
   asyncHandler(async (_req, res) => {
     const rows = await listInventoryValueByCategory();
     res.json({ data: rows });
+  }),
+);
+
+inventoryValueRouter.get(
+  "/history",
+  asyncHandler(async (req, res) => {
+    const days = Number(req.query.days ?? 30);
+    const rows = await listInventoryValueHistory(days);
+    res.json({ data: rows });
+  }),
+);
+
+inventoryValueRouter.post(
+  "/snapshots/capture",
+  asyncHandler(async (req, res) => {
+    const snapshot = await captureInventoryValueSnapshot({
+      snapshotDate: req.body?.snapshot_date,
+      notes: req.body?.notes,
+      source: req.body?.source,
+    });
+    res.status(201).json({ data: snapshot });
   }),
 );
